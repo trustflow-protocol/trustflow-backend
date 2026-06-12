@@ -7,6 +7,8 @@ export interface Escrow {
   amountXLM: string;
   status: 'pending' | 'active' | 'released' | 'disputed';
   createdAt: string;
+  disputeReason?: string;
+  disputedAt?: string;
 }
 
 @Injectable()
@@ -32,6 +34,19 @@ export class EscrowService {
     const escrow = this.escrows.get(id);
     if (!escrow) throw new Error('Escrow not found');
     escrow.status = 'released';
+    return escrow;
+  }
+
+  async raiseDispute(id: string, reason?: string): Promise<Escrow> {
+    const escrow = this.escrows.get(id);
+    if (!escrow) throw new Error('Escrow not found');
+    if (escrow.status === 'released') throw new Error('Cannot dispute a released escrow');
+    if (escrow.status === 'disputed') throw new Error('Escrow is already disputed');
+
+    escrow.status = 'disputed';
+    escrow.disputeReason = reason;
+    escrow.disputedAt = new Date().toISOString();
+    
     return escrow;
   }
 }

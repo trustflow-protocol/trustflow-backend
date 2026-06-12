@@ -1,0 +1,21 @@
+# TrustFlow Code Owners
+# 
+# These owners will be automatically requested for review when someone opens a
+# pull request that modifies code in the specified paths.
+
+# Default owner for everything in the repo
+* @trustflow-protocol/core-team
+
+# Backend specific
+/backend/ @trustflow-protocol/backend-team
+
+# GitHub Actions and CI/CD
+/.github/ @trustflow-protocol/devops-team
+
+# Documentation
+*.md @trustflow-protocol/docs-team
+
+# Environment and configuration
+.env* @trustflow-protocol/devops-team
+*.config.js @trustflow-protocol/devops-team
+*.config.ts @trustflow-protocol/devops-team

@@ -18,6 +18,7 @@ yarn.lock
 
 # production
 /build
+/dist
 
 # misc
 .DS_Store
@@ -32,6 +33,7 @@ yarn-error.log*
 
 # local env files
 .env*.local
+.env
 
 # vercel
 .vercel
@@ -45,5 +47,12 @@ yarn-error.log*
 
 *.sublime-project
 *.sublime-workspace
+
+# Backend specific
+backend/node_modules
+backend/dist
+backend/coverage
+backend/.env
+backend/*.log
 
 # Local scripts output

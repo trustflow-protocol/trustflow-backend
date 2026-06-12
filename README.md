@@ -36,6 +36,7 @@ backend/
 ## 🚀 Getting Started
 
 ### Prerequisites
+
 - Node.js >= 18
 - A Stellar RPC endpoint (testnet or mainnet)
 
@@ -65,30 +66,45 @@ HORIZON_URL=https://horizon-testnet.stellar.org
 
 ```bash
 # Development
+cd backend
 npm run dev
 
 # Production
 npm run build && npm start
+
+# Run tests
+npm test
+
+# Run CI checks locally
+./scripts/ci-check.sh
 ```
+
+See [Backend Setup Instructions](backend/SETUP_INSTRUCTIONS.md) for detailed development workflow.
 
 ---
 
 ## 📖 API Modules
 
 ### Auth (`/auth`)
+
 - **`POST /auth/login`** — Wallet-signed authentication, returns JWT.
 - JWT Guard protects all downstream routes.
 
 ### Escrow (`/escrow`)
+
 - **`POST /escrow`** — Create a new escrow vault.
 - **`GET /escrow/:id`** — Fetch escrow state and milestone details.
 - **`PATCH /escrow/:id/release`** — Approve a milestone tranche.
+- **`POST /escrow/:id/dispute`** — Raise a dispute (triggers Discord notification).
 
 ### Webhooks (`/webhook`)
+
 - **`POST /webhook`** — Register a webhook endpoint.
 - Automatic retry logic handles delivery failures gracefully.
+- **Discord Integration**: Automatically notifies a Discord channel when disputes need jurors. [Setup Guide](backend/src/webhook/DISCORD_INTEGRATION.md)
 
 ### Monitoring (`/health`, `/metrics`)
+
 - **`GET /health`** — Liveness and readiness probe.
 - **`GET /metrics`** — Prometheus-compatible metrics endpoint.
 
@@ -99,6 +115,27 @@ npm run build && npm start
 - All routes behind the `AuthGuard` require a valid JWT.
 - Input validation via class-validator DTOs on all write endpoints.
 - Environment secrets never logged or exposed in responses.
+
+---
+
+## 🔄 CI/CD
+
+The project uses GitHub Actions for continuous integration:
+
+- ✅ **Automated Testing**: Runs on every PR affecting backend code
+- ✅ **Multi-Version Testing**: Tests against Node.js 18.x and 20.x
+- ✅ **Code Quality**: ESLint and Prettier checks
+- ✅ **Type Safety**: TypeScript compilation and type checking
+- ✅ **Fast Builds**: Target runtime under 3 minutes
+- ✅ **Branch Protection**: PRs blocked on failing tests
+
+See [CI/CD Documentation](.github/workflows/README.md) for details.
+
+**Local CI Check**:
+
+```bash
+cd backend && ./scripts/ci-check.sh
+```
 
 ---
 
@@ -119,7 +156,7 @@ npm run build && npm start
 
 ---
 
-*Securing the future of work, one transaction at a time.*
+_Securing the future of work, one transaction at a time._
 
 ---
 
