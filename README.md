@@ -85,21 +85,31 @@ See [Backend Setup Instructions](backend/SETUP_INSTRUCTIONS.md) for detailed dev
 
 ## 📖 API Modules
 
+### 📚 Interactive API Documentation
+
+**Swagger UI**: `http://localhost:3001/api/docs`  
+**OpenAPI JSON**: `http://localhost:3001/api/docs-json`
+
+Full guide: [API Documentation](backend/API_DOCUMENTATION.md)
+
 ### Auth (`/auth`)
 
-- **`POST /auth/login`** — Wallet-signed authentication, returns JWT.
+- **`GET /auth/challenge`** — Get authentication challenge for wallet signing
+- **`POST /auth/verify`** — Verify wallet signature, returns JWT
 - JWT Guard protects all downstream routes.
 
 ### Escrow (`/escrow`)
 
 - **`POST /escrow`** — Create a new escrow vault.
 - **`GET /escrow/:id`** — Fetch escrow state and milestone details.
-- **`PATCH /escrow/:id/release`** — Approve a milestone tranche.
+- **`GET /escrow/depositor/:address`** — Get all escrows by depositor
+- **`POST /escrow/:id/release`** — Approve a milestone tranche.
 - **`POST /escrow/:id/dispute`** — Raise a dispute (triggers Discord notification).
 
 ### Webhooks (`/webhook`)
 
 - **`POST /webhook`** — Register a webhook endpoint.
+- **`DELETE /webhook/:id`** — Unregister a webhook.
 - Automatic retry logic handles delivery failures gracefully.
 - **Discord Integration**: Automatically notifies a Discord channel when disputes need jurors. [Setup Guide](backend/src/webhook/DISCORD_INTEGRATION.md)
 
@@ -164,4 +174,5 @@ _Securing the future of work, one transaction at a time._
 
 MIT License. Copyright (c) 2026 TrustFlow Protocol.
 test
+
 # Test - should be blocked
