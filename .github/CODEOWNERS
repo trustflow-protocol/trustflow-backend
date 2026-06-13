@@ -2,20 +2,34 @@
 # 
 # These owners will be automatically requested for review when someone opens a
 # pull request that modifies code in the specified paths.
+#
+# UPDATE INSTRUCTIONS:
+# Replace the placeholder teams below with actual GitHub usernames or team slugs
+# Format: @username or @org/team-name
 
 # Default owner for everything in the repo
-* @trustflow-protocol/core-team
+# TODO: Replace with actual maintainer username
+* @meshackyaro
 
 # Backend specific
-/backend/ @trustflow-protocol/backend-team
+# TODO: Add backend team members
+/backend/ @meshackyaro
 
 # GitHub Actions and CI/CD
-/.github/ @trustflow-protocol/devops-team
+# TODO: Add DevOps team members  
+/.github/ @meshackyaro
 
 # Documentation
-*.md @trustflow-protocol/docs-team
+# TODO: Add documentation reviewers
+*.md @meshackyaro
 
 # Environment and configuration
-.env* @trustflow-protocol/devops-team
-*.config.js @trustflow-protocol/devops-team
-*.config.ts @trustflow-protocol/devops-team
+# TODO: Add DevOps/security team
+.env* @meshackyaro
+*.config.js @meshackyaro
+*.config.ts @meshackyaro
+
+# Critical files (require extra review)
+package.json @meshackyaro
+package-lock.json @meshackyaro
+tsconfig.json @meshackyaro
