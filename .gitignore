@@ -55,4 +55,12 @@ backend/coverage
 backend/.env
 backend/*.log
 
+# Local status and tracking files
+INFRASTRUCTURE_SETUP_STATUS.md
+QUICK_START_CHECKLIST.md
+MERGE_COMPLETION_SUMMARY.md
+PATH_A_COMPLETION_SUMMARY.md
+NEXT_STEPS_CHECKLIST.md
+PR_DESCRIPTION.md
+
 # Local scripts output
