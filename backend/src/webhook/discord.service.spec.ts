@@ -23,10 +23,18 @@ describe('DiscordService', () => {
 
   describe('notifyDisputeNeedsJurors', () => {
     it('should log warning when webhook URL is not configured', async () => {
+      // Set env before creating service
       process.env.DISCORD_WEBHOOK_URL = '';
-      const loggerWarnSpy = jest.spyOn(service['logger'], 'warn');
 
-      await service.notifyDisputeNeedsJurors({
+      // Recreate service with empty webhook URL
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [DiscordService],
+      }).compile();
+      const testService = module.get<DiscordService>(DiscordService);
+
+      const loggerWarnSpy = jest.spyOn(testService['logger'], 'warn');
+
+      await testService.notifyDisputeNeedsJurors({
         escrowId: 'esc-123',
         depositor: 'GXXXXXXXXXXXXX',
         beneficiary: 'GYYYYYYYYYYYYY',
@@ -50,9 +58,7 @@ describe('DiscordService', () => {
       // This test would require mocking the https module
       // For now, we just verify the service can be called without errors when URL is missing
       process.env.DISCORD_WEBHOOK_URL = '';
-      await expect(
-        service.notifyDisputeNeedsJurors(disputeData),
-      ).resolves.not.toThrow();
+      await expect(service.notifyDisputeNeedsJurors(disputeData)).resolves.not.toThrow();
     });
   });
 });

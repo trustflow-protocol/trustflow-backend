@@ -6,12 +6,6 @@ import { MonitoringModule } from './monitoring/monitoring.module';
 import { StellarModule } from './stellar/stellar.module';
 
 @Module({
-  imports: [
-    AuthModule,
-    EscrowModule,
-    WebhookModule,
-    MonitoringModule,
-    StellarModule,
-  ],
+  imports: [AuthModule, EscrowModule, WebhookModule, MonitoringModule, StellarModule],
 })
 export class AppModule {}

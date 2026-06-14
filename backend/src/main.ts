@@ -29,11 +29,7 @@ async function bootstrap() {
         'It handles authentication, escrow management, webhook dispatch, and Stellar blockchain integration.',
     )
     .setVersion('1.0.0')
-    .setContact(
-      'TrustFlow Protocol',
-      'https://trustflow.xyz',
-      'support@trustflow.xyz',
-    )
+    .setContact('TrustFlow Protocol', 'https://trustflow.xyz', 'support@trustflow.xyz')
     .setLicense('MIT', 'https://opensource.org/licenses/MIT')
     .addServer(process.env.API_URL || 'http://localhost:3001', 'Development')
     .addServer('https://api.trustflow.xyz', 'Production')
@@ -53,7 +49,7 @@ async function bootstrap() {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  
+
   // Serve Swagger UI at /api/docs
   SwaggerModule.setup('api/docs', app, document, {
     customSiteTitle: 'TrustFlow API Documentation',

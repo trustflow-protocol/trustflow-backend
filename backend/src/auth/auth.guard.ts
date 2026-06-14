@@ -10,10 +10,16 @@ export class JwtAuthGuard implements CanActivate {
     const token = auth.slice(7);
     const [payload, sig] = token.split('.');
     if (!payload || !sig) throw new UnauthorizedException('Invalid token format');
-    const expected = crypto.createHmac('sha256', process.env.JWT_SECRET || 'dev').update(payload).digest('base64');
+    const expected = crypto
+      .createHmac('sha256', process.env.JWT_SECRET || 'dev')
+      .update(payload)
+      .digest('base64');
     if (sig !== expected) throw new UnauthorizedException('Invalid signature');
-    try { req.user = JSON.parse(Buffer.from(payload, 'base64').toString()); }
-    catch { throw new UnauthorizedException('Malformed token'); }
+    try {
+      req.user = JSON.parse(Buffer.from(payload, 'base64').toString());
+    } catch {
+      throw new UnauthorizedException('Malformed token');
+    }
     return true;
   }
 }
