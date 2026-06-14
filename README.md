@@ -175,4 +175,4 @@ _Securing the future of work, one transaction at a time._
 MIT License. Copyright (c) 2026 TrustFlow Protocol.
 test
 
-# Test - should be blocked
+# Test
