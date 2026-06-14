@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
-import { HealthService } from './health.service';
+import { HealthService, HealthStatus } from './health.service';
 import { MetricsService } from './metrics.service';
 
 @ApiTags('Monitoring')
@@ -29,7 +29,7 @@ export class HealthController {
     },
   })
   @ApiResponse({ status: 503, description: 'Service is unhealthy' })
-  async getHealth() {
+  async getHealth(): Promise<HealthStatus> {
     return this.health.check();
   }
 
