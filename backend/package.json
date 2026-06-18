@@ -25,6 +25,7 @@
     "@nestjs/platform-express": "^10.0.0",
     "@nestjs/swagger": "^7.0.0",
     "@sentry/node": "^8.55.2",
+    "@stellar/stellar-sdk": "^16.0.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.0",
