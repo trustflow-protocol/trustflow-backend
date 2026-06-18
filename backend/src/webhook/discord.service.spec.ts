@@ -50,9 +50,7 @@ describe('DiscordService', () => {
       // This test would require mocking the https module
       // For now, we just verify the service can be called without errors when URL is missing
       process.env.DISCORD_WEBHOOK_URL = '';
-      await expect(
-        service.notifyDisputeNeedsJurors(disputeData),
-      ).resolves.not.toThrow();
+      await expect(service.notifyDisputeNeedsJurors(disputeData)).resolves.not.toThrow();
     });
   });
 });
