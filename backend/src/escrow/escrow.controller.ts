@@ -175,7 +175,6 @@ export class EscrowController {
           type: 'string',
           description: 'Reason for the dispute',
           example: 'Work not delivered as specified',
-          required: false,
         },
       },
     },

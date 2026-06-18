@@ -1,13 +1,25 @@
 import { Injectable } from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+import { ExtractJwt, Strategy } from 'passport-jwt';
 
-export interface JwtPayload { address: string; iat: number; }
+export interface JwtPayload {
+  address: string;
+  sub: string;
+  iat: number;
+  exp: number;
+}
 
 @Injectable()
-export class JwtStrategy {
-  validate(payload: JwtPayload) {
-    if (!payload.address || !payload.iat) return null;
-    const maxAge = 24 * 60 * 60 * 1000;
-    if (Date.now() - payload.iat > maxAge) return null;
-    return { address: payload.address };
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor() {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false,
+      secretOrKey: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    });
+  }
+
+  async validate(payload: JwtPayload) {
+    return { address: payload.address, sub: payload.sub };
   }
 }
