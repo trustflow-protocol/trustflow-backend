@@ -8,6 +8,10 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
+import { ChallengeDto } from './dto/challenge.dto';
+import { VerifyDto } from './dto/verify.dto';
+import { ChallengeResponseDto } from './dto/challenge-response.dto';
+import { TokenResponseDto } from './dto/token-response.dto';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -29,18 +33,10 @@ export class AuthController {
   @ApiResponse({
     status: 200,
     description: 'Challenge generated successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        challenge: {
-          type: 'string',
-          example: 'Sign this message to authenticate with TrustFlow: 1234567890',
-        },
-      },
-    },
+    type: ChallengeResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Address parameter required' })
-  getChallenge(@Query('address') address: string) {
+  getChallenge(@Query('address') address: string): ChallengeResponseDto {
     if (!address) throw new Error('address required');
     return { challenge: this.authService.generateChallenge(address) };
   }
@@ -52,42 +48,18 @@ export class AuthController {
       'Verifies the signed challenge and returns a JWT token for authenticated API access.',
   })
   @ApiBody({
+    type: VerifyDto,
     description: 'Signature verification details',
-    schema: {
-      type: 'object',
-      required: ['address', 'signature'],
-      properties: {
-        address: {
-          type: 'string',
-          description: 'Stellar wallet address',
-          example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        },
-        signature: {
-          type: 'string',
-          description: 'Base64-encoded signature of the challenge message',
-          example: 'SGVsbG8gV29ybGQh...',
-        },
-      },
-    },
   })
   @ApiResponse({
     status: 200,
     description: 'Signature verified, JWT token generated',
-    schema: {
-      type: 'object',
-      properties: {
-        token: {
-          type: 'string',
-          description: 'JWT token for API authentication',
-          example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-        },
-      },
-    },
+    type: TokenResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Invalid signature' })
-  verify(@Body() body: { address: string; signature: string }) {
-    const valid = this.authService.verifySignature(body.address, body.signature);
+  verify(@Body() verifyDto: VerifyDto): TokenResponseDto {
+    const valid = this.authService.verifySignature(verifyDto.address, verifyDto.signature);
     if (!valid) throw new Error('Invalid signature');
-    return { token: this.authService.generateToken(body.address) };
+    return { token: this.authService.generateToken(verifyDto.address) };
   }
 }

@@ -29,7 +29,7 @@ export class HealthController {
     },
   })
   @ApiResponse({ status: 503, description: 'Service is unhealthy' })
-  async getHealth() {
+  async getHealth(): Promise<any> {
     return this.health.check();
   }
 
