@@ -14,7 +14,11 @@ describe('DiscordService', () => {
   });
 
   afterEach(() => {
-    process.env.DISCORD_WEBHOOK_URL = originalEnv;
+    if (originalEnv === undefined) {
+      delete process.env.DISCORD_WEBHOOK_URL;
+    } else {
+      process.env.DISCORD_WEBHOOK_URL = originalEnv;
+    }
   });
 
   it('should be defined', () => {
