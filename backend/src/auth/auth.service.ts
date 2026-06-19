@@ -30,16 +30,16 @@ export class AuthService {
       const challenge = entry.challenge;
       const signatureBuffer = Buffer.from(signature, 'base64');
       const challengeBuffer = Buffer.from(challenge, 'utf-8');
-      
+
       // Verify the signature using Stellar SDK
       const keypair = StellarSdk.Keypair.fromPublicKey(address);
       const isValid = keypair.verify(challengeBuffer, signatureBuffer);
-      
+
       if (isValid) {
         this.challenges.delete(address);
         return true;
       }
-      
+
       return false;
     } catch (error) {
       throw new UnauthorizedException('Invalid signature');
