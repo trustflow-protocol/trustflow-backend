@@ -22,7 +22,11 @@ export class StellarService {
   }
 
   async isAddressActive(address: string): Promise<boolean> {
-    try { await this.server.loadAccount(address); return true; }
-    catch { return false; }
+    try {
+      await this.server.loadAccount(address);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

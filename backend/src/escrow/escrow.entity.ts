@@ -1,4 +1,10 @@
-export enum EscrowStatus { PENDING = 'pending', ACTIVE = 'active', RELEASED = 'released', DISPUTED = 'disputed', CANCELLED = 'cancelled' }
+export enum EscrowStatus {
+  PENDING = 'pending',
+  ACTIVE = 'active',
+  RELEASED = 'released',
+  DISPUTED = 'disputed',
+  CANCELLED = 'cancelled',
+}
 
 export class EscrowEntity {
   id: string;

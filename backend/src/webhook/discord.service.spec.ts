@@ -14,7 +14,11 @@ describe('DiscordService', () => {
   });
 
   afterEach(() => {
-    process.env.DISCORD_WEBHOOK_URL = originalEnv;
+    if (originalEnv === undefined) {
+      delete process.env.DISCORD_WEBHOOK_URL;
+    } else {
+      process.env.DISCORD_WEBHOOK_URL = originalEnv;
+    }
   });
 
   it('should be defined', () => {
@@ -50,9 +54,7 @@ describe('DiscordService', () => {
       // This test would require mocking the https module
       // For now, we just verify the service can be called without errors when URL is missing
       process.env.DISCORD_WEBHOOK_URL = '';
-      await expect(
-        service.notifyDisputeNeedsJurors(disputeData),
-      ).resolves.not.toThrow();
+      await expect(service.notifyDisputeNeedsJurors(disputeData)).resolves.not.toThrow();
     });
   });
 });

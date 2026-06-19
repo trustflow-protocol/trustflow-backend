@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
-export interface JwtPayload { address: string; iat: number; }
+export interface JwtPayload {
+  address: string;
+  iat: number;
+}
 
 @Injectable()
 export class JwtStrategy {

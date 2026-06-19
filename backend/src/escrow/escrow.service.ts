@@ -17,7 +17,14 @@ export class EscrowService {
 
   async create(depositor: string, beneficiary: string, amountXLM: string): Promise<Escrow> {
     const id = `esc-${Date.now()}`;
-    const escrow: Escrow = { id, depositor, beneficiary, amountXLM, status: 'pending', createdAt: new Date().toISOString() };
+    const escrow: Escrow = {
+      id,
+      depositor,
+      beneficiary,
+      amountXLM,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
     this.escrows.set(id, escrow);
     return escrow;
   }
@@ -46,7 +53,7 @@ export class EscrowService {
     escrow.status = 'disputed';
     escrow.disputeReason = reason;
     escrow.disputedAt = new Date().toISOString();
-    
+
     return escrow;
   }
 }

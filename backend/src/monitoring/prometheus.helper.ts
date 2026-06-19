@@ -1,5 +1,11 @@
-export function formatGauge(name: string, value: number, labels: Record<string, string> = {}): string {
-  const lbl = Object.entries(labels).map(([k,v]) => `${k}="${v}"`).join(',');
+export function formatGauge(
+  name: string,
+  value: number,
+  labels: Record<string, string> = {},
+): string {
+  const lbl = Object.entries(labels)
+    .map(([k, v]) => `${k}="${v}"`)
+    .join(',');
   return `# TYPE ${name} gauge\n${name}{${lbl}} ${value}`;
 }
 
