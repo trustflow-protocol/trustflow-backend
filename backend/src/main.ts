@@ -1,10 +1,38 @@
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
+import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
+import { SentryService } from './sentry/sentry.service';
+import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
+
+const logger = new Logger('Bootstrap');
+
+// Capture unhandled promise rejections before the app is ready
+process.on('unhandledRejection', (reason: unknown) => {
+  Sentry.captureException(reason);
+  logger.error(
+    'Unhandled Promise Rejection',
+    reason instanceof Error ? reason.stack : String(reason),
+  );
+});
+
+// Capture uncaught synchronous exceptions and exit
+process.on('uncaughtException', (error: Error) => {
+  Sentry.captureException(error);
+  logger.error('Uncaught Exception — shutting down', error.stack);
+  process.exit(1);
+});
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Initialize Sentry via the injectable service so it shares the same instance
+  const sentryService = app.get(SentryService);
+  sentryService.init();
+
+  // Register global exception filter — captures 5xx errors to Sentry
+  app.useGlobalFilters(new SentryExceptionFilter(sentryService));
 
   // Enable CORS
   app.enableCors({
@@ -26,14 +54,12 @@ async function bootstrap() {
     .setTitle('TrustFlow API')
     .setDescription(
       'The TrustFlow Backend API provides off-chain services for the TrustFlow gig economy platform. ' +
-        'It handles authentication, escrow management, webhook dispatch, and Stellar blockchain integration.',
+        'It handles authentication, escrow management, webhook dispatch, and Stellar blockchain integration.\n\n' +
+        '**Error Monitoring:** All 5xx errors and unhandled exceptions are automatically captured by Sentry ' +
+        'for real-time alerting and triage. Set the `SENTRY_DSN` environment variable to enable.',
     )
     .setVersion('1.0.0')
-    .setContact(
-      'TrustFlow Protocol',
-      'https://trustflow.xyz',
-      'support@trustflow.xyz',
-    )
+    .setContact('TrustFlow Protocol', 'https://trustflow.xyz', 'support@trustflow.xyz')
     .setLicense('MIT', 'https://opensource.org/licenses/MIT')
     .addServer(process.env.API_URL || 'http://localhost:3001', 'Development')
     .addServer('https://api.trustflow.xyz', 'Production')
@@ -53,8 +79,7 @@ async function bootstrap() {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  
-  // Serve Swagger UI at /api/docs
+
   SwaggerModule.setup('api/docs', app, document, {
     customSiteTitle: 'TrustFlow API Documentation',
     customfavIcon: 'https://trustflow.xyz/favicon.ico',
@@ -66,7 +91,6 @@ async function bootstrap() {
     },
   });
 
-  // Also expose raw OpenAPI JSON
   SwaggerModule.setup('api/docs-json', app, document, {
     jsonDocumentUrl: '/api/docs-json',
   });
@@ -74,9 +98,12 @@ async function bootstrap() {
   const port = process.env.PORT || 3001;
   await app.listen(port);
 
-  console.log(`🚀 TrustFlow API running on: http://localhost:${port}`);
-  console.log(`📚 API Documentation: http://localhost:${port}/api/docs`);
-  console.log(`📄 OpenAPI JSON: http://localhost:${port}/api/docs-json`);
+  logger.log(`🚀 TrustFlow API running on: http://localhost:${port}`);
+  logger.log(`📚 API Documentation: http://localhost:${port}/api/docs`);
+  logger.log(`📄 OpenAPI JSON: http://localhost:${port}/api/docs-json`);
+  if (sentryService.isInitialized()) {
+    logger.log('🔍 Sentry error monitoring active');
+  }
 }
 
 bootstrap();

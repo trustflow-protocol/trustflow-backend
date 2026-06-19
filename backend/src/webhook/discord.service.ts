@@ -83,7 +83,7 @@ export class DiscordService {
         },
       };
 
-      const req = https.request(options, (res) => {
+      const req = https.request(options, res => {
         if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
           resolve();
         } else {

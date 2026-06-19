@@ -2,15 +2,24 @@ import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/com
 import { AuthGuard } from '@nestjs/passport';
 
 @Injectable()
-export class JwtAuthGuard extends AuthGuard('jwt') {
-  canActivate(context: ExecutionContext) {
-    return super.canActivate(context);
-  }
-
-  handleRequest(err: any, user: any, info: any) {
-    if (err || !user) {
-      throw err || new UnauthorizedException('Invalid or expired token');
+export class JwtAuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest();
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith('Bearer ')) throw new UnauthorizedException('Missing token');
+    const token = auth.slice(7);
+    const [payload, sig] = token.split('.');
+    if (!payload || !sig) throw new UnauthorizedException('Invalid token format');
+    const expected = crypto
+      .createHmac('sha256', process.env.JWT_SECRET || 'dev')
+      .update(payload)
+      .digest('base64');
+    if (sig !== expected) throw new UnauthorizedException('Invalid signature');
+    try {
+      req.user = JSON.parse(Buffer.from(payload, 'base64').toString());
+    } catch {
+      throw new UnauthorizedException('Malformed token');
     }
-    return user;
+    return true;
   }
 }

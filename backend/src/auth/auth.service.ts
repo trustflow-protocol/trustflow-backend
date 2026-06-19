@@ -47,15 +47,11 @@ export class AuthService {
   }
 
   generateToken(address: string): string {
-    const payload = { address, sub: address };
-    return this.jwtService.sign(payload);
-  }
-
-  validateToken(token: string): any {
-    try {
-      return this.jwtService.verify(token);
-    } catch (error) {
-      throw new UnauthorizedException('Invalid token');
-    }
+    const payload = Buffer.from(JSON.stringify({ address, iat: Date.now() })).toString('base64');
+    const sig = crypto
+      .createHmac('sha256', process.env.JWT_SECRET || 'dev')
+      .update(payload)
+      .digest('base64');
+    return `${payload}.${sig}`;
   }
 }

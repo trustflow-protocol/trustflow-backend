@@ -6,7 +6,10 @@ import { MetricsService } from './metrics.service';
 @ApiTags('Monitoring')
 @Controller()
 export class HealthController {
-  constructor(private health: HealthService, private metrics: MetricsService) {}
+  constructor(
+    private health: HealthService,
+    private metrics: MetricsService,
+  ) {}
 
   @Get('health')
   @ApiOperation({
@@ -42,7 +45,8 @@ export class HealthController {
       'text/plain': {
         schema: {
           type: 'string',
-          example: '# HELP http_requests_total Total HTTP requests\n# TYPE http_requests_total counter\nhttp_requests_total 1234',
+          example:
+            '# HELP http_requests_total Total HTTP requests\n# TYPE http_requests_total counter\nhttp_requests_total 1234',
         },
       },
     },
