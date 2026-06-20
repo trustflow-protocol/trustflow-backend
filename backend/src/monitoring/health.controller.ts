@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { HealthService } from './health.service';
 import { MetricsService } from './metrics.service';
+import { SkipRateLimit } from '../common/rate-limit/rate-limit.decorator';
 
 @ApiTags('Monitoring')
 @Controller()
@@ -12,6 +13,7 @@ export class HealthController {
   ) {}
 
   @Get('health')
+  @SkipRateLimit()
   @ApiOperation({
     summary: 'Health check',
     description: 'Returns the health status of the API. Used for liveness and readiness probes.',
@@ -34,6 +36,7 @@ export class HealthController {
   }
 
   @Get('metrics')
+  @SkipRateLimit()
   @ApiOperation({
     summary: 'Prometheus metrics',
     description: 'Returns metrics in Prometheus format for monitoring and alerting.',

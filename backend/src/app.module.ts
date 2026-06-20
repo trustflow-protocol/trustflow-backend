@@ -5,8 +5,19 @@ import { WebhookModule } from './webhook/webhook.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { StellarModule } from './stellar/stellar.module';
 import { SentryModule } from './sentry/sentry.module';
+import { RedisModule } from './common/redis/redis.module';
+import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 
 @Module({
-  imports: [SentryModule, AuthModule, EscrowModule, WebhookModule, MonitoringModule, StellarModule],
+  imports: [
+    SentryModule,
+    RedisModule,
+    RateLimitModule,
+    AuthModule,
+    EscrowModule,
+    WebhookModule,
+    MonitoringModule,
+    StellarModule,
+  ],
 })
 export class AppModule {}
