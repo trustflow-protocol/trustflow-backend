@@ -129,7 +129,9 @@ describe('UserProfileService', () => {
     it('should filter by userType', async () => {
       const profiles = await service.findAll({ userType: UserType.FREELANCER });
       expect(profiles.length).toBeGreaterThanOrEqual(1);
-      expect(profiles.every(p => p.userType === UserType.FREELANCER || p.userType === UserType.BOTH)).toBe(true);
+      expect(
+        profiles.every(p => p.userType === UserType.FREELANCER || p.userType === UserType.BOTH),
+      ).toBe(true);
     });
 
     it('should filter by status', async () => {
@@ -162,9 +164,9 @@ describe('UserProfileService', () => {
     });
 
     it('should throw NotFoundException for non-existent profile', async () => {
-      await expect(
-        service.update('non-existent-id', { name: 'New Name' }),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.update('non-existent-id', { name: 'New Name' })).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
