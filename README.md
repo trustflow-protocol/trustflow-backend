@@ -10,7 +10,7 @@ TrustFlow Core is the backend API service that powers off-chain logic for the Tr
 
 ## ✨ Core Features
 
-- 🔐 **JWT Authentication**: Secure wallet-based auth with guard middleware and JWT strategy.
+- 🔐 **JWT Authentication with Wallet Signatures**: Secure wallet-based auth using Stellar signature verification. Users authenticate by signing a cryptographic challenge with their Freighter wallet, proving ownership without exposing private keys.
 - 💼 **Escrow Management**: Full CRUD API for escrow entities — creation, funding, milestone tracking.
 - 🌐 **Stellar Integration**: Native Horizon and Soroban RPC helpers for on-chain reads and writes.
 - 🔔 **Webhook Engine**: Event-driven webhook dispatch with automatic retry logic.
@@ -23,12 +23,14 @@ TrustFlow Core is the backend API service that powers off-chain logic for the Tr
 ```
 backend/
 ├── src/
-│   ├── auth/               # JWT auth — controller, guard, service, strategy
+│   ├── auth/               # JWT auth — controller, guard, service, strategy, DTOs
+│   │   ├── dto/            # Request/response DTOs for validation
+│   │   └── auth.module.ts # Auth module configuration
 │   ├── escrow/             # Escrow API — controller, service, DTOs, entity
 │   ├── stellar/            # Stellar helpers — Horizon, Soroban, config, service
 │   ├── webhook/            # Webhook dispatch — controller, service, retry helper
 │   ├── monitoring/         # Health checks, metrics, Prometheus helpers
-│   └── index.js            # App entry point
+│   └── main.ts             # App entry point
 ```
 
 ---
@@ -37,8 +39,9 @@ backend/
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js >= 20
 - A Stellar RPC endpoint (testnet or mainnet)
+- Freighter wallet (for client-side wallet signature testing)
 
 ### Installation
 
@@ -98,6 +101,31 @@ Full guide: [API Documentation](backend/API_DOCUMENTATION.md)
 - **`POST /auth/verify`** — Verify wallet signature, returns JWT
 - JWT Guard protects all downstream routes.
 
+#### Authentication Flow
+
+1. **Request Challenge**: Client requests a cryptographic challenge for their wallet address
+2. **Sign Challenge**: User signs the challenge with their Freighter wallet
+3. **Verify & Get Token**: Client sends the signature to verify and receive a JWT token
+4. **Use Token**: Include JWT in Authorization header for authenticated requests
+
+#### Example Usage
+
+```bash
+# 1. Get challenge
+curl "http://localhost:3001/auth/challenge?address=GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# 2. Sign challenge with Freighter wallet (client-side)
+
+# 3. Verify signature and get JWT
+curl -X POST http://localhost:3001/auth/verify \
+  -H "Content-Type: application/json" \
+  -d '{"address":"G...","signature":"..."}'
+
+# 4. Use JWT for authenticated requests
+curl http://localhost:3001/escrows \
+  -H "Authorization: Bearer <jwt-token>"
+```
+
 ### Escrow (`/escrow`)
 
 - **`POST /escrow`** — Create a new escrow vault.
@@ -122,9 +150,16 @@ Full guide: [API Documentation](backend/API_DOCUMENTATION.md)
 
 ## 🛡️ Security
 
-- All routes behind the `AuthGuard` require a valid JWT.
-- Input validation via class-validator DTOs on all write endpoints.
-- Environment secrets never logged or exposed in responses.
+- **Wallet Signature Verification**: Uses @stellar/stellar-sdk for cryptographic signature verification
+- **Challenge Expiration**: Challenges expire after 5 minutes to prevent replay attacks
+- **One-Time Use**: Each challenge can only be used once
+- **JWT Expiration**: Tokens expire after 24 hours
+- **Address Validation**: Validates Stellar public key format (G-prefixed, 56 characters)
+- **Input Validation**: Uses class-validator DTOs on all endpoints
+- **Guard Middleware**: All protected routes require valid JWT via JwtAuthGuard
+- **Environment Secrets**: Never logged or exposed in responses
+
+For detailed authentication implementation documentation, see [AUTH_IMPLEMENTATION.md](backend/src/auth/AUTH_IMPLEMENTATION.md).
 
 ---
 
@@ -151,10 +186,13 @@ cd backend && ./scripts/ci-check.sh
 
 ## 🗺️ Roadmap
 
+- [x] **JWT Authentication with Wallet Signatures**: Implemented Stellar signature verification
 - [ ] **GraphQL Layer**: Optional GraphQL gateway over REST endpoints.
 - [ ] **Rate Limiting**: Per-wallet throttling on auth and escrow routes.
 - [ ] **Event Sourcing**: Full audit log for all escrow state transitions.
 - [ ] **Multi-network Support**: Seamless mainnet/testnet switching via config.
+- [ ] **Token Refresh**: Implement refresh token mechanism for better UX
+- [ ] **Redis Integration**: Use Redis for distributed challenge storage
 
 ---
 
@@ -173,6 +211,3 @@ _Securing the future of work, one transaction at a time._
 ## 📜 License
 
 MIT License. Copyright (c) 2026 TrustFlow Protocol.
-test
-
-# Test - should be blocked
