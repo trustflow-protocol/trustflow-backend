@@ -7,6 +7,7 @@ import { StellarModule } from './stellar/stellar.module';
 import { SentryModule } from './sentry/sentry.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
+import { UserProfileModule } from './user-profile/user-profile.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { RateLimitModule } from './common/rate-limit/rate-limit.module';
     RedisModule,
     RateLimitModule,
     AuthModule,
+    UserProfileModule,
     EscrowModule,
     WebhookModule,
     MonitoringModule,
