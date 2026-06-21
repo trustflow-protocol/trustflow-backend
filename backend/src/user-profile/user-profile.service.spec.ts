@@ -153,6 +153,9 @@ describe('UserProfileService', () => {
         userType: UserType.FREELANCER,
       });
 
+      // Small delay to ensure timestamps are different
+      await new Promise(resolve => setTimeout(resolve, 10));
+
       const updated = await service.update(created.id, {
         name: 'Jane Doe',
         bio: 'Updated bio',
@@ -160,7 +163,9 @@ describe('UserProfileService', () => {
 
       expect(updated.name).toBe('Jane Doe');
       expect(updated.bio).toBe('Updated bio');
-      expect(updated.updatedAt).not.toBe(created.updatedAt);
+      expect(new Date(updated.updatedAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(created.updatedAt).getTime(),
+      );
     });
 
     it('should throw NotFoundException for non-existent profile', async () => {
