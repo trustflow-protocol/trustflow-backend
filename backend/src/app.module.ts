@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { WebhookModule } from './webhook/webhook.module';
@@ -8,9 +9,11 @@ import { SentryModule } from './sentry/sentry.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { UserProfileModule } from './user-profile/user-profile.module';
+import { databaseConfig } from './config/database.config';
 
 @Module({
   imports: [
+    TypeOrmModule.forRoot(databaseConfig),
     SentryModule,
     RedisModule,
     RateLimitModule,
