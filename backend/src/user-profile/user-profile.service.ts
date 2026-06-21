@@ -118,7 +118,7 @@ export class UserProfileService {
     }
 
     if (filters?.minRating !== undefined) {
-      profiles = profiles.filter(p => p.rating >= filters.minRating);
+      profiles = profiles.filter(p => p.rating >= (filters.minRating ?? 0));
     }
 
     return profiles;
