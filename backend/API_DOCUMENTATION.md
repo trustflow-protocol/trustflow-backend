@@ -31,6 +31,7 @@ The TrustFlow Backend API provides off-chain services for the TrustFlow gig econ
 
 - **Authentication**: Wallet-based JWT authentication using Stellar signatures
 - **Escrow Management**: Create, manage, and release escrow vaults
+- **Gig Listings**: Publish and manage open gig solicitations
 - **Dispute Resolution**: Raise disputes and trigger juror notifications
 - **Webhooks**: Register endpoints to receive event notifications
 - **Monitoring**: Health checks and Prometheus metrics
@@ -88,6 +89,17 @@ The TrustFlow Backend API provides off-chain services for the TrustFlow gig econ
 | GET    | `/escrows/depositor/:address` | Get escrows by depositor |
 | POST   | `/escrows/:id/release`        | Release escrow funds     |
 | POST   | `/escrows/:id/dispute`        | Raise a dispute          |
+
+### Gig Listings
+
+| Method | Endpoint          | Description                                  |
+| ------ | ----------------- | -------------------------------------------- |
+| POST   | `/gigs`           | Create an open gig solicitation              |
+| GET    | `/gigs`           | List gig solicitations with optional filters |
+| GET    | `/gigs/:id`       | Get a gig listing by ID                      |
+| PATCH  | `/gigs/:id`       | Update mutable listing fields or status      |
+| POST   | `/gigs/:id/close` | Close a gig listing                          |
+| DELETE | `/gigs/:id`       | Delete a gig listing                         |
 
 ### Webhooks
 
@@ -158,7 +170,26 @@ curl -X POST http://localhost:3001/escrows/esc-1234567890/dispute \
 - Webhook event (`dispute.raised`)
 - Discord notification (if configured)
 
-### 3. Register a Webhook
+### 3. Create a Gig Listing
+
+```bash
+curl -X POST http://localhost:3001/gigs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientAddress": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "title": "Build a Soroban escrow dashboard",
+    "description": "Create a dashboard for tracking escrow milestones and gig delivery state.",
+    "budgetXLM": "250.0000000",
+    "category": "development",
+    "skills": ["NestJS", "Soroban"]
+  }'
+```
+
+Use `GET /gigs?status=open&skill=Soroban` to discover matching open
+solicitations. Close completed or cancelled solicitations with
+`POST /gigs/:id/close`.
+
+### 4. Register a Webhook
 
 ```bash
 curl -X POST http://localhost:3001/webhooks \

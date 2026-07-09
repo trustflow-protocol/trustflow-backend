@@ -8,6 +8,7 @@ import { SentryModule } from './sentry/sentry.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { UserProfileModule } from './user-profile/user-profile.module';
+import { GigModule } from './gigs/gig.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { UserProfileModule } from './user-profile/user-profile.module';
     RateLimitModule,
     AuthModule,
     UserProfileModule,
+    GigModule,
     EscrowModule,
     WebhookModule,
     MonitoringModule,
