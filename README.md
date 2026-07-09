@@ -12,6 +12,7 @@ TrustFlow Core is the backend API service that powers off-chain logic for the Tr
 
 - 🔐 **JWT Authentication with Wallet Signatures**: Secure wallet-based auth using Stellar signature verification. Users authenticate by signing a cryptographic challenge with their Freighter wallet, proving ownership without exposing private keys.
 - 💼 **Escrow Management**: Full CRUD API for escrow entities — creation, funding, milestone tracking.
+- **Gig Listings**: CRUD API for open client solicitations, including status and skill filters.
 - 🌐 **Stellar Integration**: Native Horizon and Soroban RPC helpers for on-chain reads and writes.
 - 🔔 **Webhook Engine**: Event-driven webhook dispatch with automatic retry logic.
 - 📊 **Monitoring & Metrics**: Built-in Prometheus metrics, health checks, and alerting helpers.
@@ -27,6 +28,7 @@ backend/
 │   │   ├── dto/            # Request/response DTOs for validation
 │   │   └── auth.module.ts # Auth module configuration
 │   ├── escrow/             # Escrow API — controller, service, DTOs, entity
+│   ├── gigs/               # Gig listing API — controller, service, DTOs, entity
 │   ├── stellar/            # Stellar helpers — Horizon, Soroban, config, service
 │   ├── webhook/            # Webhook dispatch — controller, service, retry helper
 │   ├── monitoring/         # Health checks, metrics, Prometheus helpers
@@ -133,6 +135,15 @@ curl http://localhost:3001/escrows \
 - **`GET /escrow/depositor/:address`** — Get all escrows by depositor
 - **`POST /escrow/:id/release`** — Approve a milestone tranche.
 - **`POST /escrow/:id/dispute`** — Raise a dispute (triggers Discord notification).
+
+### Gig Listings (`/gigs`)
+
+- **`POST /gigs`** - Create an open gig solicitation.
+- **`GET /gigs`** - List gig solicitations; supports `clientAddress`, `status`, `category`, and `skill` filters.
+- **`GET /gigs/:id`** - Fetch a single gig listing.
+- **`PATCH /gigs/:id`** - Update listing fields or status.
+- **`POST /gigs/:id/close`** - Close a listing without deleting its history.
+- **`DELETE /gigs/:id`** - Delete a listing.
 
 ### Webhooks (`/webhook`)
 
