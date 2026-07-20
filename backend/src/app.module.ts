@@ -8,6 +8,7 @@ import { SentryModule } from './sentry/sentry.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { UserProfileModule } from './user-profile/user-profile.module';
+import { EventIngestionModule } from './event-ingestion/event-ingestion.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UserProfileModule } from './user-profile/user-profile.module';
     WebhookModule,
     MonitoringModule,
     StellarModule,
+    EventIngestionModule,
   ],
 })
 export class AppModule {}
