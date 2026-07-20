@@ -15,6 +15,7 @@ TrustFlow Core is the backend API service that powers off-chain logic for the Tr
 - 🌐 **Stellar Integration**: Native Horizon and Soroban RPC helpers for on-chain reads and writes.
 - 🔔 **Webhook Engine**: Event-driven webhook dispatch with automatic retry logic.
 - 📊 **Monitoring & Metrics**: Built-in Prometheus metrics, health checks, and alerting helpers.
+- 🛡️ **Distributed Rate Limiting**: Redis-backed per-IP and per-wallet token buckets with sliding-window abuse detection and temporary lockouts.
 
 ---
 
@@ -63,6 +64,10 @@ Key variables:
 JWT_SECRET=your-secret
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org
 HORIZON_URL=https://horizon-testnet.stellar.org
+REDIS_URL=redis://localhost:6379
+RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
+RATE_LIMIT_ABUSE_THRESHOLD=5
+RATE_LIMIT_LOCKOUT_SECONDS=900
 ```
 
 ### Running
@@ -156,6 +161,8 @@ curl http://localhost:3001/escrows \
 - **JWT Expiration**: Tokens expire after 24 hours
 - **Address Validation**: Validates Stellar public key format (G-prefixed, 56 characters)
 - **Input Validation**: Uses class-validator DTOs on all endpoints
+- **Distributed Rate Limiting**: Coordinates per-IP and per-wallet token buckets through Redis across API nodes
+- **Abuse Lockouts**: Tracks repeated limit violations in a sliding window and temporarily locks abusive identities
 - **Guard Middleware**: All protected routes require valid JWT via JwtAuthGuard
 - **Environment Secrets**: Never logged or exposed in responses
 
@@ -188,7 +195,7 @@ cd backend && ./scripts/ci-check.sh
 
 - [x] **JWT Authentication with Wallet Signatures**: Implemented Stellar signature verification
 - [ ] **GraphQL Layer**: Optional GraphQL gateway over REST endpoints.
-- [ ] **Rate Limiting**: Per-wallet throttling on auth and escrow routes.
+- [x] **Rate Limiting**: Per-wallet and per-IP distributed throttling with Redis-backed abuse lockouts.
 - [ ] **Event Sourcing**: Full audit log for all escrow state transitions.
 - [ ] **Multi-network Support**: Seamless mainnet/testnet switching via config.
 - [ ] **Token Refresh**: Implement refresh token mechanism for better UX
