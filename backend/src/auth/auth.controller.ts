@@ -1,14 +1,6 @@
-import { Controller, Post, Body, Get, Query } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiQuery,
-  ApiBody,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { Controller, Post, Body, Get, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { ChallengeDto } from './dto/challenge.dto';
 import { VerifyDto } from './dto/verify.dto';
 import { ChallengeResponseDto } from './dto/challenge-response.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
@@ -22,30 +14,38 @@ export class AuthController {
   @ApiOperation({
     summary: 'Get authentication challenge',
     description:
-      'Generates a challenge message for wallet signature. The user signs this message with their Stellar wallet to prove ownership.',
+      'Generates a single-use, time-limited challenge message for wallet signature. ' +
+      'The challenge nonce is stored server-side with a 60-second TTL and is enforceably single-use. ' +
+      'In multi-node deployments, nonces are stored in Redis for distributed replay protection.',
   })
   @ApiQuery({
     name: 'address',
-    description: 'Stellar wallet address',
+    description: 'Stellar wallet address (G... public key)',
     required: true,
     example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   })
   @ApiResponse({
     status: 200,
-    description: 'Challenge generated successfully',
+    description: 'Challenge generated successfully (valid for 60 seconds)',
     type: ChallengeResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Address parameter required' })
-  getChallenge(@Query('address') address: string): ChallengeResponseDto {
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid Stellar address format',
+  })
+  async getChallenge(@Query('address') address: string): Promise<ChallengeResponseDto> {
     if (!address) throw new Error('address required');
-    return { challenge: this.authService.generateChallenge(address) };
+    return { challenge: await this.authService.generateChallenge(address) };
   }
 
   @Post('verify')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Verify wallet signature',
     description:
-      'Verifies the signed challenge and returns a JWT token for authenticated API access.',
+      'Verifies the Stellar wallet-signed challenge and returns a JWT token. ' +
+      'The challenge nonce is consumed atomically (single-use) and replay attempts are blocked. ' +
+      'Each nonce is only valid for 60 seconds after generation.',
   })
   @ApiBody({
     type: VerifyDto,
@@ -56,9 +56,12 @@ export class AuthController {
     description: 'Signature verified, JWT token generated',
     type: TokenResponseDto,
   })
-  @ApiResponse({ status: 401, description: 'Invalid signature' })
-  verify(@Body() verifyDto: VerifyDto): TokenResponseDto {
-    const valid = this.authService.verifySignature(verifyDto.address, verifyDto.signature);
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid signature, expired challenge, or replay attempt blocked',
+  })
+  async verify(@Body() verifyDto: VerifyDto): Promise<TokenResponseDto> {
+    const valid = await this.authService.verifySignature(verifyDto.address, verifyDto.signature);
     if (!valid) throw new Error('Invalid signature');
     return { token: this.authService.generateToken(verifyDto.address) };
   }
