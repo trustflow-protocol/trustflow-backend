@@ -9,6 +9,7 @@ import { RedisModule } from './common/redis/redis.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { UserProfileModule } from './user-profile/user-profile.module';
 import { EventIngestionModule } from './event-ingestion/event-ingestion.module';
+import { DisputeModule } from './dispute/dispute.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { EventIngestionModule } from './event-ingestion/event-ingestion.module';
     MonitoringModule,
     StellarModule,
     EventIngestionModule,
+    DisputeModule,
   ],
 })
 export class AppModule {}

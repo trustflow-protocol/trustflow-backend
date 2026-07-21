@@ -5,7 +5,7 @@ export interface Escrow {
   depositor: string;
   beneficiary: string;
   amountXLM: string;
-  status: 'pending' | 'active' | 'released' | 'disputed';
+  status: 'pending' | 'active' | 'released' | 'disputed' | 'cancelled';
   createdAt: string;
   disputeReason?: string;
   disputedAt?: string;
