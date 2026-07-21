@@ -55,6 +55,9 @@ async function bootstrap() {
     .setDescription(
       'The TrustFlow Backend API provides off-chain services for the TrustFlow gig economy platform. ' +
         'It handles authentication, escrow management, webhook dispatch, and Stellar blockchain integration.\n\n' +
+        '**Wallet-Signature Authentication:** Challenge-response auth using Stellar wallet signatures. ' +
+        'Challenges use single-use nonces with 60-second TTLs and are stored in a distributed Redis nonce store ' +
+        'that blocks replay attacks across all API nodes.\n\n' +
         '**Error Monitoring:** All 5xx errors and unhandled exceptions are automatically captured by Sentry ' +
         'for real-time alerting and triage. Set the `SENTRY_DSN` environment variable to enable.\n\n' +
         '**Rate Limiting:** All endpoints use a Redis-backed distributed token bucket with coordinated ' +
