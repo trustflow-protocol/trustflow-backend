@@ -60,11 +60,11 @@ async function bootstrap() {
         'that blocks replay attacks across all API nodes.\n\n' +
         '**Error Monitoring:** All 5xx errors and unhandled exceptions are automatically captured by Sentry ' +
         'for real-time alerting and triage. Set the `SENTRY_DSN` environment variable to enable.\n\n' +
-        '**Rate Limiting:** All endpoints are rate-limited to **100 requests per minute** per IP address. ' +
-        'When the limit is exceeded, the API returns a `429 Too Many Requests` response with a `retryAfter` field ' +
-        'indicating the number of seconds to wait before retrying. Health check (`/health`) and metrics (`/metrics`) ' +
-        'endpoints are exempt from rate limiting. ' +
-        'Requires `REDIS_URL` environment variable to be configured.',
+        '**Rate Limiting:** All endpoints use a Redis-backed distributed token bucket with coordinated ' +
+        'per-IP and per-wallet limits across API nodes. Repeated limit violations are tracked in a sliding ' +
+        'abuse window and can trigger temporary lockouts. When a request is rejected, the API returns ' +
+        '`429 Too Many Requests` with `retryAfter` and `scope` fields. Health check (`/health`) and metrics ' +
+        '(`/metrics`) endpoints are exempt from rate limiting. Requires `REDIS_URL` to be configured.',
     )
     .setVersion('1.0.0')
     .setContact('TrustFlow Protocol', 'https://trustflow.xyz', 'support@trustflow.xyz')

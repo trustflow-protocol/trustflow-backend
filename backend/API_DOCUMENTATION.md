@@ -60,6 +60,39 @@ The TrustFlow Backend API provides off-chain services for the TrustFlow gig econ
    Authorization: Bearer YOUR_JWT_TOKEN
    ```
 
+---
+
+## 🛡️ Distributed Rate Limiting
+
+All non-monitoring endpoints are protected by a Redis-backed distributed token bucket so limits remain coordinated across multiple API nodes.
+
+- **Per-IP limits**: Every request consumes from a route-specific bucket keyed by client IP.
+- **Per-wallet limits**: Requests that include wallet identity consume a second route-specific bucket keyed by wallet address. Wallet identity is read from JWT user data, request body, query string, or route params.
+- **Abuse detection**: Empty-bucket attempts are tracked in a Redis sorted set over a sliding abuse window.
+- **Lockouts**: Repeated violations create temporary Redis lockout keys and return `429 Too Many Requests` without consuming more bucket state.
+
+### Rate Limit Response
+
+```json
+{
+  "statusCode": 429,
+  "message": "Too many requests - rate limit exceeded",
+  "retryAfter": 30,
+  "scope": "wallet:gabc123"
+}
+```
+
+### Configuration
+
+```env
+REDIS_URL=redis://localhost:6379
+RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
+RATE_LIMIT_ABUSE_THRESHOLD=5
+RATE_LIMIT_LOCKOUT_SECONDS=900
+```
+
+`/health` and `/metrics` are exempt through `@SkipRateLimit()`.
+
 ### Using Authentication in Swagger UI
 
 1. Get your challenge and sign it
@@ -244,6 +277,10 @@ Swagger UI will be at: `http://localhost:3001/api/docs`
 ```env
 PORT=3001
 JWT_SECRET=your-secret
+REDIS_URL=redis://localhost:6379
+RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
+RATE_LIMIT_ABUSE_THRESHOLD=5
+RATE_LIMIT_LOCKOUT_SECONDS=900
 STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
