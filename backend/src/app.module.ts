@@ -13,6 +13,7 @@ import { DisputeModule } from './dispute/dispute.module';
 import { MigrationModule } from './migration/migration.module';
 import { IpfsPinningModule } from './ipfs-pinning/ipfs-pinning.module';
 import { GigModule } from './gig/gig.module';
+import { EscrowReconciliationModule } from './escrow-reconciliation/escrow-reconciliation.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { GigModule } from './gig/gig.module';
     MigrationModule,
     IpfsPinningModule,
     GigModule,
+    EscrowReconciliationModule,
   ],
 })
 export class AppModule {}
