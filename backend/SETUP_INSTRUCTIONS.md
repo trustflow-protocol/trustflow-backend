@@ -41,6 +41,7 @@ WEB3_STORAGE_TOKEN=your_web3_storage_token  # Optional
 INFURA_IPFS_PROJECT_ID=your_infura_project_id  # Optional
 INFURA_IPFS_PROJECT_SECRET=your_infura_project_secret  # Optional
 IPFS_REPIN_INTERVAL_MS=300000  # Optional — re-pin worker sweep interval, set to 0 to disable
+GIG_EXPIRY_SWEEP_INTERVAL_MS=300000  # Optional — gig expiry sweep interval, set to 0 to disable
 ```
 
 ### 3. Verify Installation

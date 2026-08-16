@@ -89,6 +89,11 @@ async function bootstrap() {
       'Multi-provider IPFS pinning with content-hash verification, automatic failover, and a ' +
         'background re-pin worker that restores replication when a provider silently drops a pin.',
     )
+    .addTag(
+      'Gigs',
+      'Gig solicitation postings with a background sweep that automatically expires ' +
+        'solicitations left unanswered past their response deadline.',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

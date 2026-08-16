@@ -12,6 +12,7 @@ import { EventIngestionModule } from './event-ingestion/event-ingestion.module';
 import { DisputeModule } from './dispute/dispute.module';
 import { MigrationModule } from './migration/migration.module';
 import { IpfsPinningModule } from './ipfs-pinning/ipfs-pinning.module';
+import { GigModule } from './gig/gig.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { IpfsPinningModule } from './ipfs-pinning/ipfs-pinning.module';
     DisputeModule,
     MigrationModule,
     IpfsPinningModule,
+    GigModule,
   ],
 })
 export class AppModule {}
