@@ -5,6 +5,7 @@ import { DisputeStep, DisputeVerdict } from './dispute.types';
 import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
+import { ReputationService } from '../reputation/reputation.service';
 
 // ─── Shared mock factories ────────────────────────────────────────────────────
 
@@ -37,8 +38,9 @@ function buildMocks() {
 
   const webhookService = { dispatch: jest.fn().mockResolvedValue(undefined) };
   const discordService = { notifyDisputeNeedsJurors: jest.fn().mockResolvedValue(undefined) };
+  const reputationService = { recordDisputeResolved: jest.fn().mockResolvedValue(undefined) };
 
-  return { escrow, escrowService, webhookService, discordService };
+  return { escrow, escrowService, webhookService, discordService, reputationService };
 }
 
 const JURORS = [
@@ -59,6 +61,7 @@ describe('DisputeSagaService', () => {
   let escrowService: ReturnType<typeof buildMocks>['escrowService'];
   let webhookService: ReturnType<typeof buildMocks>['webhookService'];
   let discordService: ReturnType<typeof buildMocks>['discordService'];
+  let reputationService: ReturnType<typeof buildMocks>['reputationService'];
   let escrow: ReturnType<typeof buildMocks>['escrow'];
 
   beforeEach(async () => {
@@ -66,6 +69,7 @@ describe('DisputeSagaService', () => {
     escrowService = mocks.escrowService;
     webhookService = mocks.webhookService;
     discordService = mocks.discordService;
+    reputationService = mocks.reputationService;
     escrow = mocks.escrow;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -74,6 +78,7 @@ describe('DisputeSagaService', () => {
         { provide: EscrowService, useValue: escrowService },
         { provide: WebhookService, useValue: webhookService },
         { provide: DiscordService, useValue: discordService },
+        { provide: ReputationService, useValue: reputationService },
       ],
     }).compile();
 
@@ -287,6 +292,37 @@ describe('DisputeSagaService', () => {
         'dispute.saga_completed',
         expect.objectContaining({ sagaId }),
       );
+    });
+
+    it('records DEPOSITOR_WINS as a win for the depositor and a loss for the beneficiary', async () => {
+      await runToPayoutStep('depositor');
+      await service.executePayout(sagaId, {});
+      expect(reputationService.recordDisputeResolved).toHaveBeenCalledWith(escrow, 'won', 'lost');
+    });
+
+    it('records BENEFICIARY_WINS as a win for the beneficiary and a loss for the depositor', async () => {
+      await runToPayoutStep('beneficiary');
+      await service.executePayout(sagaId, {});
+      expect(reputationService.recordDisputeResolved).toHaveBeenCalledWith(escrow, 'lost', 'won');
+    });
+
+    it('records SPLIT as a split for both parties', async () => {
+      await runToPayoutStep('split');
+      await service.executePayout(sagaId, {});
+      expect(reputationService.recordDisputeResolved).toHaveBeenCalledWith(
+        escrow,
+        'split',
+        'split',
+      );
+    });
+
+    it('skips reputation recording when the escrow can no longer be found', async () => {
+      await runToPayoutStep('beneficiary');
+      escrowService.findById.mockResolvedValueOnce(undefined);
+
+      await service.executePayout(sagaId, {});
+
+      expect(reputationService.recordDisputeResolved).not.toHaveBeenCalled();
     });
 
     it('throws BadRequestException when called before PAYOUT step', async () => {

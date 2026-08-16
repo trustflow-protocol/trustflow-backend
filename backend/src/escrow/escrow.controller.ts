@@ -4,6 +4,7 @@ import { EscrowService } from './escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
 import { WebhookEvent } from '../webhook/webhook.dto';
+import { ReputationService } from '../reputation/reputation.service';
 
 interface CreateEscrowDto {
   depositor: string;
@@ -22,6 +23,7 @@ export class EscrowController {
     private readonly escrowService: EscrowService,
     private readonly webhookService: WebhookService,
     private readonly discordService: DiscordService,
+    private readonly reputationService: ReputationService,
   ) {}
 
   @Post()
@@ -151,8 +153,10 @@ export class EscrowController {
     description: 'Escrow released successfully',
   })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
-  release(@Param('id') id: string) {
-    return this.escrowService.release(id);
+  async release(@Param('id') id: string) {
+    const escrow = await this.escrowService.release(id);
+    await this.reputationService.recordEscrowCompleted(escrow);
+    return escrow;
   }
 
   @Post(':id/dispute')

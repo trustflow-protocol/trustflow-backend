@@ -3,9 +3,10 @@ import { DisputeSagaService } from './dispute-saga.service';
 import { DisputeSagaController } from './dispute-saga.controller';
 import { EscrowModule } from '../escrow/escrow.module';
 import { WebhookModule } from '../webhook/webhook.module';
+import { ReputationModule } from '../reputation/reputation.module';
 
 @Module({
-  imports: [EscrowModule, WebhookModule],
+  imports: [EscrowModule, WebhookModule, ReputationModule],
   controllers: [DisputeSagaController],
   providers: [DisputeSagaService],
   exports: [DisputeSagaService],
