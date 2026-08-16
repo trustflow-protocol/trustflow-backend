@@ -42,12 +42,27 @@ export interface ReputationScoreView {
   lastUpdatedAt: string;
 }
 
-/** Score halves every 90 days without new activity, so stale history stops dominating current trust. */
+/**
+ * Score halves every 90 days without new activity, so stale history stops dominating current
+ * trust. 90 days was picked as a middle ground for a freelance/gig marketplace: long enough that
+ * a quiet address (between contracts) isn't unfairly zeroed out, short enough that reputation
+ * earned years ago doesn't keep protecting an address that's gone silent or turned bad. Tune by
+ * changing this single constant — every decay computation derives from it, nothing else to touch.
+ */
 export const REPUTATION_DECAY_HALF_LIFE_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** How many of an address's most recent events are kept for the API's audit trail; older ones are evicted (score itself is unaffected — it's already folded into the materialized total). */
 export const REPUTATION_RECENT_EVENTS_LIMIT = 20;
 
-/** Base weight per event type, before amount scaling and Sybil dampening. */
+/**
+ * Base weight per event type, before amount scaling and Sybil dampening.
+ * DISPUTE_LOST outweighs a clean ESCROW_COMPLETED by 2x and DISPUTE_WON by 5x so that
+ * winning a dispute never nets a better outcome than simply not causing one, and losing one
+ * is punished more than an equivalent completion rewards — bad actors should lose reputation
+ * faster than good actors can rebuild it. DISPUTE_SPLIT is a small penalty to both sides since
+ * neither party was fully vindicated. Tune these four numbers directly; they're independent of
+ * amount scaling and dampening, which are applied multiplicatively on top.
+ */
 export const REPUTATION_WEIGHTS: Record<ReputationEventType, number> = {
   [ReputationEventType.ESCROW_COMPLETED]: 5,
   [ReputationEventType.DISPUTE_WON]: 2,
@@ -55,7 +70,12 @@ export const REPUTATION_WEIGHTS: Record<ReputationEventType, number> = {
   [ReputationEventType.DISPUTE_SPLIT]: -2,
 };
 
-/** Caps how much a single high-value escrow can scale a contribution, so one whale event can't dominate. */
+/**
+ * Caps how much a single high-value escrow can scale a contribution (amountWeight = sqrt(amountXLM),
+ * capped here). Square-root rather than linear scaling so a 10,000 XLM escrow counts for meaningfully
+ * more than a 100 XLM one without letting a single whale transaction single-handedly dominate an
+ * address's score; the cap puts a hard ceiling under that same goal even for extreme amounts.
+ */
 export const REPUTATION_MAX_AMOUNT_WEIGHT = 10;
 
 export const REPUTATION_LEADERBOARD_DEFAULT_LIMIT = 50;

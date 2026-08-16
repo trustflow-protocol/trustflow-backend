@@ -3,6 +3,8 @@ import { ReputationScoreStore } from './reputation-score.store';
 import {
   EscrowParties,
   REPUTATION_DECAY_HALF_LIFE_MS,
+  REPUTATION_MAX_AMOUNT_WEIGHT,
+  REPUTATION_RECENT_EVENTS_LIMIT,
   REPUTATION_WEIGHTS,
   ReputationEventType,
 } from './reputation.types';
@@ -59,6 +61,25 @@ describe('ReputationService', () => {
       const big = bigService.getScore('GDEPOSITOR').score;
 
       expect(big).toBeGreaterThan(small);
+    });
+
+    it('caps the amount weight for an extremely large amount instead of scaling unbounded', async () => {
+      await service.recordEscrowCompleted(makeEscrow({ amountXLM: '1e30' }));
+
+      const expected =
+        REPUTATION_WEIGHTS[ReputationEventType.ESCROW_COMPLETED] * REPUTATION_MAX_AMOUNT_WEIGHT;
+      expect(service.getScore('GDEPOSITOR').score).toBeCloseTo(expected, 5);
+      expect(Number.isFinite(service.getScore('GDEPOSITOR').score)).toBe(true);
+    });
+
+    it('gives a negative amount no contribution', async () => {
+      await service.recordEscrowCompleted(makeEscrow({ amountXLM: '-50' }));
+      expect(service.getScore('GDEPOSITOR').score).toBe(0);
+    });
+
+    it('gives a non-finite amount (Infinity) no contribution', async () => {
+      await service.recordEscrowCompleted(makeEscrow({ amountXLM: 'Infinity' }));
+      expect(service.getScore('GDEPOSITOR').score).toBe(0);
     });
   });
 
@@ -207,6 +228,85 @@ describe('ReputationService', () => {
 
       expect(service.getLeaderboard(2)).toHaveLength(2);
     });
+
+    describe('deterministic tie-breaking', () => {
+      it('breaks a score tie by eventCount descending', async () => {
+        // GONE: a single amount-36 event (weight 6, dampening 1) -> 5*6*1 = 30.
+        // GTWO: two amount-16 events with the *same* counterparty (weight 4 each,
+        // dampening 1 then 1/2) -> 5*4*1 + 5*4*0.5 = 30. Same total score, but GTWO
+        // has twice the eventCount.
+        await service.recordEscrowCompleted(
+          makeEscrow({ depositor: 'GONE', beneficiary: 'GBENX', amountXLM: '36' }),
+        );
+        await service.recordEscrowCompleted(
+          makeEscrow({ depositor: 'GTWO', beneficiary: 'GBENY', amountXLM: '16' }),
+        );
+        await service.recordEscrowCompleted(
+          makeEscrow({ depositor: 'GTWO', beneficiary: 'GBENY', amountXLM: '16' }),
+        );
+
+        const gOne = service.getScore('GONE');
+        const gTwo = service.getScore('GTWO');
+        expect(gOne.score).toBeCloseTo(gTwo.score, 5);
+        expect(gTwo.eventCount).toBeGreaterThan(gOne.eventCount);
+
+        const addresses = service
+          .getLeaderboard()
+          .map(v => v.address)
+          .filter(a => a === 'GONE' || a === 'GTWO');
+        expect(addresses).toEqual(['GTWO', 'GONE']);
+      });
+
+      it('breaks a score and eventCount tie by address ascending', async () => {
+        await service.recordEscrowCompleted(makeEscrow({ depositor: 'GZEBRA', beneficiary: 'GX' }));
+        await service.recordEscrowCompleted(
+          makeEscrow({ depositor: 'GAARDVARK', beneficiary: 'GY' }),
+        );
+
+        const addresses = service
+          .getLeaderboard()
+          .map(v => v.address)
+          .filter(a => a === 'GZEBRA' || a === 'GAARDVARK');
+        expect(addresses).toEqual(['GAARDVARK', 'GZEBRA']);
+      });
+    });
+  });
+
+  describe('concurrent updates', () => {
+    it('applies every concurrently-fired contribution without losing any', async () => {
+      const counterparties = ['GBEN1', 'GBEN2', 'GBEN3', 'GBEN4', 'GBEN5'];
+
+      // Fired without awaiting individually first, the way concurrent request handlers would.
+      await Promise.all(
+        counterparties.map(beneficiary =>
+          service.recordEscrowCompleted(makeEscrow({ depositor: 'GDEP', beneficiary })),
+        ),
+      );
+
+      const view = service.getScore('GDEP');
+      expect(view.eventCount).toBe(counterparties.length);
+      expect(view.distinctCounterparties).toBe(counterparties.length);
+
+      // Every counterparty was distinct and one-off, so every contribution was undampened.
+      const expectedScore =
+        counterparties.length * REPUTATION_WEIGHTS[ReputationEventType.ESCROW_COMPLETED] * 10;
+      expect(view.score).toBeCloseTo(expectedScore, 5);
+    });
+
+    it('still dampens correctly when concurrent calls share the same counterparty', async () => {
+      // 5 concurrent completions between the same two addresses.
+      await Promise.all(
+        Array.from({ length: 5 }, () => service.recordEscrowCompleted(makeEscrow())),
+      );
+
+      const view = service.getScore('GDEPOSITOR');
+      expect(view.eventCount).toBe(5);
+
+      const perEventWeight = REPUTATION_WEIGHTS[ReputationEventType.ESCROW_COMPLETED] * 10;
+      const harmonicSum = 1 + 1 / 2 + 1 / 3 + 1 / 4 + 1 / 5;
+      // getScore() rounds to 2 decimal places, so compare at that precision.
+      expect(view.score).toBeCloseTo(perEventWeight * harmonicSum, 2);
+    });
   });
 
   describe('recentEvents', () => {
@@ -229,6 +329,23 @@ describe('ReputationService', () => {
       const view = service.getScore('GDEPOSITOR');
       expect(view.recentEvents[0].counterparty).toBe('GBEN2');
       expect(view.recentEvents[1].counterparty).toBe('GBEN1');
+    });
+
+    it('evicts the oldest entries once more than the configured limit have occurred', async () => {
+      const totalEvents = REPUTATION_RECENT_EVENTS_LIMIT + 5;
+      for (let i = 0; i < totalEvents; i++) {
+        await service.recordEscrowCompleted(makeEscrow({ beneficiary: `GBEN${i}` }));
+      }
+
+      const view = service.getScore('GDEPOSITOR');
+      // The log is capped, but the materialized score/eventCount still reflect every event.
+      expect(view.recentEvents).toHaveLength(REPUTATION_RECENT_EVENTS_LIMIT);
+      expect(view.eventCount).toBe(totalEvents);
+
+      // Most recent first; the earliest 5 counterparties (GBEN0..GBEN4) fell off the log.
+      expect(view.recentEvents[0].counterparty).toBe(`GBEN${totalEvents - 1}`);
+      expect(view.recentEvents.map(e => e.counterparty)).not.toContain('GBEN0');
+      expect(view.recentEvents.map(e => e.counterparty)).not.toContain('GBEN4');
     });
   });
 });

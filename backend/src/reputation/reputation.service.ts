@@ -87,7 +87,10 @@ export class ReputationService {
     return this.store
       .findAll()
       .map(record => this.decayedRecord(record.address, now))
-      .sort((a, b) => b.score - a.score)
+      .sort(
+        (a, b) =>
+          b.score - a.score || b.eventCount - a.eventCount || a.address.localeCompare(b.address),
+      )
       .slice(0, limit)
       .map(record => this.toView(record));
   }
@@ -103,6 +106,20 @@ export class ReputationService {
     }
   }
 
+  /**
+   * Concurrency note: this method's read (decayedRecord) → modify → write (store.save) sequence
+   * has no `await` anywhere in it, and neither does decayedRecord. A synchronous function body in
+   * Node runs to completion before the event loop yields to any other queued callback, so two
+   * "concurrent" callers (e.g. two requests racing to call recordEscrowCompleted at once) can never
+   * interleave mid-update here — one call's entire read-modify-write always finishes before the
+   * next one starts, even though the enclosing recordEscrowCompleted/recordDisputeResolved methods
+   * are declared `async`. See the "applies concurrent updates without losing contributions" spec
+   * for a test that exercises this directly. This guarantee is specific to the current in-memory,
+   * fully-synchronous ReputationScoreStore — if that store is ever swapped for one backed by real
+   * I/O (a database, a network call), an `await` would be introduced between the read and the write
+   * here, and this method would need an optimistic-concurrency guard (e.g. a version/CAS check on
+   * save) to keep this property.
+   */
   private applyContribution(
     address: string,
     counterparty: string,
