@@ -1,10 +1,22 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  NotFoundException,
+  Post,
+  Body,
+  Param,
+  Query,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { EscrowService } from './escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
 import { WebhookEvent } from '../webhook/webhook.dto';
 import { ReputationService } from '../reputation/reputation.service';
+import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
+
+const STELLAR_ADDRESS_REGEX = /^G[A-Z2-7]{55}$/;
 
 interface CreateEscrowDto {
   depositor: string;
@@ -24,6 +36,7 @@ export class EscrowController {
     private readonly webhookService: WebhookService,
     private readonly discordService: DiscordService,
     private readonly reputationService: ReputationService,
+    private readonly escrowReleaseTransactionBuilderService: EscrowReleaseTransactionBuilderService,
   ) {}
 
   @Post()
@@ -157,6 +170,45 @@ export class EscrowController {
     const escrow = await this.escrowService.release(id);
     await this.reputationService.recordEscrowCompleted(escrow);
     return escrow;
+  }
+
+  @Get(':id/release/transaction')
+  @ApiOperation({
+    summary: 'Build an unsigned on-chain release transaction (prototype, spike #180)',
+    description:
+      'Builds and simulates a Soroban `release` invocation for a chain-linked escrow, returning ' +
+      'unsigned XDR for the caller to sign with their own wallet and submit directly to Soroban RPC. ' +
+      'The backend never holds a signing key for this — see the #180 write-path spike write-up. ' +
+      'Requires TRUSTFLOW_CONTRACT_ID to be configured and the escrow to be linked to an on-chain ID.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID', example: 'esc-1234567890' })
+  @ApiQuery({
+    name: 'sourceAccount',
+    description: 'Stellar address that will sign and submit the transaction',
+    example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  })
+  @ApiResponse({ status: 200, description: 'Unsigned release transaction XDR' })
+  @ApiResponse({ status: 400, description: 'Invalid or missing sourceAccount' })
+  @ApiResponse({ status: 404, description: 'Escrow not found or not linked to an on-chain escrow' })
+  @ApiResponse({ status: 503, description: 'TRUSTFLOW_CONTRACT_ID is not configured' })
+  async buildReleaseTransaction(
+    @Param('id') id: string,
+    @Query('sourceAccount') sourceAccount: string,
+  ) {
+    if (!sourceAccount || !STELLAR_ADDRESS_REGEX.test(sourceAccount)) {
+      throw new BadRequestException('sourceAccount must be a valid Stellar address');
+    }
+
+    const escrow = await this.escrowService.findById(id);
+    if (!escrow) throw new NotFoundException(`Escrow ${id} not found`);
+    if (!escrow.contractEscrowId) {
+      throw new NotFoundException(`Escrow ${id} is not yet linked to an on-chain escrow`);
+    }
+
+    return this.escrowReleaseTransactionBuilderService.buildRelease(
+      escrow.contractEscrowId,
+      sourceAccount,
+    );
   }
 
   @Post(':id/dispute')
