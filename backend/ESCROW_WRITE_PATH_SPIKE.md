@@ -62,7 +62,9 @@ Flow:
 
 This demonstrates the mechanics of one escrow action's write path reaching the chain boundary end-to-end (account load → contract invocation → simulation/footprint assembly → XDR), which was the concrete unknown this spike needed to resolve.
 
-Tests (`escrow-release-transaction-builder.service.spec.ts`, `escrow.controller.spec.ts`) exercise this with mocked RPC responses, mirroring how `SorobanEscrowChainStateClient` is already tested — no live network access, so CI stays fully offline-safe. See §5 for why this stops short of a live testnet run.
+The RPC server and Stellar config are injected via Nest provider tokens (`SOROBAN_RPC_SERVER`, `ESCROW_WRITE_STELLAR_CONFIG` in `escrow-write.module.ts`) rather than constructed inline, so tests supply a mocked RPC server and an arbitrary config object directly — no `jest.resetModules()`/`process.env` mutation needed. `sourceAccount` validation lives in `BuildReleaseTransactionQueryDto` (`class-validator`, reusing the shared `STELLAR_ADDRESS_REGEX` from `escrow.dto.ts`) and runs through the app's existing global `ValidationPipe`, verified with a Supertest-driven integration test (`escrow.controller.spec.ts`) that boots a real Nest app, matching the pattern already used in `reputation.controller.spec.ts`.
+
+Tests (`escrow-release-transaction-builder.service.spec.ts`, `escrow.controller.spec.ts`) exercise this with mocked RPC responses — no live network access, so CI stays fully offline-safe. See §5 for why this stops short of a live testnet run.
 
 ## 4. Reconciliation with `stellar.service.ts` / `soroban.helper.ts`
 

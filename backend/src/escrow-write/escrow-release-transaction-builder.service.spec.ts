@@ -1,49 +1,53 @@
 import { Account, Keypair, Transaction } from '@stellar/stellar-sdk';
+import { EscrowReleaseTransactionBuilderService } from './escrow-release-transaction-builder.service';
+import { STELLAR_CONFIG } from '../stellar/stellar.config';
 
 const TEST_CONTRACT_ID = 'CBNXX7I4MGHZO3YAKXJIJNR5TTNSP6R2JAXMA44FS47JSTYAW7LIR4CS';
 
+function makeRpcServer() {
+  return {
+    getAccount: jest.fn(),
+    prepareTransaction: jest.fn(),
+  };
+}
+
 describe('EscrowReleaseTransactionBuilderService', () => {
-  const originalContractId = process.env.TRUSTFLOW_CONTRACT_ID;
-
-  afterEach(() => {
-    if (originalContractId === undefined) delete process.env.TRUSTFLOW_CONTRACT_ID;
-    else process.env.TRUSTFLOW_CONTRACT_ID = originalContractId;
-    jest.resetModules();
-  });
-
-  describe('not configured (no TRUSTFLOW_CONTRACT_ID)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let service: any;
+  describe('not configured (no contractId)', () => {
+    let rpcServer: ReturnType<typeof makeRpcServer>;
+    let service: EscrowReleaseTransactionBuilderService;
 
     beforeEach(() => {
-      delete process.env.TRUSTFLOW_CONTRACT_ID;
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require('./escrow-release-transaction-builder.service');
-      service = new mod.EscrowReleaseTransactionBuilderService();
+      rpcServer = makeRpcServer();
+      service = new EscrowReleaseTransactionBuilderService(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        rpcServer as any,
+        { ...STELLAR_CONFIG, contractId: '' },
+      );
     });
 
     it('reports not configured', () => {
       expect(service.isConfigured).toBe(false);
     });
 
-    it('refuses to build a transaction against no contract', async () => {
+    it('refuses to build a transaction against no contract, without touching the RPC server', async () => {
       await expect(service.buildRelease('esc-1', Keypair.random().publicKey())).rejects.toThrow(
         'TRUSTFLOW_CONTRACT_ID is not set',
       );
+      expect(rpcServer.getAccount).not.toHaveBeenCalled();
     });
   });
 
-  describe('configured (TRUSTFLOW_CONTRACT_ID set)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let service: any;
+  describe('configured (contractId set)', () => {
+    let rpcServer: ReturnType<typeof makeRpcServer>;
+    let service: EscrowReleaseTransactionBuilderService;
 
     beforeEach(() => {
-      process.env.TRUSTFLOW_CONTRACT_ID = TEST_CONTRACT_ID;
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require('./escrow-release-transaction-builder.service');
-      service = new mod.EscrowReleaseTransactionBuilderService();
+      rpcServer = makeRpcServer();
+      service = new EscrowReleaseTransactionBuilderService(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        rpcServer as any,
+        { ...STELLAR_CONFIG, contractId: TEST_CONTRACT_ID },
+      );
     });
 
     it('reports configured', () => {
@@ -53,33 +57,31 @@ describe('EscrowReleaseTransactionBuilderService', () => {
     it('builds an unsigned release transaction via the invoking account and returns its XDR', async () => {
       const sourceKeypair = Keypair.random();
       const sourceAccount = new Account(sourceKeypair.publicKey(), '100');
-      jest.spyOn(service.rpcServer, 'getAccount').mockResolvedValue(sourceAccount);
+      rpcServer.getAccount.mockResolvedValue(sourceAccount);
 
       let preparedFrom: Transaction | undefined;
-      jest
-        .spyOn(service.rpcServer, 'prepareTransaction')
-        .mockImplementation(async (tx: Transaction) => {
-          preparedFrom = tx;
-          return tx;
-        });
+      rpcServer.prepareTransaction.mockImplementation(async (tx: Transaction) => {
+        preparedFrom = tx;
+        return tx;
+      });
 
       const result = await service.buildRelease('esc-1', sourceKeypair.publicKey());
 
-      expect(service.rpcServer.getAccount).toHaveBeenCalledWith(sourceKeypair.publicKey());
+      expect(rpcServer.getAccount).toHaveBeenCalledWith(sourceKeypair.publicKey());
       expect(preparedFrom?.operations).toHaveLength(1);
       expect(preparedFrom?.operations[0].type).toBe('invokeHostFunction');
 
       expect(result).toEqual({
         xdr: expect.any(String),
-        network: 'TESTNET',
-        networkPassphrase: 'Test SDF Network ; September 2015',
+        network: STELLAR_CONFIG.network,
+        networkPassphrase: STELLAR_CONFIG.networkPassphrase,
         contractId: TEST_CONTRACT_ID,
         sourceAccount: sourceKeypair.publicKey(),
       });
     });
 
     it('propagates RPC errors instead of swallowing them', async () => {
-      jest.spyOn(service.rpcServer, 'getAccount').mockRejectedValue(new Error('account not found'));
+      rpcServer.getAccount.mockRejectedValue(new Error('account not found'));
 
       await expect(service.buildRelease('esc-1', Keypair.random().publicKey())).rejects.toThrow(
         'account not found',

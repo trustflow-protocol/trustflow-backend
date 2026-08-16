@@ -1,4 +1,4 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   rpc as SorobanRpc,
   Contract,
@@ -7,6 +7,17 @@ import {
   nativeToScVal,
 } from '@stellar/stellar-sdk';
 import { STELLAR_CONFIG } from '../stellar/stellar.config';
+
+export const SOROBAN_RPC_SERVER = 'SOROBAN_RPC_SERVER';
+export const ESCROW_WRITE_STELLAR_CONFIG = 'ESCROW_WRITE_STELLAR_CONFIG';
+
+/**
+ * Assumed entrypoint for the non-disputed release call: a single string argument, the
+ * contract's own escrow id. Not yet verified against a real contract — see the #180 spike
+ * write-up (backend/ESCROW_WRITE_PATH_SPIKE.md) for why. Update this if the confirmed
+ * contract signature turns out to differ.
+ */
+const RELEASE_ENTRYPOINT = 'release';
 
 export interface UnsignedReleaseTransaction {
   xdr: string;
@@ -25,24 +36,18 @@ export interface UnsignedReleaseTransaction {
  * own wallet signs the returned XDR and submits it directly to Soroban RPC. The result then
  * flows back into EscrowService the same way any other on-chain change already does — through
  * event-ingestion — so nothing downstream of this needs to change.
- *
- * The `release` entrypoint name and its single string-id argument are assumed, mirroring the
- * storage-key assumption already documented in SorobanEscrowChainStateClient: no contract
- * source lives in this repo to verify either against, and the sibling contract-repo spike
- * flags the non-disputed release entrypoint as not yet built. Once that entrypoint's real
- * name/signature is confirmed, only this file's addOperation call needs to change.
  */
 @Injectable()
 export class EscrowReleaseTransactionBuilderService {
   private readonly logger = new Logger(EscrowReleaseTransactionBuilderService.name);
-  private readonly rpcServer: SorobanRpc.Server;
 
-  constructor() {
-    this.rpcServer = new SorobanRpc.Server(STELLAR_CONFIG.sorobanRpcUrl);
-  }
+  constructor(
+    @Inject(SOROBAN_RPC_SERVER) private readonly rpcServer: SorobanRpc.Server,
+    @Inject(ESCROW_WRITE_STELLAR_CONFIG) private readonly config: typeof STELLAR_CONFIG,
+  ) {}
 
   get isConfigured(): boolean {
-    return Boolean(STELLAR_CONFIG.contractId);
+    return Boolean(this.config.contractId);
   }
 
   async buildRelease(
@@ -56,13 +61,15 @@ export class EscrowReleaseTransactionBuilderService {
     }
 
     const account = await this.rpcServer.getAccount(sourceAccount);
-    const contract = new Contract(STELLAR_CONFIG.contractId);
+    const contract = new Contract(this.config.contractId);
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
-      networkPassphrase: STELLAR_CONFIG.networkPassphrase,
+      networkPassphrase: this.config.networkPassphrase,
     })
-      .addOperation(contract.call('release', nativeToScVal(contractEscrowId, { type: 'string' })))
+      .addOperation(
+        contract.call(RELEASE_ENTRYPOINT, nativeToScVal(contractEscrowId, { type: 'string' })),
+      )
       .setTimeout(60)
       .build();
 
@@ -72,9 +79,9 @@ export class EscrowReleaseTransactionBuilderService {
 
     return {
       xdr: prepared.toXDR(),
-      network: STELLAR_CONFIG.network,
-      networkPassphrase: STELLAR_CONFIG.networkPassphrase,
-      contractId: STELLAR_CONFIG.contractId,
+      network: this.config.network,
+      networkPassphrase: this.config.networkPassphrase,
+      contractId: this.config.contractId,
       sourceAccount,
     };
   }
