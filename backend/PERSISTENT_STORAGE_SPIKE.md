@@ -4,6 +4,9 @@
 **Status**: ✅ Spike complete — recommendation + working prototype
 **Estimated Time**: 2-3 days (time-boxed spike)
 **Difficulty**: 🟣 Spike
+**⚠️ New production requirement**: as of this PR, `REDIS_URL` must be configured in any
+`NODE_ENV=production` deployment — `GigService` now fails app startup rather than silently
+falling back to per-instance memory when it's missing (see §6).
 
 ## Overview
 

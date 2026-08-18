@@ -65,6 +65,22 @@ jobs:
         working-directory: ./backend
         run: npx tsc --noEmit
 
+      # Belt-and-suspenders alongside the service's own --health-cmd/--health-retries above
+      # (which gates job startup, not necessarily readiness by the time this step runs):
+      # explicitly retry a real connection before trusting REDIS_URL in the test step.
+      - name: Wait for Redis
+        run: |
+          for i in $(seq 1 15); do
+            if (echo > /dev/tcp/127.0.0.1/6379) >/dev/null 2>&1; then
+              echo "Redis is accepting connections"
+              exit 0
+            fi
+            echo "Waiting for Redis... ($i/15)"
+            sleep 2
+          done
+          echo "::error::Redis did not become available in time" >&2
+          exit 1
+
       - name: Unit tests
         working-directory: ./backend
         run: npm run test:ci
