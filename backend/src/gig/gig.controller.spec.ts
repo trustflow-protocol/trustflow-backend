@@ -47,7 +47,7 @@ describe('GigController', () => {
 
     it('creates the gig via the service and dispatches a gig.created webhook', async () => {
       const gig = { id: 'gig-1', ...dto, status: GigStatus.OPEN };
-      mockGigService.create.mockReturnValue(gig);
+      mockGigService.create.mockResolvedValue(gig);
 
       const result = await controller.create(dto);
 
@@ -65,19 +65,19 @@ describe('GigController', () => {
   });
 
   describe('findOne', () => {
-    it('delegates to the service', () => {
-      mockGigService.findById.mockReturnValue({ id: 'gig-1' });
-      expect(controller.findOne('gig-1')).toEqual({ id: 'gig-1' });
+    it('delegates to the service', async () => {
+      mockGigService.findById.mockResolvedValue({ id: 'gig-1' });
+      await expect(controller.findOne('gig-1')).resolves.toEqual({ id: 'gig-1' });
       expect(mockGigService.findById).toHaveBeenCalledWith('gig-1');
     });
   });
 
   describe('findByCreator', () => {
-    it('delegates to the service', () => {
-      mockGigService.findByCreator.mockReturnValue([{ id: 'gig-1' }]);
+    it('delegates to the service', async () => {
+      mockGigService.findByCreator.mockResolvedValue([{ id: 'gig-1' }]);
       const address = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 
-      expect(controller.findByCreator(address)).toEqual([{ id: 'gig-1' }]);
+      await expect(controller.findByCreator(address)).resolves.toEqual([{ id: 'gig-1' }]);
       expect(mockGigService.findByCreator).toHaveBeenCalledWith(address);
     });
   });
@@ -86,7 +86,7 @@ describe('GigController', () => {
     it('accepts via the service and dispatches a gig.accepted webhook', async () => {
       const responder = 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY';
       const gig = { id: 'gig-1', status: GigStatus.ACCEPTED, acceptedBy: responder };
-      mockGigService.accept.mockReturnValue(gig);
+      mockGigService.accept.mockResolvedValue(gig);
 
       const result = await controller.accept('gig-1', { responder });
 
@@ -99,7 +99,7 @@ describe('GigController', () => {
   describe('cancel', () => {
     it('cancels via the service and dispatches a gig.cancelled webhook', async () => {
       const gig = { id: 'gig-1', status: GigStatus.CANCELLED };
-      mockGigService.cancel.mockReturnValue(gig);
+      mockGigService.cancel.mockResolvedValue(gig);
 
       const result = await controller.cancel('gig-1');
 

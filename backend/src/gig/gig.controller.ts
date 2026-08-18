@@ -79,7 +79,7 @@ export class GigController {
   })
   async create(@Body() dto: CreateGigDto) {
     const validated = CreateGigSchema.parse(dto);
-    const gig = this.gigService.create(validated);
+    const gig = await this.gigService.create(validated);
     await this.webhookService.dispatch(GIG_EVENTS.GIG_CREATED, gig);
     return gig;
   }
@@ -135,7 +135,7 @@ export class GigController {
   @ApiResponse({ status: 404, description: 'Gig not found' })
   async accept(@Param('id') id: string, @Body() dto: AcceptGigDto) {
     const validated = AcceptGigSchema.parse(dto);
-    const gig = this.gigService.accept(id, validated.responder);
+    const gig = await this.gigService.accept(id, validated.responder);
     await this.webhookService.dispatch(GIG_EVENTS.GIG_ACCEPTED, gig);
     return gig;
   }
@@ -152,7 +152,7 @@ export class GigController {
   @ApiResponse({ status: 400, description: 'Gig is not open' })
   @ApiResponse({ status: 404, description: 'Gig not found' })
   async cancel(@Param('id') id: string) {
-    const gig = this.gigService.cancel(id);
+    const gig = await this.gigService.cancel(id);
     await this.webhookService.dispatch(GIG_EVENTS.GIG_CANCELLED, gig);
     return gig;
   }

@@ -43,10 +43,10 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
 
   /** Runs a single sweep. Exposed so it can also be triggered manually (e.g. from tests or an admin endpoint). */
   async runOnce(): Promise<void> {
-    const expirable = this.gigService.findExpirable();
+    const expirable = await this.gigService.findExpirable();
 
     for (const gig of expirable) {
-      const expired = this.gigService.expire(gig.id);
+      const expired = await this.gigService.expire(gig.id);
       if (!expired) continue;
 
       await this.webhookService.dispatch(GIG_EVENTS.GIG_EXPIRED, {

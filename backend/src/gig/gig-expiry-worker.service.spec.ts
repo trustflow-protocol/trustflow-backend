@@ -3,6 +3,13 @@ import { GigService } from './gig.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { GIG_EVENTS, Gig, GigStatus } from './gig.entity';
 
+/** Flushes the microtask queue so chained awaits inside a fake-timer tick settle. */
+async function flushPromises(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve();
+  }
+}
+
 function makeGig(id: string, status: GigStatus): Gig {
   return {
     id,
@@ -23,7 +30,7 @@ describe('GigExpiryWorkerService', () => {
 
   beforeEach(() => {
     gigService = {
-      findExpirable: jest.fn().mockReturnValue([]),
+      findExpirable: jest.fn().mockResolvedValue([]),
       expire: jest.fn(),
     };
     webhookService = {
@@ -48,8 +55,8 @@ describe('GigExpiryWorkerService', () => {
         ...makeGig('gig-a', GigStatus.EXPIRED),
         expiredAt: '2026-01-01T02:00:00.000Z',
       };
-      gigService.findExpirable.mockReturnValue([makeGig('gig-a', GigStatus.OPEN)]);
-      gigService.expire.mockReturnValue(expiredGig);
+      gigService.findExpirable.mockResolvedValue([makeGig('gig-a', GigStatus.OPEN)]);
+      gigService.expire.mockResolvedValue(expiredGig);
 
       await worker.runOnce();
 
@@ -61,8 +68,8 @@ describe('GigExpiryWorkerService', () => {
     });
 
     it('skips dispatching when expire() returns undefined (already resolved)', async () => {
-      gigService.findExpirable.mockReturnValue([makeGig('gig-a', GigStatus.OPEN)]);
-      gigService.expire.mockReturnValue(undefined);
+      gigService.findExpirable.mockResolvedValue([makeGig('gig-a', GigStatus.OPEN)]);
+      gigService.expire.mockResolvedValue(undefined);
 
       await worker.runOnce();
 
@@ -70,11 +77,11 @@ describe('GigExpiryWorkerService', () => {
     });
 
     it('processes every expirable gig even when the list has multiple entries', async () => {
-      gigService.findExpirable.mockReturnValue([
+      gigService.findExpirable.mockResolvedValue([
         makeGig('gig-a', GigStatus.OPEN),
         makeGig('gig-b', GigStatus.OPEN),
       ]);
-      gigService.expire.mockImplementation(id => makeGig(id, GigStatus.EXPIRED));
+      gigService.expire.mockImplementation(async id => makeGig(id, GigStatus.EXPIRED));
 
       await worker.runOnce();
 
@@ -87,14 +94,14 @@ describe('GigExpiryWorkerService', () => {
     it('schedules periodic sweeps at the default interval', () => {
       jest.useFakeTimers();
       delete process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS;
-      gigService.findExpirable.mockReturnValue([makeGig('gig-a', GigStatus.OPEN)]);
-      gigService.expire.mockReturnValue(makeGig('gig-a', GigStatus.EXPIRED));
+      gigService.findExpirable.mockResolvedValue([makeGig('gig-a', GigStatus.OPEN)]);
+      gigService.expire.mockResolvedValue(makeGig('gig-a', GigStatus.EXPIRED));
 
       worker.onModuleInit();
       expect(gigService.expire).not.toHaveBeenCalled();
 
       jest.advanceTimersByTime(5 * 60 * 1000);
-      return Promise.resolve().then(() => {
+      return flushPromises().then(() => {
         expect(gigService.expire).toHaveBeenCalledWith('gig-a');
       });
     });
@@ -102,15 +109,15 @@ describe('GigExpiryWorkerService', () => {
     it('honors a custom GIG_EXPIRY_SWEEP_INTERVAL_MS', () => {
       jest.useFakeTimers();
       process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS = '1000';
-      gigService.findExpirable.mockReturnValue([makeGig('gig-a', GigStatus.OPEN)]);
-      gigService.expire.mockReturnValue(makeGig('gig-a', GigStatus.EXPIRED));
+      gigService.findExpirable.mockResolvedValue([makeGig('gig-a', GigStatus.OPEN)]);
+      gigService.expire.mockResolvedValue(makeGig('gig-a', GigStatus.EXPIRED));
 
       worker.onModuleInit();
       jest.advanceTimersByTime(999);
       expect(gigService.expire).not.toHaveBeenCalled();
 
       jest.advanceTimersByTime(1);
-      return Promise.resolve().then(() => {
+      return flushPromises().then(() => {
         expect(gigService.expire).toHaveBeenCalledWith('gig-a');
       });
     });
@@ -128,7 +135,7 @@ describe('GigExpiryWorkerService', () => {
     it('stops sweeping once destroyed', () => {
       jest.useFakeTimers();
       process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS = '1000';
-      gigService.findExpirable.mockReturnValue([makeGig('gig-a', GigStatus.OPEN)]);
+      gigService.findExpirable.mockResolvedValue([makeGig('gig-a', GigStatus.OPEN)]);
 
       worker.onModuleInit();
       worker.onModuleDestroy();
