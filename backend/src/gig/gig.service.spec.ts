@@ -1,15 +1,22 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { GigService } from './gig.service';
+import { GigService, GIG_PERSISTENCE_FALLBACK_METRIC } from './gig.service';
 import { GigStatus } from './gig.entity';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { MetricsService } from '../monitoring/metrics.service';
 
+/** Mirrors ioredis: MULTI/EXEC resolves an array of [error, result] tuples per queued command. */
 function makeInMemoryRedis() {
   const store = new Map<string, string>();
   const sets = new Map<string, Set<string>>();
   const zsets = new Map<string, Map<string, number>>();
+  /** When set, the next MULTI's exec() returns this instead of the computed op results. */
+  let nextExecOverride: (() => Promise<Array<[Error | null, unknown]> | null>) | null = null;
 
   const client = {
+    mockNextExecResult(fn: () => Promise<Array<[Error | null, unknown]> | null>) {
+      nextExecOverride = fn;
+    },
     get: jest.fn(async (key: string) => store.get(key) ?? null),
     mget: jest.fn(async (...keys: string[]) => keys.map(k => store.get(k) ?? null)),
     smembers: jest.fn(async (key: string) => [...(sets.get(key) ?? [])]),
@@ -25,33 +32,45 @@ function makeInMemoryRedis() {
         .map(([member]) => member);
     }),
     multi: jest.fn(() => {
-      const ops: Array<() => void> = [];
+      const ops: Array<() => [Error | null, unknown]> = [];
       const chain = {
         set: (key: string, value: string) => {
-          ops.push(() => store.set(key, value));
+          ops.push(() => {
+            store.set(key, value);
+            return [null, 'OK'];
+          });
           return chain;
         },
         zadd: (key: string, score: number, member: string) => {
           ops.push(() => {
             if (!zsets.has(key)) zsets.set(key, new Map());
             zsets.get(key)!.set(member, score);
+            return [null, 1];
           });
           return chain;
         },
         zrem: (key: string, member: string) => {
-          ops.push(() => zsets.get(key)?.delete(member));
+          ops.push(() => {
+            zsets.get(key)?.delete(member);
+            return [null, 1];
+          });
           return chain;
         },
         sadd: (key: string, member: string) => {
           ops.push(() => {
             if (!sets.has(key)) sets.set(key, new Set());
             sets.get(key)!.add(member);
+            return [null, 1];
           });
           return chain;
         },
         exec: async () => {
-          ops.forEach(op => op());
-          return [];
+          if (nextExecOverride) {
+            const fn = nextExecOverride;
+            nextExecOverride = null;
+            return fn();
+          }
+          return ops.map(op => op());
         },
       };
       return chain;
@@ -63,6 +82,7 @@ function makeInMemoryRedis() {
 
 describe('GigService', () => {
   let service: GigService;
+  let metrics: jest.Mocked<Pick<MetricsService, 'increment'>>;
 
   const validDto = {
     creator: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
@@ -71,8 +91,13 @@ describe('GigService', () => {
   };
 
   async function buildService(redis: unknown): Promise<GigService> {
+    metrics = { increment: jest.fn() };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [GigService, { provide: REDIS_CLIENT, useValue: redis }],
+      providers: [
+        GigService,
+        { provide: REDIS_CLIENT, useValue: redis },
+        { provide: MetricsService, useValue: metrics },
+      ],
     }).compile();
 
     return module.get<GigService>(GigService);
@@ -222,7 +247,7 @@ describe('GigService', () => {
   });
 
   describe('Redis failure', () => {
-    it('falls back to memory when Redis throws', async () => {
+    it('falls back to memory and records the fallback metric when Redis throws', async () => {
       const redis = makeInMemoryRedis();
       redis.get.mockRejectedValue(new Error('Redis down'));
       redis.multi.mockImplementation(() => {
@@ -231,7 +256,69 @@ describe('GigService', () => {
       service = await buildService(redis);
 
       const gig = await service.create(validDto);
+
       expect(gig.status).toBe(GigStatus.OPEN);
+      expect(metrics.increment).toHaveBeenCalledWith(GIG_PERSISTENCE_FALLBACK_METRIC, {
+        operation: 'create',
+      });
+    });
+
+    it('falls back to memory when a queued MULTI command fails without exec() itself rejecting', async () => {
+      const redis = makeInMemoryRedis();
+      redis.mockNextExecResult(async () => [
+        [null, 'OK'],
+        [new Error('WRONGTYPE'), null],
+      ]);
+      service = await buildService(redis);
+
+      const gig = await service.create(validDto);
+
+      expect(gig.status).toBe(GigStatus.OPEN);
+      expect(metrics.increment).toHaveBeenCalledWith(GIG_PERSISTENCE_FALLBACK_METRIC, {
+        operation: 'create',
+      });
+    });
+
+    it('falls back to memory when exec() resolves null (e.g. an aborted WATCH)', async () => {
+      const redis = makeInMemoryRedis();
+      redis.mockNextExecResult(async () => null);
+      service = await buildService(redis);
+
+      const gig = await service.create(validDto);
+
+      expect(gig.status).toBe(GigStatus.OPEN);
+      expect(metrics.increment).toHaveBeenCalledWith(GIG_PERSISTENCE_FALLBACK_METRIC, {
+        operation: 'create',
+      });
+    });
+  });
+
+  describe('onModuleInit', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalNodeEnv;
+    });
+
+    it('throws in production when Redis is not configured', async () => {
+      process.env.NODE_ENV = 'production';
+      service = await buildService(null);
+
+      expect(() => service.onModuleInit()).toThrow(/requires REDIS_URL/);
+    });
+
+    it('does not throw in production when Redis is configured', async () => {
+      process.env.NODE_ENV = 'production';
+      service = await buildService(makeInMemoryRedis());
+
+      expect(() => service.onModuleInit()).not.toThrow();
+    });
+
+    it('does not throw outside production even without Redis', async () => {
+      process.env.NODE_ENV = 'test';
+      service = await buildService(null);
+
+      expect(() => service.onModuleInit()).not.toThrow();
     });
   });
 });

@@ -19,6 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
+    services:
+      # Backs the Redis integration smoke tests (e.g. gig.service.redis-integration.spec.ts).
+      # Tests that need it check `process.env.REDIS_URL` themselves and skip when it's unset,
+      # so this is additive — it doesn't change behavior of the mocked-Redis unit tests.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       NODE_ENV: test
       # SENTRY_DSN intentionally absent — every step must pass without it
@@ -54,6 +68,8 @@ jobs:
       - name: Unit tests
         working-directory: ./backend
         run: npm run test:ci
+        env:
+          REDIS_URL: redis://localhost:6379
 
       - name: Build
         working-directory: ./backend

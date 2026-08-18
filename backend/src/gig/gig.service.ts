@@ -1,6 +1,14 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { MetricsService } from '../monitoring/metrics.service';
 import { CreateGigDto } from './gig.dto';
 import { DEFAULT_RESPONSE_WINDOW_HOURS, Gig, GigStatus } from './gig.entity';
 
@@ -9,22 +17,44 @@ const GIGS_INDEX_KEY = 'gigs:index';
 const GIGS_OPEN_BY_RESPOND_BY_KEY = 'gigs:open:respondBy';
 const GIGS_BY_CREATOR_PREFIX = 'gigs:by-creator:';
 
+/** Emitted (see `/metrics`) every time a call falls back to the in-memory store. */
+export const GIG_PERSISTENCE_FALLBACK_METRIC = 'gig_persistence_fallback_total';
+
 /**
  * Gig solicitation store. Backed by Redis so gig state survives restarts and is shared
  * across instances behind a load balancer — see PERSISTENT_STORAGE_SPIKE.md. Falls back to
  * a process-local Map when Redis is unavailable, matching the degrade-gracefully pattern
  * already used by NonceStoreService/RateLimitGuard elsewhere in this codebase. That fallback
  * reintroduces per-instance divergence for as long as it's active, so it's logged at error
- * level rather than warn.
+ * level, counted via `GIG_PERSISTENCE_FALLBACK_METRIC`, and — in production — refused outright
+ * at startup rather than silently engaged (see `onModuleInit`).
  */
 @Injectable()
-export class GigService {
+export class GigService implements OnModuleInit {
   private readonly logger = new Logger(GigService.name);
 
   /** Fallback store, only used while Redis is unavailable. */
   private readonly gigs = new Map<string, Gig>();
 
-  constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis | null) {}
+  constructor(
+    @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
+    private readonly metrics: MetricsService,
+  ) {}
+
+  /**
+   * In production, a missing Redis client means every gig write would silently start
+   * diverging per-instance — exactly the failure mode this store exists to eliminate. Fail
+   * app startup instead of degrading quietly. Non-production environments (dev/test) keep the
+   * in-memory fallback so the app still runs without a local Redis.
+   */
+  onModuleInit(): void {
+    if (!this.redis && process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'GigService requires REDIS_URL to be configured in production — refusing to start ' +
+          'with per-instance in-memory storage, which would silently diverge across instances.',
+      );
+    }
+  }
 
   async create(dto: CreateGigDto): Promise<Gig> {
     const id = `gig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -43,13 +73,14 @@ export class GigService {
 
     if (this.redis) {
       try {
-        await this.redis
+        const results = await this.redis
           .multi()
           .set(this.gigKey(id), JSON.stringify(gig))
           .zadd(GIGS_INDEX_KEY, now.getTime(), id)
           .zadd(GIGS_OPEN_BY_RESPOND_BY_KEY, new Date(gig.respondBy).getTime(), id)
           .sadd(this.creatorKey(gig.creator), id)
           .exec();
+        this.assertTransactionOk(results);
         return gig;
       } catch (err) {
         this.logFallback('create', err);
@@ -149,11 +180,12 @@ export class GigService {
   private async persistResolved(gig: Gig): Promise<void> {
     if (this.redis) {
       try {
-        await this.redis
+        const results = await this.redis
           .multi()
           .set(this.gigKey(gig.id), JSON.stringify(gig))
           .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, gig.id)
           .exec();
+        this.assertTransactionOk(results);
         return;
       } catch (err) {
         this.logFallback('persistResolved', err);
@@ -182,6 +214,23 @@ export class GigService {
     return raw.filter((r): r is string => r !== null).map(r => JSON.parse(r) as Gig);
   }
 
+  /**
+   * `MULTI`/`EXEC` only rejects the whole batch on a queue-time error (e.g. a malformed
+   * command); a runtime failure in one queued command instead surfaces as a per-command
+   * `[Error, null]` entry in the results array while `exec()` itself still resolves. Without
+   * this check a partially-applied transaction (e.g. the entity written but an index update
+   * silently dropped) would be treated as a full success.
+   */
+  private assertTransactionOk(results: Array<[Error | null, unknown]> | null): void {
+    if (!results) {
+      throw new Error('Redis transaction aborted (exec() returned null, e.g. a WATCH conflict)');
+    }
+    const failed = results.find(([err]) => err);
+    if (failed) {
+      throw new Error(`Redis transaction command failed: ${failed[0]!.message}`);
+    }
+  }
+
   private gigKey(id: string): string {
     return `${GIG_KEY_PREFIX}${id}`;
   }
@@ -191,6 +240,7 @@ export class GigService {
   }
 
   private logFallback(operation: string, err: unknown): void {
+    this.metrics.increment(GIG_PERSISTENCE_FALLBACK_METRIC, { operation });
     this.logger.error(
       `Redis unavailable for gig.${operation}, falling back to per-instance memory ` +
         '(multi-instance state will diverge until Redis recovers)',
