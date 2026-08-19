@@ -11,6 +11,7 @@ import {
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiHeader,
   ApiOperation,
   ApiParam,
   ApiResponse,
@@ -21,6 +22,7 @@ import { WebhookService } from '../webhook/webhook.service';
 import { AcceptGigDto, AcceptGigSchema, CreateGigDto, CreateGigSchema } from './gig.dto';
 import { GIG_EVENTS } from './gig.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { Idempotent } from '../common/idempotency';
 
 @ApiTags('Gigs')
 @Controller('gigs')
@@ -34,11 +36,21 @@ export class GigController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
+  @Idempotent()
   @ApiOperation({
     summary: 'Post a gig solicitation',
     description:
       'Creates an open gig solicitation. If nobody accepts it within the response window ' +
       '(default 72h), the background expiry sweep automatically marks it as expired.',
+  })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      'A unique key (e.g. UUID) to ensure this request is idempotent. ' +
+      'Retries with the same key and body return the original response without creating a duplicate. ' +
+      'Reusing the key with a different body returns 422.',
+    schema: { type: 'string' },
   })
   @ApiBody({
     description: 'Gig solicitation details',

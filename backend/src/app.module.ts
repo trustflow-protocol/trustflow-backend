@@ -7,6 +7,7 @@ import { StellarModule } from './stellar/stellar.module';
 import { SentryModule } from './sentry/sentry.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
+import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { UserProfileModule } from './user-profile/user-profile.module';
 import { EventIngestionModule } from './event-ingestion/event-ingestion.module';
 import { DisputeModule } from './dispute/dispute.module';
@@ -21,6 +22,7 @@ import { ReputationModule } from './reputation/reputation.module';
     SentryModule,
     RedisModule,
     RateLimitModule,
+    IdempotencyModule,
     AuthModule,
     UserProfileModule,
     EscrowModule,

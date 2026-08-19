@@ -1,5 +1,13 @@
 import { Controller, Get, NotFoundException, Post, Body, Param, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiHeader,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { EscrowService } from './escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
@@ -7,6 +15,7 @@ import { WebhookEvent } from '../webhook/webhook.dto';
 import { ReputationService } from '../reputation/reputation.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
 import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
+import { Idempotent } from '../common/idempotency';
 
 interface CreateEscrowDto {
   depositor: string;
@@ -30,9 +39,19 @@ export class EscrowController {
   ) {}
 
   @Post()
+  @Idempotent()
   @ApiOperation({
     summary: 'Create new escrow',
     description: 'Creates a new escrow vault with depositor, beneficiary, and amount.',
+  })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      'A unique key (e.g. UUID) to ensure this request is idempotent. ' +
+      'Retries with the same key and body return the original response without creating a duplicate. ' +
+      'Reusing the key with a different body returns 422.',
+    schema: { type: 'string' },
   })
   @ApiBody({
     description: 'Escrow creation details',
