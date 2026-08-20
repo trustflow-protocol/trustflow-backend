@@ -26,7 +26,9 @@ export class IdempotencyKeyService {
    * the raw body so the Redis key stays compact.
    */
   static hashBody(body: unknown): string {
-    return createHash('sha256').update(JSON.stringify(body ?? {})).digest('hex');
+    return createHash('sha256')
+      .update(JSON.stringify(body ?? {}))
+      .digest('hex');
   }
 
   /**
@@ -58,12 +60,7 @@ export class IdempotencyKeyService {
     if (!this.redis) return;
     const record: IdempotencyRecord = { requestHash, statusCode, body };
     try {
-      await this.redis.set(
-        this.buildKey(endpoint, key),
-        JSON.stringify(record),
-        'EX',
-        ttlSeconds,
-      );
+      await this.redis.set(this.buildKey(endpoint, key), JSON.stringify(record), 'EX', ttlSeconds);
     } catch (err) {
       this.logger.warn('Idempotency store failed, response will not be cached', err);
     }

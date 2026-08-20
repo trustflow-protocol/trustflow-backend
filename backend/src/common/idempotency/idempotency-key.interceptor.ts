@@ -54,8 +54,7 @@ export class IdempotencyKeyInterceptor implements NestInterceptor {
         throw new HttpException(
           {
             statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
-            message:
-              'Idempotency key has already been used with a different request payload',
+            message: 'Idempotency key has already been used with a different request payload',
           },
           HttpStatus.UNPROCESSABLE_ENTITY,
         );
