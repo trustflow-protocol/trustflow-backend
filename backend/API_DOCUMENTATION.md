@@ -94,6 +94,47 @@ RATE_LIMIT_LOCKOUT_SECONDS=900
 
 `/health` and `/metrics` are exempt through `@SkipRateLimit()`.
 
+---
+
+## 🔁 Idempotency Keys
+
+Mutating endpoints that create a resource (currently `POST /gigs` and `POST /escrows`) accept an
+optional `Idempotency-Key` header so retries — e.g. after a client timeout — don't create
+duplicate resources.
+
+### Client usage
+
+```bash
+curl -X POST https://api.example.com/escrows \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d '{ "depositor": "G...", "beneficiary": "G...", "amountXLM": "100" }'
+```
+
+- Generate a fresh, unique key (a UUID is recommended) **per logical operation**, not per HTTP
+  attempt — reuse the same key when retrying the same request.
+- The key is scoped to the specific endpoint (method + route), so the same key value can safely
+  be reused across different endpoints (e.g. once for `POST /gigs` and separately for
+  `POST /escrows`) without colliding.
+
+### Behavior
+
+| Situation | Response |
+|---|---|
+| No `Idempotency-Key` header | Request is processed normally; not cached. |
+| First request with a given key | Request is processed; the response is cached. |
+| Retry with the same key **and the same body** | The original cached response is replayed (same status code and body) — the handler does not run again. |
+| Retry with the same key **and a different body** | `422 Unprocessable Entity` — the key has already been used for a different payload. |
+| Concurrent request with the same key while the first is still in flight | `409 Conflict` — a request with this key is already being processed; wait and retry rather than assuming failure. |
+
+Cached responses are stored in Redis for `IDEMPOTENCY_KEY_TTL_SECONDS` (default 24h). Keys are
+claimed atomically (`SET NX`), so concurrent duplicate requests cannot both create a resource. If
+Redis is unavailable, idempotency protection is skipped and requests are processed normally
+(fail-open) rather than blocking traffic.
+
+Response bodies are cached in full, so avoid decorating `@Idempotent()` onto endpoints that return
+very large or streamed payloads.
+
 ### Using Authentication in Swagger UI
 
 1. Get your challenge and sign it
@@ -334,6 +375,7 @@ REDIS_URL=redis://localhost:6379
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
+IDEMPOTENCY_KEY_TTL_SECONDS=86400
 STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org

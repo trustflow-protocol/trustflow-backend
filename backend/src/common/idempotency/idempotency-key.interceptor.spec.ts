@@ -7,6 +7,24 @@ import { IdempotencyKeyService } from './idempotency-key.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { Idempotent } from './idempotency-key.decorator';
 
+/** In-memory Redis stand-in that honours `SET key value EX ttl NX` semantics. */
+function createRedisMock() {
+  const store = new Map<string, string>();
+  return {
+    get: jest.fn(async (key: string) => store.get(key) ?? null),
+    set: jest.fn(async (key: string, value: string, ...args: unknown[]) => {
+      if (args.includes('NX') && store.has(key)) return null;
+      store.set(key, value);
+      return 'OK';
+    }),
+    del: jest.fn(async (key: string) => {
+      const existed = store.has(key);
+      store.delete(key);
+      return existed ? 1 : 0;
+    }),
+  };
+}
+
 @Controller('idempotency-test')
 class IdempotencyTestController {
   @Post('idempotent')
@@ -23,17 +41,8 @@ class IdempotencyTestController {
 
 describe('IdempotencyKeyInterceptor', () => {
   let interceptor: IdempotencyKeyInterceptor;
-  let mockRedis: { get: jest.Mock; set: jest.Mock };
 
-  beforeEach(() => {
-    mockRedis = { get: jest.fn(), set: jest.fn() };
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  function createInterceptor(redisOverride?: typeof mockRedis) {
+  function createInterceptor(redisOverride?: ReturnType<typeof createRedisMock> | null) {
     const service = new IdempotencyKeyService((redisOverride ?? null) as any);
     const reflector = new Reflector();
     return new IdempotencyKeyInterceptor(reflector, service);
@@ -48,16 +57,10 @@ describe('IdempotencyKeyInterceptor', () => {
 
   describe('Supertest integration', () => {
     let app: INestApplication;
-    let mockRedisFull: {
-      get: jest.Mock;
-      set: jest.Mock;
-    };
+    let mockRedisFull: ReturnType<typeof createRedisMock>;
 
     beforeEach(async () => {
-      mockRedisFull = {
-        get: jest.fn().mockResolvedValue(null),
-        set: jest.fn().mockResolvedValue('OK'),
-      };
+      mockRedisFull = createRedisMock();
 
       const module: TestingModule = await Test.createTestingModule({
         controllers: [IdempotencyTestController],
@@ -90,7 +93,7 @@ describe('IdempotencyKeyInterceptor', () => {
       expect(mockRedisFull.set).not.toHaveBeenCalled();
     });
 
-    it('caches the response and replays it on retry with the same key and body', async () => {
+    it('claims, executes, and finalizes on first use, then replays the cached response on retry', async () => {
       const body = { foo: 'bar' };
       const idempotencyKey = 'test-uuid-123';
 
@@ -101,12 +104,22 @@ describe('IdempotencyKeyInterceptor', () => {
         .expect(201);
 
       expect(res1.body).toHaveProperty('id', 'record-1');
-      expect(mockRedisFull.set).toHaveBeenCalledTimes(1);
+      // One SET to claim (pending, NX) and one SET to finalize (completed).
+      expect(mockRedisFull.set).toHaveBeenCalledTimes(2);
 
-      const storedRecord = JSON.parse(mockRedisFull.set.mock.calls[0][1] as string);
-      const cachedResponse = JSON.stringify(storedRecord);
+      const claimCall = mockRedisFull.set.mock.calls[0];
+      expect(claimCall[2]).toBe('EX');
+      expect(claimCall[4]).toBe('NX');
+      const pendingRecord = JSON.parse(claimCall[1] as string);
+      expect(pendingRecord).toMatchObject({ status: 'pending' });
 
-      mockRedisFull.get.mockResolvedValueOnce(cachedResponse);
+      const finalizeCall = mockRedisFull.set.mock.calls[1];
+      const completedRecord = JSON.parse(finalizeCall[1] as string);
+      expect(completedRecord).toMatchObject({
+        status: 'completed',
+        statusCode: 201,
+        body: res1.body,
+      });
 
       const res2 = await request(app.getHttpServer())
         .post('/idempotency-test/idempotent')
@@ -115,6 +128,11 @@ describe('IdempotencyKeyInterceptor', () => {
         .expect(201);
 
       expect(res2.body).toEqual(res1.body);
+      // The retry attempts an SET NX claim (which fails, since the key is
+      // already taken) but never overwrites the stored completed record.
+      expect(mockRedisFull.set).toHaveBeenCalledTimes(3);
+      const retryClaimAttempt = mockRedisFull.set.mock.results[2];
+      await expect(retryClaimAttempt.value).resolves.toBeNull();
     });
 
     it('returns 422 when the same key is reused with a different body', async () => {
@@ -125,11 +143,6 @@ describe('IdempotencyKeyInterceptor', () => {
         .set('Idempotency-Key', idempotencyKey)
         .send({ foo: 'bar' })
         .expect(201);
-
-      expect(mockRedisFull.set).toHaveBeenCalledTimes(1);
-      const storedRecord = JSON.parse(mockRedisFull.set.mock.calls[0][1] as string);
-
-      mockRedisFull.get.mockResolvedValueOnce(JSON.stringify(storedRecord));
 
       const res2 = await request(app.getHttpServer())
         .post('/idempotency-test/idempotent')
@@ -143,10 +156,36 @@ describe('IdempotencyKeyInterceptor', () => {
       });
     });
 
-    it('ignores the header on endpoints without @Idempotent()', async () => {
-      mockRedisFull.get.mockClear();
-      mockRedisFull.set.mockClear();
+    it('returns 409 when a duplicate request arrives while the original is still pending', async () => {
+      const idempotencyKey = 'test-uuid-pending';
 
+      // Simulate a claim made by a request that hasn't finished yet: write
+      // only the pending record, without ever finalizing it.
+      await mockRedisFull.set(
+        'idempotency:POST:/idempotency-test/idempotent:test-uuid-pending',
+        JSON.stringify({
+          version: 1,
+          requestHash: IdempotencyKeyService.hashBody({ foo: 'bar' }),
+          status: 'pending',
+        }),
+        'EX',
+        3600,
+        'NX',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/idempotency-test/idempotent')
+        .set('Idempotency-Key', idempotencyKey)
+        .send({ foo: 'bar' })
+        .expect(409);
+
+      expect(res.body).toMatchObject({
+        statusCode: 409,
+        message: 'A request with this idempotency key is already being processed',
+      });
+    });
+
+    it('ignores the header on endpoints without @Idempotent()', async () => {
       const res = await request(app.getHttpServer())
         .post('/idempotency-test/not-idempotent')
         .set('Idempotency-Key', 'any-key')
@@ -157,7 +196,7 @@ describe('IdempotencyKeyInterceptor', () => {
       expect(mockRedisFull.get).not.toHaveBeenCalled();
     });
 
-    it('passes through gracefully when Redis is unavailable', async () => {
+    it('passes through gracefully when Redis is unavailable (null client)', async () => {
       const module: TestingModule = await Test.createTestingModule({
         controllers: [IdempotencyTestController],
         providers: [
@@ -181,6 +220,39 @@ describe('IdempotencyKeyInterceptor', () => {
 
       expect(res.body).toHaveProperty('id', 'record-1');
       await nullApp.close();
+    });
+
+    it('passes through gracefully when Redis throws connection errors', async () => {
+      const flakyRedis = {
+        get: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+        set: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+        del: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+      };
+
+      const module: TestingModule = await Test.createTestingModule({
+        controllers: [IdempotencyTestController],
+        providers: [
+          IdempotencyKeyService,
+          { provide: REDIS_CLIENT, useValue: flakyRedis },
+          {
+            provide: APP_INTERCEPTOR,
+            useClass: IdempotencyKeyInterceptor,
+          },
+        ],
+      }).compile();
+
+      const flakyApp = module.createNestApplication();
+      await flakyApp.init();
+
+      const res = await request(flakyApp.getHttpServer())
+        .post('/idempotency-test/idempotent')
+        .set('Idempotency-Key', 'some-key')
+        .send({ foo: 'bar' })
+        .expect(201);
+
+      expect(res.body).toHaveProperty('id', 'record-1');
+      expect(flakyRedis.set).toHaveBeenCalled();
+      await flakyApp.close();
     });
   });
 });
@@ -208,63 +280,100 @@ describe('IdempotencyKeyService', () => {
     });
   });
 
-  describe('lookup', () => {
-    it('returns null when Redis is unavailable', async () => {
+  describe('claim', () => {
+    it('claims immediately when Redis is unavailable (graceful degradation)', async () => {
       const service = new IdempotencyKeyService(null);
-      await expect(service.lookup('endpoint', 'key')).resolves.toBeNull();
+      await expect(service.claim('endpoint', 'key', 'hash')).resolves.toEqual({ claimed: true });
     });
 
-    it('returns null when key does not exist in Redis', async () => {
-      const mockRedis = { get: jest.fn().mockResolvedValue(null), set: jest.fn() };
+    it('claims when the key does not exist yet, using SET NX', async () => {
+      const mockRedis = createRedisMock();
       const service = new IdempotencyKeyService(mockRedis as any);
-      await expect(service.lookup('POST:/gigs', 'key-1')).resolves.toBeNull();
-      expect(mockRedis.get).toHaveBeenCalledWith('idempotency:POST:/gigs:key-1');
+      await expect(service.claim('POST:/gigs', 'key-1', 'hash-1')).resolves.toEqual({
+        claimed: true,
+      });
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        'idempotency:POST:/gigs:key-1',
+        expect.any(String),
+        'EX',
+        expect.any(Number),
+        'NX',
+      );
     });
 
-    it('parses and returns the record when found', async () => {
-      const record = { requestHash: 'abc', statusCode: 201, body: { id: 'gig-1' } };
+    it('returns the existing record and claimed: false when the key is already taken', async () => {
+      const mockRedis = createRedisMock();
+      const service = new IdempotencyKeyService(mockRedis as any);
+      await service.claim('POST:/gigs', 'key-1', 'hash-1');
+
+      const second = await service.claim('POST:/gigs', 'key-1', 'hash-1');
+      expect(second.claimed).toBe(false);
+      if (!second.claimed) {
+        expect(second.record).toMatchObject({ status: 'pending', requestHash: 'hash-1' });
+      }
+    });
+
+    it('degrades to claimed: true on Redis errors', async () => {
       const mockRedis = {
-        get: jest.fn().mockResolvedValue(JSON.stringify(record)),
-        set: jest.fn(),
+        get: jest.fn(),
+        set: jest.fn().mockRejectedValue(new Error('conn refused')),
       };
       const service = new IdempotencyKeyService(mockRedis as any);
-      await expect(service.lookup('POST:/gigs', 'key-1')).resolves.toEqual(record);
-    });
-
-    it('returns null on Redis errors (graceful degradation)', async () => {
-      const mockRedis = {
-        get: jest.fn().mockRejectedValue(new Error('conn refused')),
-        set: jest.fn(),
-      };
-      const service = new IdempotencyKeyService(mockRedis as any);
-      await expect(service.lookup('endpoint', 'key')).resolves.toBeNull();
+      await expect(service.claim('endpoint', 'key', 'hash')).resolves.toEqual({ claimed: true });
     });
   });
 
-  describe('store', () => {
+  describe('finalize', () => {
     it('no-ops when Redis is unavailable', async () => {
       const service = new IdempotencyKeyService(null);
-      await expect(service.store('endpoint', 'key', 'hash', 201, {})).resolves.toBeUndefined();
+      await expect(service.finalize('endpoint', 'key', 'hash', 201, {})).resolves.toBeUndefined();
     });
 
-    it('stores the record with a TTL', async () => {
-      const mockRedis = { get: jest.fn(), set: jest.fn().mockResolvedValue('OK') };
+    it('stores the completed record with a TTL', async () => {
+      const mockRedis = createRedisMock();
       const service = new IdempotencyKeyService(mockRedis as any);
-      await service.store('POST:/gigs', 'key-1', 'hash-1', 201, { id: 'gig-1' }, 3600);
+      await service.finalize('POST:/gigs', 'key-1', 'hash-1', 201, { id: 'gig-1' }, {}, 3600);
 
-      expect(mockRedis.set).toHaveBeenCalledTimes(1);
       const [key, value, exFlag, ttl] = mockRedis.set.mock.calls[0];
       expect(key).toBe('idempotency:POST:/gigs:key-1');
-      const parsed = JSON.parse(value);
-      expect(parsed).toEqual({ requestHash: 'hash-1', statusCode: 201, body: { id: 'gig-1' } });
-      expect(exFlag).toBe('EX');
       expect(ttl).toBe(3600);
+      expect(exFlag).toBe('EX');
+      const parsed = JSON.parse(value);
+      expect(parsed).toMatchObject({
+        requestHash: 'hash-1',
+        status: 'completed',
+        statusCode: 201,
+        body: { id: 'gig-1' },
+      });
     });
 
     it('does not throw on Redis errors (graceful degradation)', async () => {
       const mockRedis = { get: jest.fn(), set: jest.fn().mockRejectedValue(new Error('fail')) };
       const service = new IdempotencyKeyService(mockRedis as any);
-      await expect(service.store('endpoint', 'key', 'hash', 201, {})).resolves.toBeUndefined();
+      await expect(service.finalize('endpoint', 'key', 'hash', 201, {})).resolves.toBeUndefined();
+    });
+  });
+
+  describe('release', () => {
+    it('no-ops when Redis is unavailable', async () => {
+      const service = new IdempotencyKeyService(null);
+      await expect(service.release('endpoint', 'key')).resolves.toBeUndefined();
+    });
+
+    it('deletes the claimed key', async () => {
+      const mockRedis = createRedisMock();
+      const service = new IdempotencyKeyService(mockRedis as any);
+      await service.claim('POST:/gigs', 'key-1', 'hash-1');
+      await service.release('POST:/gigs', 'key-1');
+
+      const second = await service.claim('POST:/gigs', 'key-1', 'hash-1');
+      expect(second.claimed).toBe(true);
+    });
+
+    it('does not throw on Redis errors (graceful degradation)', async () => {
+      const mockRedis = { get: jest.fn(), del: jest.fn().mockRejectedValue(new Error('fail')) };
+      const service = new IdempotencyKeyService(mockRedis as any);
+      await expect(service.release('endpoint', 'key')).resolves.toBeUndefined();
     });
   });
 });

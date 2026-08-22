@@ -5,30 +5,54 @@ import {
   HttpStatus,
   Injectable,
   NestInterceptor,
+  Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, of } from 'rxjs';
-import { tap } from 'rxjs/operators';
+import { catchError, tap } from 'rxjs/operators';
 import { IDEMPOTENT_KEY } from './idempotency-key.decorator';
 import { IdempotencyKeyService } from './idempotency-key.service';
+import { MetricsService } from '../../monitoring/metrics.service';
+
+/**
+ * Headers Express/Nest manage automatically. Replaying them from a cached
+ * response would fight with values the framework recomputes for the replay
+ * itself (e.g. Content-Length for the re-serialized body).
+ */
+const NON_REPLAYABLE_HEADERS = new Set([
+  'content-length',
+  'connection',
+  'date',
+  'keep-alive',
+  'transfer-encoding',
+  'x-powered-by',
+  'etag',
+]);
 
 /**
  * Global interceptor that enforces idempotency on endpoints decorated with
- * {@link Idempotent}. Three outcomes per request:
+ * {@link Idempotent}. Outcomes per request:
  *
  * 1. **No Idempotency-Key header** — pass through unchanged (backward compatible).
- * 2. **Key seen before, same body** — return the cached response (dedup).
- * 3. **Key seen before, different body** — 422 Unprocessable Entity.
+ * 2. **Key not seen before** — atomically claims the key (Redis `SET NX`) and
+ *    runs the handler. On success the response (status, body, and a small
+ *    set of headers) is cached; on failure the claim is released so retries
+ *    are not stuck as `pending` until the TTL expires.
+ * 3. **Key seen before, same body, completed** — replay the cached response.
+ * 4. **Key seen before, different body** — 422 Unprocessable Entity.
+ * 5. **Key seen before, still pending (concurrent duplicate request)** —
+ *    409 Conflict; the original request is still in flight.
  *
- * On the first successful handler execution the response is cached in Redis
- * under `(endpoint, key)` with a 24-hour TTL so retries within that window
- * are deduplicated.
+ * The claim is stored under `(endpoint, key)`, where `endpoint` includes the
+ * HTTP method and route path, so the same Idempotency-Key value used against
+ * two different endpoints (e.g. POST /gigs and POST /escrows) never collides.
  */
 @Injectable()
 export class IdempotencyKeyInterceptor implements NestInterceptor {
   constructor(
     private readonly reflector: Reflector,
     private readonly idempotencyService: IdempotencyKeyService,
+    @Optional() private readonly metrics?: MetricsService,
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
@@ -47,10 +71,19 @@ export class IdempotencyKeyInterceptor implements NestInterceptor {
     const endpoint = `${request.method}:${request.route?.path ?? request.url}`;
     const requestHash = IdempotencyKeyService.hashBody(request.body);
 
-    const existing = await this.idempotencyService.lookup(endpoint, idempotencyKey);
+    const claimResult = await this.idempotencyService.claim(endpoint, idempotencyKey, requestHash);
 
-    if (existing) {
-      if (existing.requestHash !== requestHash) {
+    if (!claimResult.claimed) {
+      const { record } = claimResult;
+
+      if (!record) {
+        // Lost the claim race but the record vanished (e.g. TTL race) —
+        // degrade to pass-through rather than block the request.
+        return next.handle();
+      }
+
+      if (record.requestHash !== requestHash) {
+        this.metrics?.increment('idempotency_key_mismatch_total', { endpoint });
         throw new HttpException(
           {
             statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -59,20 +92,54 @@ export class IdempotencyKeyInterceptor implements NestInterceptor {
           HttpStatus.UNPROCESSABLE_ENTITY,
         );
       }
-      return of(existing.body);
+
+      if (record.status === 'pending') {
+        this.metrics?.increment('idempotency_conflict_total', { endpoint });
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.CONFLICT,
+            message: 'A request with this idempotency key is already being processed',
+          },
+          HttpStatus.CONFLICT,
+        );
+      }
+
+      const response = context.switchToHttp().getResponse();
+      response.status(record.statusCode ?? HttpStatus.OK);
+      for (const [name, value] of Object.entries(record.headers ?? {})) {
+        response.setHeader(name, value);
+      }
+      return of(record.body);
     }
 
     return next.handle().pipe(
       tap(async (responseBody: unknown) => {
         const response = context.switchToHttp().getResponse();
-        await this.idempotencyService.store(
+        await this.idempotencyService.finalize(
           endpoint,
           idempotencyKey,
           requestHash,
           response.statusCode,
           responseBody,
+          this.capturedHeaders(response),
         );
       }),
+      catchError(async err => {
+        await this.idempotencyService.release(endpoint, idempotencyKey);
+        throw err;
+      }),
     );
+  }
+
+  private capturedHeaders(response: {
+    getHeaders?: () => Record<string, unknown>;
+  }): Record<string, string> {
+    const headers = response.getHeaders?.() ?? {};
+    const result: Record<string, string> = {};
+    for (const [name, value] of Object.entries(headers)) {
+      if (value === undefined || NON_REPLAYABLE_HEADERS.has(name.toLowerCase())) continue;
+      result[name] = String(value);
+    }
+    return result;
   }
 }
