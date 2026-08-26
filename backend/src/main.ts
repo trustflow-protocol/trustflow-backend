@@ -5,6 +5,7 @@ import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
+import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
 
 const logger = new Logger('Bootstrap');
 
@@ -118,6 +119,10 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs-json', app, document, {
     jsonDocumentUrl: '/api/docs-json',
   });
+
+  // Start Soroban event indexer
+  const indexer = app.get(SorobanEventIndexerService);
+  indexer.start();
 
   const port = process.env.PORT || 3001;
   await app.listen(port);

@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -19,7 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { GigService } from './gig.service';
 import { WebhookService } from '../webhook/webhook.service';
-import { AcceptGigDto, AcceptGigSchema, CreateGigDto, CreateGigSchema } from './gig.dto';
+import { AcceptGigDto, AcceptGigSchema, CreateGigDto, CreateGigSchema, UpdateGigDto, UpdateGigSchema } from './gig.dto';
 import { GIG_EVENTS } from './gig.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { Idempotent } from '../common/idempotency';
@@ -167,5 +169,31 @@ export class GigController {
     const gig = await this.gigService.cancel(id);
     await this.webhookService.dispatch(GIG_EVENTS.GIG_CANCELLED, gig);
     return gig;
+  }
+
+  @Put(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Update an open gig solicitation' })
+  @ApiParam({ name: 'id', description: 'Gig ID', example: 'gig-1234567890-ab12cd' })
+  @ApiResponse({ status: 200, description: 'Gig updated successfully' })
+  @ApiResponse({ status: 400, description: 'Gig is not open' })
+  @ApiResponse({ status: 404, description: 'Gig not found' })
+  async update(@Param('id') id: string, @Body() dto: UpdateGigDto) {
+    const validated = UpdateGigSchema.parse(dto);
+    return this.gigService.update(id, validated);
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete a gig solicitation' })
+  @ApiParam({ name: 'id', description: 'Gig ID', example: 'gig-1234567890-ab12cd' })
+  @ApiResponse({ status: 204, description: 'Gig deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Cannot delete accepted gig' })
+  @ApiResponse({ status: 404, description: 'Gig not found' })
+  async remove(@Param('id') id: string) {
+    await this.gigService.remove(id);
   }
 }

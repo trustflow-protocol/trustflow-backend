@@ -17,6 +17,9 @@ import { GigModule } from './gig/gig.module';
 import { EscrowReconciliationModule } from './escrow-reconciliation/escrow-reconciliation.module';
 import { ReputationModule } from './reputation/reputation.module';
 import { AdminModule } from './admin/admin.module';
+import { DeliverableModule } from './deliverable/deliverable.module';
+import { MilestoneNotificationsModule } from './milestone-notifications/milestone-notifications.module';
+import { SorobanEventIndexerModule } from './soroban-event-indexer/soroban-event-indexer.module';
 
 @Module({
   imports: [
@@ -38,6 +41,9 @@ import { AdminModule } from './admin/admin.module';
     EscrowReconciliationModule,
     ReputationModule,
     AdminModule,
+    DeliverableModule,
+    MilestoneNotificationsModule,
+    SorobanEventIndexerModule,
   ],
 })
 export class AppModule {}
