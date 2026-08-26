@@ -94,6 +94,12 @@ async function bootstrap() {
       'Gig solicitation postings with a background sweep that automatically expires ' +
         'solicitations left unanswered past their response deadline.',
     )
+    .addTag(
+      'Admin',
+      'Read-only system analytics for protocol admins — escrow, gig, dispute, reputation, ' +
+        'migration, and reconciliation state aggregated into a dashboard view. Restricted to ' +
+        'wallet addresses listed in `ADMIN_ADDRESSES`.',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

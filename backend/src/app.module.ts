@@ -16,6 +16,7 @@ import { IpfsPinningModule } from './ipfs-pinning/ipfs-pinning.module';
 import { GigModule } from './gig/gig.module';
 import { EscrowReconciliationModule } from './escrow-reconciliation/escrow-reconciliation.module';
 import { ReputationModule } from './reputation/reputation.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { ReputationModule } from './reputation/reputation.module';
     GigModule,
     EscrowReconciliationModule,
     ReputationModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
