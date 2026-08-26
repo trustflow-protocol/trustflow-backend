@@ -6,6 +6,7 @@ import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
 import { ReputationService } from '../reputation/reputation.service';
+import { NotificationService } from '../notification/notification.service';
 
 // ─── Shared mock factories ────────────────────────────────────────────────────
 
@@ -39,8 +40,14 @@ function buildMocks() {
   const webhookService = { dispatch: jest.fn().mockResolvedValue(undefined) };
   const discordService = { notifyDisputeNeedsJurors: jest.fn().mockResolvedValue(undefined) };
   const reputationService = { recordDisputeResolved: jest.fn().mockResolvedValue(undefined) };
+  const notificationService = {
+    notifyDisputeEscalated: jest.fn().mockResolvedValue(undefined),
+    notifyJurorsAssigned: jest.fn().mockResolvedValue(undefined),
+    notifyVerdictReached: jest.fn().mockResolvedValue(undefined),
+    notifyPayoutExecuted: jest.fn().mockResolvedValue(undefined),
+  };
 
-  return { escrow, escrowService, webhookService, discordService, reputationService };
+  return { escrow, escrowService, webhookService, discordService, reputationService, notificationService };
 }
 
 const JURORS = [
@@ -62,6 +69,7 @@ describe('DisputeSagaService', () => {
   let webhookService: ReturnType<typeof buildMocks>['webhookService'];
   let discordService: ReturnType<typeof buildMocks>['discordService'];
   let reputationService: ReturnType<typeof buildMocks>['reputationService'];
+  let notificationService: ReturnType<typeof buildMocks>['notificationService'];
   let escrow: ReturnType<typeof buildMocks>['escrow'];
 
   beforeEach(async () => {
@@ -70,6 +78,7 @@ describe('DisputeSagaService', () => {
     webhookService = mocks.webhookService;
     discordService = mocks.discordService;
     reputationService = mocks.reputationService;
+    notificationService = mocks.notificationService;
     escrow = mocks.escrow;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -79,6 +88,7 @@ describe('DisputeSagaService', () => {
         { provide: WebhookService, useValue: webhookService },
         { provide: DiscordService, useValue: discordService },
         { provide: ReputationService, useValue: reputationService },
+        { provide: NotificationService, useValue: notificationService },
       ],
     }).compile();
 
@@ -121,6 +131,17 @@ describe('DisputeSagaService', () => {
       await service.escalate('esc-001', ESCALATE_DTO);
       expect(discordService.notifyDisputeNeedsJurors).toHaveBeenCalledWith(
         expect.objectContaining({ escrowId: 'esc-001' }),
+      );
+    });
+
+    it('sends dispute escalation notifications to both parties', async () => {
+      await service.escalate('esc-001', ESCALATE_DTO);
+      expect(notificationService.notifyDisputeEscalated).toHaveBeenCalledWith(
+        expect.objectContaining({
+          escrowId: 'esc-001',
+          depositor: escrow.depositor,
+          beneficiary: escrow.beneficiary,
+        }),
       );
     });
 
@@ -191,6 +212,16 @@ describe('DisputeSagaService', () => {
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         'dispute.jurors_assigned',
         expect.objectContaining({ jurors: JURORS }),
+      );
+    });
+
+    it('sends juror assignment notifications', async () => {
+      await service.assignJurors(sagaId, { jurors: JURORS });
+      expect(notificationService.notifyJurorsAssigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          disputeId: sagaId,
+          jurors: JURORS,
+        }),
       );
     });
   });
@@ -291,6 +322,18 @@ describe('DisputeSagaService', () => {
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         'dispute.saga_completed',
         expect.objectContaining({ sagaId }),
+      );
+    });
+
+    it('sends payout executed notifications to both parties', async () => {
+      await runToPayoutStep('depositor');
+      await service.executePayout(sagaId, {});
+      expect(notificationService.notifyPayoutExecuted).toHaveBeenCalledWith(
+        expect.objectContaining({
+          disputeId: sagaId,
+          depositor: escrow.depositor,
+          beneficiary: escrow.beneficiary,
+        }),
       );
     });
 

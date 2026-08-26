@@ -7,10 +7,14 @@ import {
   Body,
   Param,
   Query,
+  UploadedFile,
+  UseInterceptors,
   HttpCode,
   HttpStatus,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
@@ -19,6 +23,7 @@ import {
   ApiBody,
   ApiQuery,
   ApiBearerAuth,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import { UserProfileService } from './user-profile.service';
 import {
@@ -31,11 +36,15 @@ import {
 } from './user-profile.dto';
 import { UserType, UserStatus } from './user-profile.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { S3StorageService } from './s3-storage.service';
 
 @ApiTags('User Profiles')
 @Controller('profiles')
 export class UserProfileController {
-  constructor(private readonly userProfileService: UserProfileService) {}
+  constructor(
+    private readonly userProfileService: UserProfileService,
+    private readonly s3StorageService: S3StorageService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -376,5 +385,63 @@ export class UserProfileController {
   @ApiResponse({ status: 404, description: 'Profile not found' })
   async verifyUser(@Param('id') id: string) {
     return this.userProfileService.verifyUser(id);
+  }
+
+  @Post(':id/avatar')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Upload avatar image',
+    description:
+      'Uploads a profile picture to S3-compatible storage and updates the user profile. ' +
+      'Accepts JPEG, PNG, or WebP images up to 5MB.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Avatar image file (JPEG, PNG, or WebP, max 5MB)',
+        },
+      },
+    },
+  })
+  @ApiParam({ name: 'id', description: 'Profile ID' })
+  @ApiResponse({ status: 200, description: 'Avatar uploaded successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid file type or size' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Profile not found' })
+  async uploadAvatar(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedMimes.includes(file.mimetype)) {
+      throw new BadRequestException('Only JPEG, PNG, and WebP images are allowed');
+    }
+
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      throw new BadRequestException('File size must not exceed 5MB');
+    }
+
+    const result = await this.s3StorageService.uploadAvatar(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+
+    await this.userProfileService.update(id, { avatarUrl: result.url });
+
+    return { avatarUrl: result.url, key: result.key };
   }
 }
