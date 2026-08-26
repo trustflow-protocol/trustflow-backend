@@ -103,6 +103,69 @@ Mutating endpoints that create a resource (currently `POST /gigs` and `POST /esc
 optional `Idempotency-Key` header so retries — e.g. after a client timeout — don't create
 duplicate resources.
 
+## 🌐 Stellar RPC Failover
+
+The TrustFlow backend implements automatic failover for Stellar RPC endpoints to ensure high availability. When the primary RPC endpoint becomes unavailable, the system automatically switches to configured fallback endpoints.
+
+### How It Works
+
+1. **Multiple Endpoint Configuration**: Configure comma-separated Horizon and Soroban RPC endpoints in `STELLAR_HORIZON_ENDPOINTS` and `SOROBAN_RPC_ENDPOINTS` environment variables.
+
+2. **Health Monitoring**: Regular health checks (every 30 seconds) monitor all configured endpoints.
+
+3. **Automatic Failover**: If the current endpoint fails 3 consecutive health checks, the system automatically switches to the next healthy endpoint.
+
+4. **Retry Logic**: All Stellar operations include automatic retry with exponential backoff across available endpoints.
+
+5. **Monitoring**: The `/rpc-status` endpoint provides real-time visibility into endpoint health and current failover state.
+
+### Configuration Example
+
+```env
+# Primary endpoint + fallbacks
+STELLAR_HORIZON_ENDPOINTS=https://horizon-testnet.stellar.org,https://testnet.stellar.org,https://horizon-futurenet.stellar.org
+SOROBAN_RPC_ENDPOINTS=https://soroban-testnet.stellar.org,https://rpc-testnet.stellar.org
+```
+
+### Checking RPC Status
+
+```bash
+curl -X GET http://localhost:3001/rpc-status \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Response**:
+
+```json
+{
+  "currentHorizonEndpoint": "https://horizon-testnet.stellar.org",
+  "currentSorobanEndpoint": "https://soroban-testnet.stellar.org",
+  "horizonEndpoints": [
+    {
+      "url": "https://horizon-testnet.stellar.org",
+      "healthy": true,
+      "lastChecked": "2024-01-01T00:00:00.000Z",
+      "failureCount": 0
+    },
+    {
+      "url": "https://testnet.stellar.org",
+      "healthy": true,
+      "lastChecked": "2024-01-01T00:00:00.000Z",
+      "failureCount": 0
+    }
+  ],
+  "sorobanEndpoints": [
+    {
+      "url": "https://soroban-testnet.stellar.org",
+      "healthy": true,
+      "lastChecked": "2024-01-01T00:00:00.000Z",
+      "failureCount": 0
+    }
+  ],
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
 ### Client usage
 
 ```bash
@@ -178,6 +241,14 @@ very large or streamed payloads.
 | ------ | ---------- | ------------------ |
 | GET    | `/health`  | Health check       |
 | GET    | `/metrics` | Prometheus metrics |
+
+### RPC Status
+
+Provides visibility into Stellar RPC endpoint health and failover status. Requires JWT authentication.
+
+| Method | Endpoint      | Description                                                  |
+| ------ | ------------- | ------------------------------------------------------------ |
+| GET    | `/rpc-status` | Get current RPC endpoint status, health information, and failover state |
 
 ### IPFS Pinning
 
@@ -391,6 +462,9 @@ IDEMPOTENCY_KEY_TTL_SECONDS=86400
 STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+# Multiple endpoints for RPC failover (comma-separated, first is primary)
+STELLAR_HORIZON_ENDPOINTS=https://horizon-testnet.stellar.org,https://testnet.stellar.org
+SOROBAN_RPC_ENDPOINTS=https://soroban-testnet.stellar.org,https://rpc-testnet.stellar.org
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/... (optional)
 
 # IPFS pinning providers (all optional — unconfigured providers run in an
