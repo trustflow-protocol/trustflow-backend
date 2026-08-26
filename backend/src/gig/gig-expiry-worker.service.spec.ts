@@ -1,7 +1,6 @@
 import { GigExpiryWorkerService } from './gig-expiry-worker.service';
 import { GigService } from './gig.service';
-import { WebhookService } from '../webhook/webhook.service';
-import { GIG_EVENTS, Gig, GigStatus } from './gig.entity';
+import { Gig, GigStatus } from './gig.entity';
 
 /** Flushes the microtask queue so chained awaits inside a fake-timer tick settle. */
 async function flushPromises(): Promise<void> {
@@ -25,7 +24,6 @@ function makeGig(id: string, status: GigStatus): Gig {
 describe('GigExpiryWorkerService', () => {
   const originalInterval = process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS;
   let gigService: jest.Mocked<Pick<GigService, 'findExpirable' | 'expire'>>;
-  let webhookService: jest.Mocked<Pick<WebhookService, 'dispatch'>>;
   let worker: GigExpiryWorkerService;
 
   beforeEach(() => {
@@ -33,13 +31,7 @@ describe('GigExpiryWorkerService', () => {
       findExpirable: jest.fn().mockResolvedValue([]),
       expire: jest.fn(),
     };
-    webhookService = {
-      dispatch: jest.fn().mockResolvedValue(undefined),
-    };
-    worker = new GigExpiryWorkerService(
-      gigService as unknown as GigService,
-      webhookService as unknown as WebhookService,
-    );
+    worker = new GigExpiryWorkerService(gigService as unknown as GigService);
   });
 
   afterEach(() => {
@@ -50,7 +42,7 @@ describe('GigExpiryWorkerService', () => {
   });
 
   describe('runOnce', () => {
-    it('expires every gig returned by findExpirable and dispatches a webhook for each', async () => {
+    it('expires every gig returned by findExpirable; GigService persists the outbox event', async () => {
       const expiredGig = {
         ...makeGig('gig-a', GigStatus.EXPIRED),
         expiredAt: '2026-01-01T02:00:00.000Z',
@@ -61,19 +53,15 @@ describe('GigExpiryWorkerService', () => {
       await worker.runOnce();
 
       expect(gigService.expire).toHaveBeenCalledWith('gig-a');
-      expect(webhookService.dispatch).toHaveBeenCalledWith(
-        GIG_EVENTS.GIG_EXPIRED,
-        expect.objectContaining({ gigId: 'gig-a', expiredAt: expiredGig.expiredAt }),
-      );
     });
 
-    it('skips dispatching when expire() returns undefined (already resolved)', async () => {
+    it('skips already-resolved gigs', async () => {
       gigService.findExpirable.mockResolvedValue([makeGig('gig-a', GigStatus.OPEN)]);
       gigService.expire.mockResolvedValue(undefined);
 
       await worker.runOnce();
 
-      expect(webhookService.dispatch).not.toHaveBeenCalled();
+      expect(gigService.expire).toHaveBeenCalledWith('gig-a');
     });
 
     it('processes every expirable gig even when the list has multiple entries', async () => {
@@ -86,7 +74,6 @@ describe('GigExpiryWorkerService', () => {
       await worker.runOnce();
 
       expect(gigService.expire).toHaveBeenCalledTimes(2);
-      expect(webhookService.dispatch).toHaveBeenCalledTimes(2);
     });
   });
 

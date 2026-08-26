@@ -1,11 +1,11 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { GigService } from './gig.service';
-import { WebhookService } from '../webhook/webhook.service';
-import { DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS, GIG_EVENTS } from './gig.entity';
+import { DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS } from './gig.entity';
 
 /**
  * Periodically sweeps the DB for open gig solicitations whose response deadline has
- * passed and marks them expired, notifying subscribers via webhook. This is what
+ * passed and marks them expired. GigService appends the corresponding durable
+ * outbox row in the same state transaction; the outbox relay notifies subscribers.
  * guarantees stale solicitations don't sit open forever waiting for a response that
  * will never come.
  *
@@ -17,10 +17,7 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(GigExpiryWorkerService.name);
   private timer?: NodeJS.Timeout;
 
-  constructor(
-    private readonly gigService: GigService,
-    private readonly webhookService: WebhookService,
-  ) {}
+  constructor(private readonly gigService: GigService) {}
 
   onModuleInit(): void {
     const intervalMs = this.getIntervalMs();
@@ -48,14 +45,6 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
     for (const gig of expirable) {
       const expired = await this.gigService.expire(gig.id);
       if (!expired) continue;
-
-      await this.webhookService.dispatch(GIG_EVENTS.GIG_EXPIRED, {
-        gigId: expired.id,
-        creator: expired.creator,
-        title: expired.title,
-        respondBy: expired.respondBy,
-        expiredAt: expired.expiredAt,
-      });
     }
   }
 

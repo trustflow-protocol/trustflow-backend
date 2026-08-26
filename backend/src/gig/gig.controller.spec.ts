@@ -1,8 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { GigController } from './gig.controller';
 import { GigService } from './gig.service';
-import { WebhookService } from '../webhook/webhook.service';
-import { GIG_EVENTS, GigStatus } from './gig.entity';
+import { GigStatus } from './gig.entity';
 
 describe('GigController', () => {
   let controller: GigController;
@@ -15,20 +14,12 @@ describe('GigController', () => {
     cancel: jest.fn(),
   };
 
-  const mockWebhookService = {
-    dispatch: jest.fn().mockResolvedValue(undefined),
-  };
-
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockWebhookService.dispatch.mockResolvedValue(undefined);
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [GigController],
-      providers: [
-        { provide: GigService, useValue: mockGigService },
-        { provide: WebhookService, useValue: mockWebhookService },
-      ],
+      providers: [{ provide: GigService, useValue: mockGigService }],
     }).compile();
 
     controller = module.get<GigController>(GigController);
@@ -45,7 +36,7 @@ describe('GigController', () => {
       budgetXLM: '250',
     };
 
-    it('creates the gig via the service and dispatches a gig.created webhook', async () => {
+    it('creates the gig via the service; durable delivery is handled by the outbox relay', async () => {
       const gig = { id: 'gig-1', ...dto, status: GigStatus.OPEN };
       mockGigService.create.mockResolvedValue(gig);
 
@@ -53,7 +44,6 @@ describe('GigController', () => {
 
       expect(result).toEqual(gig);
       expect(mockGigService.create).toHaveBeenCalledWith(dto);
-      expect(mockWebhookService.dispatch).toHaveBeenCalledWith(GIG_EVENTS.GIG_CREATED, gig);
     });
 
     it('rejects an invalid creator address before hitting the service', async () => {
@@ -83,7 +73,7 @@ describe('GigController', () => {
   });
 
   describe('accept', () => {
-    it('accepts via the service and dispatches a gig.accepted webhook', async () => {
+    it('accepts via the service; durable delivery is handled by the outbox relay', async () => {
       const responder = 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY';
       const gig = { id: 'gig-1', status: GigStatus.ACCEPTED, acceptedBy: responder };
       mockGigService.accept.mockResolvedValue(gig);
@@ -92,12 +82,11 @@ describe('GigController', () => {
 
       expect(result).toEqual(gig);
       expect(mockGigService.accept).toHaveBeenCalledWith('gig-1', responder);
-      expect(mockWebhookService.dispatch).toHaveBeenCalledWith(GIG_EVENTS.GIG_ACCEPTED, gig);
     });
   });
 
   describe('cancel', () => {
-    it('cancels via the service and dispatches a gig.cancelled webhook', async () => {
+    it('cancels via the service; durable delivery is handled by the outbox relay', async () => {
       const gig = { id: 'gig-1', status: GigStatus.CANCELLED };
       mockGigService.cancel.mockResolvedValue(gig);
 
@@ -105,7 +94,6 @@ describe('GigController', () => {
 
       expect(result).toEqual(gig);
       expect(mockGigService.cancel).toHaveBeenCalledWith('gig-1');
-      expect(mockWebhookService.dispatch).toHaveBeenCalledWith(GIG_EVENTS.GIG_CANCELLED, gig);
     });
   });
 });

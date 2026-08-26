@@ -18,19 +18,14 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { GigService } from './gig.service';
-import { WebhookService } from '../webhook/webhook.service';
 import { AcceptGigDto, AcceptGigSchema, CreateGigDto, CreateGigSchema } from './gig.dto';
-import { GIG_EVENTS } from './gig.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { Idempotent } from '../common/idempotency';
 
 @ApiTags('Gigs')
 @Controller('gigs')
 export class GigController {
-  constructor(
-    private readonly gigService: GigService,
-    private readonly webhookService: WebhookService,
-  ) {}
+  constructor(private readonly gigService: GigService) {}
 
   @Post()
   @UseGuards(JwtAuthGuard)
@@ -91,9 +86,7 @@ export class GigController {
   })
   async create(@Body() dto: CreateGigDto) {
     const validated = CreateGigSchema.parse(dto);
-    const gig = await this.gigService.create(validated);
-    await this.webhookService.dispatch(GIG_EVENTS.GIG_CREATED, gig);
-    return gig;
+    return this.gigService.create(validated);
   }
 
   @Get(':id')
@@ -147,9 +140,7 @@ export class GigController {
   @ApiResponse({ status: 404, description: 'Gig not found' })
   async accept(@Param('id') id: string, @Body() dto: AcceptGigDto) {
     const validated = AcceptGigSchema.parse(dto);
-    const gig = await this.gigService.accept(id, validated.responder);
-    await this.webhookService.dispatch(GIG_EVENTS.GIG_ACCEPTED, gig);
-    return gig;
+    return this.gigService.accept(id, validated.responder);
   }
 
   @Post(':id/cancel')
@@ -164,8 +155,6 @@ export class GigController {
   @ApiResponse({ status: 400, description: 'Gig is not open' })
   @ApiResponse({ status: 404, description: 'Gig not found' })
   async cancel(@Param('id') id: string) {
-    const gig = await this.gigService.cancel(id);
-    await this.webhookService.dispatch(GIG_EVENTS.GIG_CANCELLED, gig);
-    return gig;
+    return this.gigService.cancel(id);
   }
 }

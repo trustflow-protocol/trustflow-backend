@@ -5,12 +5,14 @@ import {
   Logger,
   NotFoundException,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { CreateGigDto } from './gig.dto';
-import { DEFAULT_RESPONSE_WINDOW_HOURS, Gig, GigStatus } from './gig.entity';
+import { DEFAULT_RESPONSE_WINDOW_HOURS, GIG_EVENTS, Gig, GigStatus } from './gig.entity';
+import { OutboxService } from '../outbox/outbox.service';
 
 const GIG_KEY_PREFIX = 'gig:';
 const GIGS_INDEX_KEY = 'gigs:index';
@@ -39,6 +41,7 @@ export class GigService implements OnModuleInit {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly metrics: MetricsService,
+    @Optional() private readonly outbox?: OutboxService,
   ) {}
 
   /**
@@ -71,15 +74,18 @@ export class GigService implements OnModuleInit {
       respondBy: new Date(now.getTime() + windowHours * 60 * 60 * 1000).toISOString(),
     };
 
+    const event = this.outbox?.create(GIG_EVENTS.GIG_CREATED, 'gig', id, gig);
+
     if (this.redis) {
       try {
-        const results = await this.redis
+        const transaction = this.redis
           .multi()
           .set(this.gigKey(id), JSON.stringify(gig))
           .zadd(GIGS_INDEX_KEY, now.getTime(), id)
           .zadd(GIGS_OPEN_BY_RESPOND_BY_KEY, new Date(gig.respondBy).getTime(), id)
-          .sadd(this.creatorKey(gig.creator), id)
-          .exec();
+          .sadd(this.creatorKey(gig.creator), id);
+        if (event) this.outbox!.appendToTransaction(transaction, event);
+        const results = await transaction.exec();
         this.assertTransactionOk(results);
         return gig;
       } catch (err) {
@@ -88,6 +94,7 @@ export class GigService implements OnModuleInit {
     }
 
     this.gigs.set(id, gig);
+    if (event) await this.outbox!.append(event);
     return gig;
   }
 
@@ -148,7 +155,7 @@ export class GigService implements OnModuleInit {
     gig.status = GigStatus.ACCEPTED;
     gig.acceptedBy = responder;
     gig.acceptedAt = new Date().toISOString();
-    await this.persistResolved(gig);
+    await this.persistResolved(gig, GIG_EVENTS.GIG_ACCEPTED);
     return gig;
   }
 
@@ -159,7 +166,7 @@ export class GigService implements OnModuleInit {
     }
     gig.status = GigStatus.CANCELLED;
     gig.cancelledAt = new Date().toISOString();
-    await this.persistResolved(gig);
+    await this.persistResolved(gig, GIG_EVENTS.GIG_CANCELLED);
     return gig;
   }
 
@@ -172,19 +179,21 @@ export class GigService implements OnModuleInit {
     if (!gig || gig.status !== GigStatus.OPEN) return undefined;
     gig.status = GigStatus.EXPIRED;
     gig.expiredAt = new Date().toISOString();
-    await this.persistResolved(gig);
+    await this.persistResolved(gig, GIG_EVENTS.GIG_EXPIRED);
     return gig;
   }
 
   /** Writes a gig that just left OPEN status, dropping it from the open-expiry index. */
-  private async persistResolved(gig: Gig): Promise<void> {
+  private async persistResolved(gig: Gig, eventType: string): Promise<void> {
+    const event = this.outbox?.create(eventType, 'gig', gig.id, gig);
     if (this.redis) {
       try {
-        const results = await this.redis
+        const transaction = this.redis
           .multi()
           .set(this.gigKey(gig.id), JSON.stringify(gig))
-          .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, gig.id)
-          .exec();
+          .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, gig.id);
+        if (event) this.outbox!.appendToTransaction(transaction, event);
+        const results = await transaction.exec();
         this.assertTransactionOk(results);
         return;
       } catch (err) {
@@ -193,6 +202,7 @@ export class GigService implements OnModuleInit {
     }
 
     this.gigs.set(gig.id, gig);
+    if (event) await this.outbox!.append(event);
   }
 
   private async tryFindById(id: string): Promise<Gig | undefined> {

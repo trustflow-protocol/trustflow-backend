@@ -6,6 +6,8 @@ interface WebhookPayload {
   event: string;
   data: unknown;
   timestamp: string;
+  /** Stable key consumers use to collapse retries from the transactional outbox. */
+  dedupKey?: string;
 }
 
 @Injectable()
@@ -19,10 +21,14 @@ export class WebhookService {
     this.endpoints.delete(id);
   }
 
-  async dispatch(event: string, data: unknown) {
-    const payload: WebhookPayload = { event, data, timestamp: new Date().toISOString() };
+  async dispatch(event: string, data: unknown, dedupKey?: string) {
+    const payload: WebhookPayload = { event, data, timestamp: new Date().toISOString(), dedupKey };
     const promises = [...this.endpoints.values()].map(url => this.sendWithRetry(url, payload, 3));
-    await Promise.allSettled(promises);
+    const results = await Promise.allSettled(promises);
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failed) throw failed.reason;
   }
 
   private async sendWithRetry(
@@ -30,14 +36,17 @@ export class WebhookService {
     payload: WebhookPayload,
     retries: number,
   ): Promise<void> {
+    let lastError: unknown;
     for (let i = 0; i < retries; i++) {
       try {
         await this.send(url, payload);
         return;
-      } catch {
-        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      } catch (error) {
+        lastError = error;
+        if (i < retries - 1) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
       }
     }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private send(url: string, payload: WebhookPayload): Promise<void> {

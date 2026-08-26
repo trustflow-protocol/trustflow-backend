@@ -64,7 +64,10 @@ async function bootstrap() {
         'per-IP and per-wallet limits across API nodes. Repeated limit violations are tracked in a sliding ' +
         'abuse window and can trigger temporary lockouts. When a request is rejected, the API returns ' +
         '`429 Too Many Requests` with `retryAfter` and `scope` fields. Health check (`/health`) and metrics ' +
-        '(`/metrics`) endpoints are exempt from rate limiting. Requires `REDIS_URL` to be configured.',
+        '(`/metrics`) endpoints are exempt from rate limiting. Requires `REDIS_URL` to be configured.\n\n' +
+        '**Transactional Outbox:** Gig state changes and their domain events are committed in the same ' +
+        'Redis MULTI/EXEC transaction. A background relay delivers each event at least once to the WebSocket ' +
+        'gateway channel, worker queue, and registered webhooks. Consumers must deduplicate by `dedupKey`.',
     )
     .setVersion('1.0.0')
     .setContact('TrustFlow Protocol', 'https://trustflow.xyz', 'support@trustflow.xyz')
@@ -83,6 +86,7 @@ async function bootstrap() {
     .addTag('Authentication', 'Wallet-based JWT authentication endpoints')
     .addTag('Escrow', 'Escrow vault management and dispute resolution')
     .addTag('Webhooks', 'Webhook registration and management')
+    .addTag('Outbox', 'Durable at-least-once domain event delivery and relay operations')
     .addTag('Monitoring', 'Health checks and metrics')
     .addTag(
       'IPFS Pinning',

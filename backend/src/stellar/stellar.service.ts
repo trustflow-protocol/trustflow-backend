@@ -46,7 +46,7 @@ export class StellarService {
     retryOnFailure: boolean = true,
     maxRetries: number = 2
   ): Promise<T> {
-    let lastError: Error;
+    let lastError: Error | undefined;
     
     for (let attempt = 0; attempt < (retryOnFailure ? maxRetries + 1 : 1); attempt++) {
       try {

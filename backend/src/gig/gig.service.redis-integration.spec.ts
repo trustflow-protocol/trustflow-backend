@@ -2,6 +2,7 @@ import { Redis } from 'ioredis';
 import { GigService } from './gig.service';
 import { GigStatus } from './gig.entity';
 import { MetricsService } from '../monitoring/metrics.service';
+import { OutboxService } from '../outbox/outbox.service';
 
 /**
  * Exercises GigService against a real Redis server instead of the mocked ioredis client the
@@ -22,6 +23,7 @@ const describeIfRedis = process.env.REDIS_URL ? describe : describe.skip;
 describeIfRedis('GigService (Redis integration)', () => {
   let redis: Redis;
   let service: GigService;
+  let outbox: OutboxService;
 
   const validDto = {
     creator: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
@@ -40,10 +42,12 @@ describeIfRedis('GigService (Redis integration)', () => {
   beforeEach(async () => {
     // Isolate each test from prior runs/tests without touching unrelated keys another
     // suite/process might be using on the same Redis instance.
-    const keys = await redis.keys('gig*');
+    const keys = [...(await redis.keys('gig*')), ...(await redis.keys('outbox:*'))];
     if (keys.length > 0) await redis.del(...keys);
 
-    service = new GigService(redis, { increment: jest.fn() } as unknown as MetricsService);
+    const metrics = { increment: jest.fn() } as unknown as MetricsService;
+    outbox = new OutboxService(redis, metrics);
+    service = new GigService(redis, metrics, outbox);
   });
 
   it('persists a created gig and reads it back via findById', async () => {
@@ -97,6 +101,22 @@ describeIfRedis('GigService (Redis integration)', () => {
     expect(inIndex).not.toBeNull();
     expect(inCreatorSet).toBe(1);
     expect(inOpenSet).not.toBeNull();
+  });
+
+  it('writes the gig.created event into the same Redis transaction as state', async () => {
+    const gig = await service.create(validDto);
+    const ids = await redis.zrange('outbox:pending', 0, -1);
+
+    expect(ids).toHaveLength(1);
+    const raw = await redis.get(`outbox:event:${ids[0]}`);
+    expect(JSON.parse(raw!)).toEqual(
+      expect.objectContaining({
+        type: 'gig.created',
+        aggregateId: gig.id,
+        dedupKey: `gig:${gig.id}:gig.created`,
+        status: 'pending',
+      }),
+    );
   });
 
   it('round-trips accept/cancel/expire transitions through Redis', async () => {

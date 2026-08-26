@@ -20,7 +20,7 @@ export async function withSorobanFailover<T>(
   primaryEndpoint?: string,
   maxRetries: number = 2
 ): Promise<T> {
-  let lastError: Error;
+  let lastError: Error | undefined;
   
   // Get endpoints from config or use provided primary
   const endpoints = primaryEndpoint 

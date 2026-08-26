@@ -2,11 +2,11 @@ import { Module } from '@nestjs/common';
 import { GigController } from './gig.controller';
 import { GigService } from './gig.service';
 import { GigExpiryWorkerService } from './gig-expiry-worker.service';
-import { WebhookModule } from '../webhook/webhook.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
+import { OutboxModule } from '../outbox/outbox.module';
 
 @Module({
-  imports: [WebhookModule, MonitoringModule],
+  imports: [MonitoringModule, OutboxModule],
   controllers: [GigController],
   providers: [GigService, GigExpiryWorkerService],
   exports: [GigService],

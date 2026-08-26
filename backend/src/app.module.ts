@@ -17,6 +17,7 @@ import { GigModule } from './gig/gig.module';
 import { EscrowReconciliationModule } from './escrow-reconciliation/escrow-reconciliation.module';
 import { ReputationModule } from './reputation/reputation.module';
 import { AdminModule } from './admin/admin.module';
+import { OutboxModule } from './outbox/outbox.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { AdminModule } from './admin/admin.module';
     EscrowReconciliationModule,
     ReputationModule,
     AdminModule,
+    OutboxModule,
   ],
 })
 export class AppModule {}
