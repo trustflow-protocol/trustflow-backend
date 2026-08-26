@@ -210,6 +210,20 @@ describe('ReputationService', () => {
     });
   });
 
+  describe('getTrackedAddressCount', () => {
+    it('returns 0 when no address has a materialized record yet', () => {
+      expect(service.getTrackedAddressCount()).toBe(0);
+    });
+
+    it('counts each distinct address with a materialized score once', async () => {
+      await service.recordEscrowCompleted(makeEscrow({ depositor: 'G1', beneficiary: 'GB1' }));
+      await service.recordEscrowCompleted(makeEscrow({ depositor: 'G1', beneficiary: 'GB2' }));
+
+      // G1 contributed to twice, GB1 and GB2 once each -> 3 distinct addresses tracked.
+      expect(service.getTrackedAddressCount()).toBe(3);
+    });
+  });
+
   describe('getLeaderboard', () => {
     it('ranks addresses by score, highest first', async () => {
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'GHIGH', amountXLM: '10000' }));

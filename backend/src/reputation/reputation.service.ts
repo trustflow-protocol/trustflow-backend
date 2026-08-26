@@ -82,6 +82,11 @@ export class ReputationService {
     return this.toView(this.decayedRecord(address, new Date()));
   }
 
+  /** Count of distinct addresses with a materialized score record, for admin/analytics use. */
+  getTrackedAddressCount(): number {
+    return this.store.findAll().length;
+  }
+
   getLeaderboard(limit: number = REPUTATION_LEADERBOARD_DEFAULT_LIMIT): ReputationScoreView[] {
     const now = new Date();
     return this.store
