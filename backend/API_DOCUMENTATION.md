@@ -35,6 +35,7 @@ The TrustFlow Backend API provides off-chain services for the TrustFlow gig econ
 - **Webhooks**: Register endpoints to receive event notifications
 - **Monitoring**: Health checks and Prometheus metrics
 - **IPFS Pinning**: Pin deliverables across multiple IPFS providers with content-hash verification, automatic failover, and a background re-pin worker for durability
+- **Admin Analytics**: Read-only system-wide dashboards for protocol admins, aggregating escrow, gig, dispute, reputation, migration, and reconciliation state
 
 ---
 
@@ -187,6 +188,17 @@ very large or streamed payloads.
 | GET    | `/ipfs/pins/:cid`    | Get a pin record by CID                                     |
 | POST   | `/ipfs/pins/:cid/verify` | Re-verify durability and top up replication if degraded |
 | DELETE | `/ipfs/pins/:cid`    | Unpin from every provider currently holding the content      |
+
+### Admin Analytics
+
+Restricted to wallet addresses listed in `ADMIN_ADDRESSES` (see [Environment Variables](#environment-variables)). All routes require a JWT (`Authorization: Bearer ...`) from an admin address and return `403 Forbidden` for anyone else.
+
+| Method | Endpoint                  | Description                                                  |
+| ------ | -------------------------- | ------------------------------------------------------------ |
+| GET    | `/admin/analytics/overview`  | Full dashboard snapshot: escrows, gigs, disputes, reputation, migrations, reconciliation |
+| GET    | `/admin/analytics/escrows`   | Escrow totals and status breakdown                          |
+| GET    | `/admin/analytics/gigs`      | Gig solicitation totals and status breakdown                |
+| GET    | `/admin/analytics/disputes`  | Dispute saga totals, step, and verdict breakdown             |
 
 ---
 
@@ -388,6 +400,10 @@ WEB3_STORAGE_TOKEN=
 INFURA_IPFS_PROJECT_ID=
 INFURA_IPFS_PROJECT_SECRET=
 IPFS_REPIN_INTERVAL_MS=300000
+
+# Admin dashboard — comma-separated Stellar addresses allowed to call /admin/*
+# (required for those routes to return anything but 403)
+ADMIN_ADDRESSES=
 ```
 
 ---

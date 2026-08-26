@@ -42,6 +42,7 @@ INFURA_IPFS_PROJECT_ID=your_infura_project_id  # Optional
 INFURA_IPFS_PROJECT_SECRET=your_infura_project_secret  # Optional
 IPFS_REPIN_INTERVAL_MS=300000  # Optional — re-pin worker sweep interval, set to 0 to disable
 GIG_EXPIRY_SWEEP_INTERVAL_MS=300000  # Optional — gig expiry sweep interval, set to 0 to disable
+ADMIN_ADDRESSES=GADMIN1...,GADMIN2...  # Required for /admin/* — comma-separated Stellar addresses allowed to access admin analytics
 ```
 
 ### 3. Verify Installation
