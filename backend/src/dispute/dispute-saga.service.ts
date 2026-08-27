@@ -18,6 +18,7 @@ import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
 import { ReputationService } from '../reputation/reputation.service';
 import { ReputationOutcome } from '../reputation/reputation.types';
+import { NotificationService } from '../notification/notification.service';
 
 /** Webhook event names emitted by the saga */
 export const SAGA_EVENTS = {
@@ -54,6 +55,7 @@ export class DisputeSagaService {
     private readonly webhookService: WebhookService,
     private readonly discordService: DiscordService,
     private readonly reputationService: ReputationService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   // ─── Queries ──────────────────────────────────────────────────────
@@ -130,6 +132,13 @@ export class DisputeSagaService {
         amountXLM: escrow.amountXLM,
         reason: dto.reason,
       });
+      await this.notificationService.notifyDisputeEscalated({
+        escrowId,
+        disputeId: sagaId,
+        depositor: escrow.depositor,
+        beneficiary: escrow.beneficiary,
+        reason: dto.reason,
+      });
 
       this.logger.log(`Saga ${sagaId}: escalation complete for escrow ${escrowId}`);
       return saga;
@@ -193,6 +202,11 @@ export class DisputeSagaService {
 
       await this.webhookService.dispatch(SAGA_EVENTS.JURORS_ASSIGNED, {
         sagaId,
+        jurors: unique,
+      });
+      await this.notificationService.notifyJurorsAssigned({
+        disputeId: sagaId,
+        escrowId: saga.escrowId,
         jurors: unique,
       });
 
@@ -276,6 +290,17 @@ export class DisputeSagaService {
 
         await this.webhookService.dispatch(SAGA_EVENTS.VERDICT_REACHED, { sagaId, verdict });
         this.logger.log(`Saga ${sagaId}: verdict reached — ${verdict}`);
+
+        const escrow = await this.escrowService.findById(saga.escrowId);
+        if (escrow) {
+          await this.notificationService.notifyVerdictReached({
+            disputeId: sagaId,
+            escrowId: saga.escrowId,
+            verdict,
+            depositor: escrow.depositor,
+            beneficiary: escrow.beneficiary,
+          });
+        }
       }
 
       return saga;
@@ -360,6 +385,17 @@ export class DisputeSagaService {
         payoutTxHash: saga.payoutTxHash,
       });
       await this.webhookService.dispatch(SAGA_EVENTS.SAGA_COMPLETED, { sagaId });
+
+      const payoutEscrow = await this.escrowService.findById(saga.escrowId);
+      if (payoutEscrow) {
+        await this.notificationService.notifyPayoutExecuted({
+          disputeId: sagaId,
+          escrowId: saga.escrowId,
+          verdict: saga.verdict,
+          depositor: payoutEscrow.depositor,
+          beneficiary: payoutEscrow.beneficiary,
+        });
+      }
 
       this.logger.log(`Saga ${sagaId}: completed — payout executed for ${saga.verdict}`);
       return saga;

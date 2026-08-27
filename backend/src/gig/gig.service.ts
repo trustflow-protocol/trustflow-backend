@@ -10,7 +10,7 @@ import {
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
-import { CreateGigDto } from './gig.dto';
+import { CreateGigDto, UpdateGigDto } from './gig.dto';
 import { DEFAULT_RESPONSE_WINDOW_HOURS, GIG_EVENTS, Gig, GigStatus } from './gig.entity';
 import { OutboxService } from '../outbox/outbox.service';
 
@@ -170,6 +170,39 @@ export class GigService implements OnModuleInit {
     return gig;
   }
 
+  async update(id: string, dto: UpdateGigDto): Promise<Gig> {
+    const gig = await this.findById(id);
+    if (gig.status !== GigStatus.OPEN) {
+      throw new BadRequestException(`Cannot update a gig with status "${gig.status}"`);
+    }
+    if (dto.title !== undefined) gig.title = dto.title;
+    if (dto.budgetXLM !== undefined) gig.budgetXLM = dto.budgetXLM;
+    await this.persistGig(gig);
+    return gig;
+  }
+
+  async remove(id: string): Promise<void> {
+    const gig = await this.findById(id);
+    if (gig.status === GigStatus.ACCEPTED) {
+      throw new BadRequestException('Cannot delete an accepted gig');
+    }
+    if (this.redis) {
+      try {
+        await this.redis
+          .multi()
+          .del(this.gigKey(id))
+          .zrem(GIGS_INDEX_KEY, id)
+          .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, id)
+          .srem(this.creatorKey(gig.creator), id)
+          .exec();
+        return;
+      } catch (err) {
+        this.logFallback('remove', err);
+      }
+    }
+    this.gigs.delete(id);
+  }
+
   /**
    * Marks a still-open gig as expired. Returns `undefined` (no-op) if it was already
    * resolved by the time the sweep reached it. Used by the expiry sweep worker.
@@ -203,6 +236,23 @@ export class GigService implements OnModuleInit {
 
     this.gigs.set(gig.id, gig);
     if (event) await this.outbox!.append(event);
+  }
+
+  /** Writes a gig while keeping it in the open-expiry index if still open. */
+  private async persistGig(gig: Gig): Promise<void> {
+    if (this.redis) {
+      try {
+        const results = await this.redis
+          .multi()
+          .set(this.gigKey(gig.id), JSON.stringify(gig))
+          .exec();
+        this.assertTransactionOk(results);
+        return;
+      } catch (err) {
+        this.logFallback('persistGig', err);
+      }
+    }
+    this.gigs.set(gig.id, gig);
   }
 
   private async tryFindById(id: string): Promise<Gig | undefined> {
