@@ -43,6 +43,11 @@ INFURA_IPFS_PROJECT_SECRET=your_infura_project_secret  # Optional
 IPFS_REPIN_INTERVAL_MS=300000  # Optional — re-pin worker sweep interval, set to 0 to disable
 GIG_EXPIRY_SWEEP_INTERVAL_MS=300000  # Optional — gig expiry sweep interval, set to 0 to disable
 ADMIN_ADDRESSES=GADMIN1...,GADMIN2...  # Required for /admin/* — comma-separated Stellar addresses allowed to access admin analytics
+DATABASE_URL=  # Optional — Core DB (PostgreSQL) connection string. Alternative: DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD
+DB_SSL=false  # Optional — set "true" to connect with ssl: { rejectUnauthorized: false }
+DB_POOL_MAX=10  # Optional — max PostgreSQL pool connections
+GIG_SEARCH_CACHE_TTL_SECONDS=30  # Optional — how long paginated gig search results stay cached in Redis
+RUN_MIGRATIONS_ON_STARTUP=true  # Optional — run registered schema migrations automatically on boot
 ```
 
 ### 3. Verify Installation

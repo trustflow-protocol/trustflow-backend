@@ -10,14 +10,26 @@ import {
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
-import { CreateGigDto, UpdateGigDto } from './gig.dto';
-import { DEFAULT_RESPONSE_WINDOW_HOURS, GIG_EVENTS, Gig, GigStatus } from './gig.entity';
+import { CreateGigDto, SearchGigsQuery, UpdateGigDto } from './gig.dto';
+import {
+  DEFAULT_GIG_SEARCH_CACHE_TTL_SECONDS,
+  DEFAULT_GIG_SEARCH_LIMIT,
+  DEFAULT_GIG_SEARCH_PAGE,
+  DEFAULT_RESPONSE_WINDOW_HOURS,
+  GIG_EVENTS,
+  Gig,
+  GigStatus,
+  PaginatedGigs,
+} from './gig.entity';
 import { OutboxService } from '../outbox/outbox.service';
 
 const GIG_KEY_PREFIX = 'gig:';
 const GIGS_INDEX_KEY = 'gigs:index';
 const GIGS_OPEN_BY_RESPOND_BY_KEY = 'gigs:open:respondBy';
 const GIGS_BY_CREATOR_PREFIX = 'gigs:by-creator:';
+const GIGS_SEARCH_CACHE_PREFIX = 'gigs:search:';
+/** Tracks every currently-cached search page so invalidation doesn't need a Redis KEYS scan. */
+const GIGS_SEARCH_CACHE_KEYS_SET = 'gigs:search:cache-keys';
 
 /** Emitted (see `/metrics`) every time a call falls back to the in-memory store. */
 export const GIG_PERSISTENCE_FALLBACK_METRIC = 'gig_persistence_fallback_total';
@@ -87,6 +99,7 @@ export class GigService implements OnModuleInit {
         if (event) this.outbox!.appendToTransaction(transaction, event);
         const results = await transaction.exec();
         this.assertTransactionOk(results);
+        await this.invalidateSearchCache();
         return gig;
       } catch (err) {
         this.logFallback('create', err);
@@ -95,6 +108,7 @@ export class GigService implements OnModuleInit {
 
     this.gigs.set(id, gig);
     if (event) await this.outbox!.append(event);
+    await this.invalidateSearchCache();
     return gig;
   }
 
@@ -147,6 +161,36 @@ export class GigService implements OnModuleInit {
     );
   }
 
+  /**
+   * Paginated search over gig solicitations, defaulting to open gigs sorted newest first.
+   * Results are cached in Redis for `GIG_SEARCH_CACHE_TTL_SECONDS` (default 30s) to reduce
+   * load on `findAll()` for repeated queries; any mutation invalidates every cached page.
+   */
+  async search(query: SearchGigsQuery = {}): Promise<PaginatedGigs> {
+    const status = query.status ?? GigStatus.OPEN;
+    const page = query.page ?? DEFAULT_GIG_SEARCH_PAGE;
+    const limit = query.limit ?? DEFAULT_GIG_SEARCH_LIMIT;
+    const cacheKey = this.searchCacheKey(status, page, limit);
+
+    const cached = await this.readSearchCache(cacheKey);
+    if (cached) return cached;
+
+    const all = await this.findAll();
+    const filtered = all
+      .filter(g => g.status === status)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const start = (page - 1) * limit;
+    const result: PaginatedGigs = {
+      items: filtered.slice(start, start + limit),
+      total: filtered.length,
+      page,
+      limit,
+    };
+
+    await this.writeSearchCache(cacheKey, result);
+    return result;
+  }
+
   async accept(id: string, responder: string): Promise<Gig> {
     const gig = await this.findById(id);
     if (gig.status !== GigStatus.OPEN) {
@@ -195,12 +239,14 @@ export class GigService implements OnModuleInit {
           .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, id)
           .srem(this.creatorKey(gig.creator), id)
           .exec();
+        await this.invalidateSearchCache();
         return;
       } catch (err) {
         this.logFallback('remove', err);
       }
     }
     this.gigs.delete(id);
+    await this.invalidateSearchCache();
   }
 
   /**
@@ -228,6 +274,7 @@ export class GigService implements OnModuleInit {
         if (event) this.outbox!.appendToTransaction(transaction, event);
         const results = await transaction.exec();
         this.assertTransactionOk(results);
+        await this.invalidateSearchCache();
         return;
       } catch (err) {
         this.logFallback('persistResolved', err);
@@ -236,6 +283,7 @@ export class GigService implements OnModuleInit {
 
     this.gigs.set(gig.id, gig);
     if (event) await this.outbox!.append(event);
+    await this.invalidateSearchCache();
   }
 
   /** Writes a gig while keeping it in the open-expiry index if still open. */
@@ -247,12 +295,14 @@ export class GigService implements OnModuleInit {
           .set(this.gigKey(gig.id), JSON.stringify(gig))
           .exec();
         this.assertTransactionOk(results);
+        await this.invalidateSearchCache();
         return;
       } catch (err) {
         this.logFallback('persistGig', err);
       }
     }
     this.gigs.set(gig.id, gig);
+    await this.invalidateSearchCache();
   }
 
   private async tryFindById(id: string): Promise<Gig | undefined> {
@@ -297,6 +347,48 @@ export class GigService implements OnModuleInit {
 
   private creatorKey(address: string): string {
     return `${GIGS_BY_CREATOR_PREFIX}${address}`;
+  }
+
+  private searchCacheKey(status: GigStatus, page: number, limit: number): string {
+    return `${GIGS_SEARCH_CACHE_PREFIX}${status}:${page}:${limit}`;
+  }
+
+  private getSearchCacheTtlSeconds(): number {
+    const raw = Number(process.env.GIG_SEARCH_CACHE_TTL_SECONDS);
+    return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_GIG_SEARCH_CACHE_TTL_SECONDS;
+  }
+
+  private async readSearchCache(key: string): Promise<PaginatedGigs | undefined> {
+    if (!this.redis) return undefined;
+    try {
+      const raw = await this.redis.get(key);
+      return raw ? (JSON.parse(raw) as PaginatedGigs) : undefined;
+    } catch (err) {
+      this.logFallback('search:cache-read', err);
+      return undefined;
+    }
+  }
+
+  private async writeSearchCache(key: string, result: PaginatedGigs): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.set(key, JSON.stringify(result), 'EX', this.getSearchCacheTtlSeconds());
+      await this.redis.sadd(GIGS_SEARCH_CACHE_KEYS_SET, key);
+    } catch (err) {
+      this.logFallback('search:cache-write', err);
+    }
+  }
+
+  /** Drops every cached search page. Called after any mutation that could change a search result. */
+  private async invalidateSearchCache(): Promise<void> {
+    if (!this.redis) return;
+    try {
+      const keys = await this.redis.smembers(GIGS_SEARCH_CACHE_KEYS_SET);
+      if (keys.length === 0) return;
+      await this.redis.del(...keys, GIGS_SEARCH_CACHE_KEYS_SET);
+    } catch (err) {
+      this.logFallback('search:cache-invalidate', err);
+    }
   }
 
   private logFallback(operation: string, err: unknown): void {

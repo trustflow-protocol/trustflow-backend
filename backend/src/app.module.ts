@@ -6,6 +6,7 @@ import { MonitoringModule } from './monitoring/monitoring.module';
 import { StellarModule } from './stellar/stellar.module';
 import { SentryModule } from './sentry/sentry.module';
 import { RedisModule } from './common/redis/redis.module';
+import { DatabaseModule } from './common/database/database.module';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { UserProfileModule } from './user-profile/user-profile.module';
@@ -26,6 +27,7 @@ import { OutboxModule } from './outbox/outbox.module';
   imports: [
     SentryModule,
     RedisModule,
+    DatabaseModule,
     RateLimitModule,
     IdempotencyModule,
     AuthModule,

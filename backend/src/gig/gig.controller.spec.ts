@@ -8,6 +8,7 @@ describe('GigController', () => {
 
   const mockGigService = {
     create: jest.fn(),
+    search: jest.fn(),
     findById: jest.fn(),
     findByCreator: jest.fn(),
     accept: jest.fn(),
@@ -51,6 +52,44 @@ describe('GigController', () => {
         controller.create({ ...dto, creator: 'not-a-stellar-address' }),
       ).rejects.toThrow();
       expect(mockGigService.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('search', () => {
+    it('validates and delegates the query to the service', async () => {
+      const page = { items: [{ id: 'gig-1' }], total: 1, page: 1, limit: 20 };
+      mockGigService.search.mockResolvedValue(page);
+
+      const result = await controller.search({
+        status: GigStatus.OPEN,
+        page: '2',
+        limit: '10',
+      } as any);
+
+      expect(result).toEqual(page);
+      expect(mockGigService.search).toHaveBeenCalledWith({
+        status: GigStatus.OPEN,
+        page: 2,
+        limit: 10,
+      });
+    });
+
+    it('delegates with defaults when no query params are given', async () => {
+      mockGigService.search.mockResolvedValue({ items: [], total: 0, page: 1, limit: 20 });
+
+      await controller.search({});
+
+      expect(mockGigService.search).toHaveBeenCalledWith({});
+    });
+
+    it('rejects an invalid status before hitting the service', async () => {
+      await expect(controller.search({ status: 'not-a-status' } as any)).rejects.toThrow();
+      expect(mockGigService.search).not.toHaveBeenCalled();
+    });
+
+    it('rejects a limit above the maximum before hitting the service', async () => {
+      await expect(controller.search({ limit: '500' } as any)).rejects.toThrow();
+      expect(mockGigService.search).not.toHaveBeenCalled();
     });
   });
 

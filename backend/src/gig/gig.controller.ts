@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -16,6 +17,7 @@ import {
   ApiHeader,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -25,9 +27,11 @@ import {
   AcceptGigSchema,
   CreateGigDto,
   CreateGigSchema,
+  SearchGigsSchema,
   UpdateGigDto,
   UpdateGigSchema,
 } from './gig.dto';
+import { GigStatus } from './gig.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { Idempotent } from '../common/idempotency';
 
@@ -96,6 +100,50 @@ export class GigController {
   async create(@Body() dto: CreateGigDto) {
     const validated = CreateGigSchema.parse(dto);
     return this.gigService.create(validated);
+  }
+
+  @Get()
+  @ApiOperation({
+    summary: 'Search gig solicitations',
+    description:
+      'Paginated search over gig solicitations, defaulting to open (unaccepted) gigs sorted ' +
+      'newest first. Results are cached in Redis for GIG_SEARCH_CACHE_TTL_SECONDS (default 30s) ' +
+      'to reduce load on repeated queries; any gig mutation invalidates the cache immediately.',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: GigStatus,
+    description: 'Filter by gig status. Defaults to "open".',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-indexed). Defaults to 1.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Results per page, up to 100. Defaults to 20.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated gig solicitations',
+    schema: {
+      type: 'object',
+      properties: {
+        items: { type: 'array', items: { type: 'object' } },
+        total: { type: 'number' },
+        page: { type: 'number' },
+        limit: { type: 'number' },
+      },
+    },
+  })
+  async search(@Query() query: Record<string, string>) {
+    const validated = SearchGigsSchema.parse(query);
+    return this.gigService.search(validated);
   }
 
   @Get(':id')

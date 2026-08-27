@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GigStatus, MAX_GIG_SEARCH_LIMIT } from './gig.entity';
 
 const STELLAR_ADDRESS_REGEX = /^G[A-Z2-7]{55}$/;
 
@@ -38,3 +39,12 @@ export const UpdateGigSchema = z.object({
 });
 
 export type UpdateGigDto = z.infer<typeof UpdateGigSchema>;
+
+export const SearchGigsSchema = z.object({
+  /** Defaults to GigStatus.OPEN in GigService.search() when omitted. */
+  status: z.nativeEnum(GigStatus).optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(MAX_GIG_SEARCH_LIMIT).optional(),
+});
+
+export type SearchGigsQuery = z.infer<typeof SearchGigsSchema>;

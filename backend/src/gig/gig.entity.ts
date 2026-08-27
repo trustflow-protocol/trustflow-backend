@@ -35,3 +35,17 @@ export const GIG_EVENTS = {
 
 export const DEFAULT_RESPONSE_WINDOW_HOURS = 72;
 export const DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** A page of gig search results — see `GigService.search()`. */
+export interface PaginatedGigs {
+  items: Gig[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export const DEFAULT_GIG_SEARCH_PAGE = 1;
+export const DEFAULT_GIG_SEARCH_LIMIT = 20;
+export const MAX_GIG_SEARCH_LIMIT = 100;
+/** How long a paginated search result page stays cached in Redis. */
+export const DEFAULT_GIG_SEARCH_CACHE_TTL_SECONDS = 30;

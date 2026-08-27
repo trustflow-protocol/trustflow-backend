@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MigrationRegistryService, MIGRATION_DEFINITIONS } from './migration-registry.service';
 import { MigrationRunnerService } from './migration-runner.service';
 import { MigrationStateStore } from './migration-state.store';
+import { MigrationStartupService } from './migration-startup.service';
 import { MigrationController } from './migration.controller';
 import {
   GigsPriorityBackfillMigration,
@@ -20,6 +21,7 @@ const GIGS_SEED_ROWS: GigRow[] = [
     MigrationRunnerService,
     MigrationRegistryService,
     MigrationStateStore,
+    MigrationStartupService,
     {
       provide: GigsPriorityBackfillMigration,
       useFactory: () => new GigsPriorityBackfillMigration(GIGS_SEED_ROWS),

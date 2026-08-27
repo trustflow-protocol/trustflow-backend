@@ -19,6 +19,24 @@ function makeInMemoryRedis() {
     },
     get: jest.fn(async (key: string) => store.get(key) ?? null),
     mget: jest.fn(async (...keys: string[]) => keys.map(k => store.get(k) ?? null)),
+    set: jest.fn(async (key: string, value: string, ..._opts: unknown[]) => {
+      store.set(key, value);
+      return 'OK';
+    }),
+    del: jest.fn(async (...keys: string[]) => {
+      let count = 0;
+      for (const key of keys) {
+        if (store.delete(key)) count += 1;
+        sets.delete(key);
+        zsets.delete(key);
+      }
+      return count;
+    }),
+    sadd: jest.fn(async (key: string, member: string) => {
+      if (!sets.has(key)) sets.set(key, new Set());
+      sets.get(key)!.add(member);
+      return 1;
+    }),
     smembers: jest.fn(async (key: string) => [...(sets.get(key) ?? [])]),
     zrange: jest.fn(async (key: string) => {
       const z = zsets.get(key) ?? new Map();
@@ -184,6 +202,66 @@ describe('GigService', () => {
       });
     });
 
+    describe('search', () => {
+      it('defaults to open gigs, newest first, page 1 of 20', async () => {
+        // Gigs created in the same millisecond would tie on createdAt — advance the clock
+        // between creates so "newest first" has something meaningful to assert on.
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+        const first = await service.create(validDto);
+
+        jest.setSystemTime(new Date('2024-01-01T00:00:01.000Z'));
+        const second = await service.create({ ...validDto, title: 'Second gig' });
+        await service.accept(second.id, 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY');
+
+        jest.setSystemTime(new Date('2024-01-01T00:00:02.000Z'));
+        const third = await service.create({ ...validDto, title: 'Third gig' });
+        jest.useRealTimers();
+
+        const result = await service.search();
+
+        expect(result).toEqual({
+          items: [third, first],
+          total: 2,
+          page: 1,
+          limit: 20,
+        });
+      });
+
+      it('filters by an explicit status', async () => {
+        const gig = await service.create(validDto);
+        await service.accept(gig.id, 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY');
+
+        const result = await service.search({ status: GigStatus.ACCEPTED });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe(gig.id);
+      });
+
+      it('paginates results', async () => {
+        for (let i = 0; i < 5; i++) {
+          await service.create({ ...validDto, title: `Gig ${i}` });
+        }
+
+        const page1 = await service.search({ page: 1, limit: 2 });
+        const page2 = await service.search({ page: 2, limit: 2 });
+
+        expect(page1.items).toHaveLength(2);
+        expect(page2.items).toHaveLength(2);
+        expect(page1.total).toBe(5);
+        expect(page1.items[0].id).not.toBe(page2.items[0].id);
+      });
+
+      it('returns an empty page past the end of the results', async () => {
+        await service.create(validDto);
+
+        const result = await service.search({ page: 5, limit: 20 });
+
+        expect(result.items).toEqual([]);
+        expect(result.total).toBe(1);
+      });
+    });
+
     describe('accept', () => {
       it('marks an open gig as accepted', async () => {
         const gig = await service.create(validDto);
@@ -243,6 +321,59 @@ describe('GigService', () => {
       it('is a no-op for an unknown id', async () => {
         expect(await service.expire('missing')).toBeUndefined();
       });
+    });
+  });
+
+  describe('search caching (Redis)', () => {
+    it('serves a repeat query from cache instead of recomputing from findAll()', async () => {
+      const redis = makeInMemoryRedis();
+      service = await buildService(redis);
+      const gig = await service.create(validDto);
+
+      const first = await service.search();
+      redis.mget.mockClear();
+      const second = await service.search();
+
+      expect(second).toEqual(first);
+      expect(second.items[0].id).toBe(gig.id);
+      // findAll() -> fetchMany() -> mget; a cache hit should skip it entirely.
+      expect(redis.mget).not.toHaveBeenCalled();
+    });
+
+    it('caches the search result under GIG_SEARCH_CACHE_TTL_SECONDS', async () => {
+      process.env.GIG_SEARCH_CACHE_TTL_SECONDS = '45';
+      const redis = makeInMemoryRedis();
+      service = await buildService(redis);
+
+      await service.search();
+
+      expect(redis.set).toHaveBeenCalledWith('gigs:search:open:1:20', expect.any(String), 'EX', 45);
+      delete process.env.GIG_SEARCH_CACHE_TTL_SECONDS;
+    });
+
+    it('invalidates the cache when a gig is created, so a stale page is never served', async () => {
+      const redis = makeInMemoryRedis();
+      service = await buildService(redis);
+      await service.search();
+
+      await service.create({ ...validDto, title: 'New gig' });
+      redis.mget.mockClear();
+      const result = await service.search();
+
+      expect(result.total).toBe(1);
+      expect(redis.mget).toHaveBeenCalled();
+    });
+
+    it('invalidates the cache when a gig transitions status (accept)', async () => {
+      const redis = makeInMemoryRedis();
+      service = await buildService(redis);
+      const gig = await service.create(validDto);
+      await service.search();
+
+      await service.accept(gig.id, 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY');
+      const result = await service.search();
+
+      expect(result.total).toBe(0);
     });
   });
 
