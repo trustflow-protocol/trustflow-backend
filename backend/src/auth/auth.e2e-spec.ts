@@ -41,9 +41,7 @@ describe('Auth (E2E)', () => {
     });
 
     it('returns 400 or error when address is missing', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/auth/challenge')
-        .expect(500);
+      const res = await request(app.getHttpServer()).get('/auth/challenge').expect(500);
 
       // The controller throws a raw Error('address required') which NestJS turns into 500
       expect(res.status).toBe(500);

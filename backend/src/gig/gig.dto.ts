@@ -25,8 +25,16 @@ export type AcceptGigDto = z.infer<typeof AcceptGigSchema>;
 
 export const UpdateGigSchema = z.object({
   title: z.string().min(1).max(200).optional(),
-  budgetXLM: z.string().regex(/^\d+(\.\d{1,7})?$/, 'Invalid XLM amount').optional(),
-  responseWindowHours: z.number().int().positive().max(24 * 30).optional(),
+  budgetXLM: z
+    .string()
+    .regex(/^\d+(\.\d{1,7})?$/, 'Invalid XLM amount')
+    .optional(),
+  responseWindowHours: z
+    .number()
+    .int()
+    .positive()
+    .max(24 * 30)
+    .optional(),
 });
 
 export type UpdateGigDto = z.infer<typeof UpdateGigSchema>;

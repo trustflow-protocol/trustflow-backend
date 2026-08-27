@@ -28,8 +28,15 @@ export class RpcFailoverService {
   }
 
   private initializeEndpoints() {
+    const horizonUrls = (process.env.STELLAR_HORIZON_ENDPOINTS || STELLAR_CONFIG.horizonUrl)
+      .split(',')
+      .map(url => url.trim());
+    const sorobanUrls = (process.env.SOROBAN_RPC_ENDPOINTS || STELLAR_CONFIG.sorobanRpcUrl)
+      .split(',')
+      .map(url => url.trim());
+
     // Initialize Horizon endpoints
-    this.horizonEndpoints = STELLAR_CONFIG.horizonEndpoints.map(url => ({
+    this.horizonEndpoints = horizonUrls.map(url => ({
       url,
       healthy: true,
       lastChecked: new Date(),
@@ -37,7 +44,7 @@ export class RpcFailoverService {
     }));
 
     // Initialize Soroban endpoints
-    this.sorobanEndpoints = STELLAR_CONFIG.sorobanRpcEndpoints.map(url => ({
+    this.sorobanEndpoints = sorobanUrls.map(url => ({
       url,
       healthy: true,
       lastChecked: new Date(),
@@ -91,9 +98,12 @@ export class RpcFailoverService {
       endpoint.healthy = false;
       endpoint.failureCount++;
       endpoint.lastError = error instanceof Error ? error.message : 'Unknown error';
-      
+
       // If current endpoint is unhealthy, try to switch to a healthy one
-      if (endpoint.url === this.currentHorizonEndpoint && endpoint.failureCount >= this.MAX_FAILURES_BEFORE_UNHEALTHY) {
+      if (
+        endpoint.url === this.currentHorizonEndpoint &&
+        endpoint.failureCount >= this.MAX_FAILURES_BEFORE_UNHEALTHY
+      ) {
         this.switchToHealthyHorizonEndpoint();
       }
     } finally {
@@ -125,9 +135,12 @@ export class RpcFailoverService {
       endpoint.healthy = false;
       endpoint.failureCount++;
       endpoint.lastError = error instanceof Error ? error.message : 'Unknown error';
-      
+
       // If current endpoint is unhealthy, try to switch to a healthy one
-      if (endpoint.url === this.currentSorobanEndpoint && endpoint.failureCount >= this.MAX_FAILURES_BEFORE_UNHEALTHY) {
+      if (
+        endpoint.url === this.currentSorobanEndpoint &&
+        endpoint.failureCount >= this.MAX_FAILURES_BEFORE_UNHEALTHY
+      ) {
         this.switchToHealthySorobanEndpoint();
       }
     } finally {
@@ -138,7 +151,9 @@ export class RpcFailoverService {
   private switchToHealthyHorizonEndpoint() {
     const healthyEndpoint = this.horizonEndpoints.find(ep => ep.healthy);
     if (healthyEndpoint && healthyEndpoint.url !== this.currentHorizonEndpoint) {
-      this.logger.warn(`Switching Horizon endpoint from ${this.currentHorizonEndpoint} to ${healthyEndpoint.url}`);
+      this.logger.warn(
+        `Switching Horizon endpoint from ${this.currentHorizonEndpoint} to ${healthyEndpoint.url}`,
+      );
       this.currentHorizonEndpoint = healthyEndpoint.url;
     } else if (!healthyEndpoint) {
       this.logger.error('No healthy Horizon endpoints available');
@@ -148,7 +163,9 @@ export class RpcFailoverService {
   private switchToHealthySorobanEndpoint() {
     const healthyEndpoint = this.sorobanEndpoints.find(ep => ep.healthy);
     if (healthyEndpoint && healthyEndpoint.url !== this.currentSorobanEndpoint) {
-      this.logger.warn(`Switching Soroban RPC endpoint from ${this.currentSorobanEndpoint} to ${healthyEndpoint.url}`);
+      this.logger.warn(
+        `Switching Soroban RPC endpoint from ${this.currentSorobanEndpoint} to ${healthyEndpoint.url}`,
+      );
       this.currentSorobanEndpoint = healthyEndpoint.url;
     } else if (!healthyEndpoint) {
       this.logger.error('No healthy Soroban RPC endpoints available');
@@ -176,7 +193,9 @@ export class RpcFailoverService {
     try {
       return new Horizon.Server(this.currentHorizonEndpoint);
     } catch (error) {
-      this.logger.warn(`Failed to create Horizon server for ${this.currentHorizonEndpoint}: ${error}`);
+      this.logger.warn(
+        `Failed to create Horizon server for ${this.currentHorizonEndpoint}: ${error}`,
+      );
       // Fall back to primary endpoint from config
       return new Horizon.Server(STELLAR_CONFIG.horizonUrl);
     }

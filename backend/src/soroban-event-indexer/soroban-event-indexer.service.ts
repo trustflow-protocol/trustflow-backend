@@ -29,9 +29,7 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
   private readonly POLL_INTERVAL_MS = 10_000;
   private readonly MAX_LEDGER_RANGE = 100;
 
-  constructor(
-    @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
-  ) {}
+  constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis | null) {}
 
   onModuleInit() {
     this.rpcServer = new SorobanRpc.Server(STELLAR_CONFIG.sorobanRpcUrl);
@@ -169,7 +167,11 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
 
   private parseTopic(topic: unknown): string {
     try {
-      const t = topic as { switch?: () => { name: string }; sym?: () => { toString(): string }; bytes?: () => Uint8Array };
+      const t = topic as {
+        switch?: () => { name: string };
+        sym?: () => { toString(): string };
+        bytes?: () => Uint8Array;
+      };
       if (t?.switch?.().name === 'SCV_SYMBOL') return t.sym!().toString();
       if (t?.switch?.().name === 'SCV_BYTES') return Buffer.from(t.bytes!()).toString();
       return String(topic);

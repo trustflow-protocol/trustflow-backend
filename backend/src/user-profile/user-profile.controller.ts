@@ -416,10 +416,7 @@ export class UserProfileController {
   @ApiResponse({ status: 400, description: 'Invalid file type or size' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Profile not found' })
-  async uploadAvatar(
-    @Param('id') id: string,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
+  async uploadAvatar(@Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException('No file provided');
     }

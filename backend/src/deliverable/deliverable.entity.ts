@@ -1,5 +1,5 @@
 export enum DeliverableStatus {
-  PENDING = 'pinned',
+  PENDING = 'pending',
   PINNED = 'pinned',
   FAILED = 'failed',
 }

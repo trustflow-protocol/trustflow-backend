@@ -9,7 +9,12 @@ export class SorobanEventIndexerController {
 
   @Get()
   @ApiOperation({ summary: 'List indexed Soroban contract events' })
-  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max events to return (default 50)' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Max events to return (default 50)',
+  })
   @ApiResponse({ status: 200, description: 'List of indexed events' })
   getEvents(@Query('limit') limit?: string) {
     return this.indexerService.getEvents(limit ? parseInt(limit, 10) : 50);

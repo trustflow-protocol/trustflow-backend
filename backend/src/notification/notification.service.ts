@@ -79,7 +79,9 @@ export class NotificationService {
       data.verdict.includes('DEPOSITOR') ? 'You won the dispute.' : 'The verdict has been reached.'
     }`;
     const beneficiaryMsg = `Dispute ${data.disputeId} verdict: ${data.verdict}. ${
-      data.verdict.includes('BENEFICIARY') ? 'You won the dispute.' : 'The verdict has been reached.'
+      data.verdict.includes('BENEFICIARY')
+        ? 'You won the dispute.'
+        : 'The verdict has been reached.'
     }`;
 
     await Promise.allSettled([
@@ -134,10 +136,7 @@ export class NotificationService {
     ]);
   }
 
-  private async sendToAddress(
-    address: string,
-    payload: NotificationPayload,
-  ): Promise<void> {
+  private async sendToAddress(address: string, payload: NotificationPayload): Promise<void> {
     if (this.channels.length === 0) {
       this.logger.warn(
         `No notification channels registered — dropping notification for ${this.maskAddress(address)}`,

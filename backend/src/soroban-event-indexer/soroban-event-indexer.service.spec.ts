@@ -7,10 +7,7 @@ describe('SorobanEventIndexerService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        SorobanEventIndexerService,
-        { provide: REDIS_CLIENT, useValue: null },
-      ],
+      providers: [SorobanEventIndexerService, { provide: REDIS_CLIENT, useValue: null }],
     }).compile();
 
     service = module.get<SorobanEventIndexerService>(SorobanEventIndexerService);

@@ -47,7 +47,14 @@ function buildMocks() {
     notifyPayoutExecuted: jest.fn().mockResolvedValue(undefined),
   };
 
-  return { escrow, escrowService, webhookService, discordService, reputationService, notificationService };
+  return {
+    escrow,
+    escrowService,
+    webhookService,
+    discordService,
+    reputationService,
+    notificationService,
+  };
 }
 
 const JURORS = [

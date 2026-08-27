@@ -29,10 +29,11 @@ export class RpcStatusController {
   @Get()
   @ApiOperation({
     summary: 'Get current RPC endpoint status and health information',
-    description: 'Returns the health status of all configured Horizon and Soroban RPC endpoints, including which endpoint is currently active.',
+    description:
+      'Returns the health status of all configured Horizon and Soroban RPC endpoints, including which endpoint is currently active.',
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'RPC endpoint status information',
     schema: {
       example: {
@@ -43,20 +44,20 @@ export class RpcStatusController {
             url: 'https://horizon-testnet.stellar.org',
             healthy: true,
             lastChecked: '2024-01-01T00:00:00.000Z',
-            failureCount: 0
-          }
+            failureCount: 0,
+          },
         ],
         sorobanEndpoints: [
           {
             url: 'https://soroban-testnet.stellar.org',
             healthy: true,
             lastChecked: '2024-01-01T00:00:00.000Z',
-            failureCount: 0
-          }
+            failureCount: 0,
+          },
         ],
-        timestamp: '2024-01-01T00:00:00.000Z'
-      }
-    }
+        timestamp: '2024-01-01T00:00:00.000Z',
+      },
+    },
   })
   @ApiResponse({ status: 401, description: 'Missing or invalid JWT' })
   getStatus(): RpcStatusResponse {
