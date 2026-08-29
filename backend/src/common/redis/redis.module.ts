@@ -1,5 +1,6 @@
 import { Module, Global } from '@nestjs/common';
 import { Redis } from 'ioredis';
+import { DistributedLockService } from './distributed-lock.service';
 
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 
@@ -19,7 +20,8 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
         return client;
       },
     },
+    DistributedLockService,
   ],
-  exports: [REDIS_CLIENT],
+  exports: [REDIS_CLIENT, DistributedLockService],
 })
 export class RedisModule {}

@@ -1,6 +1,22 @@
 import { RepinWorkerService } from './repin-worker.service';
 import { IpfsPinningService } from './ipfs-pinning.service';
 import { PinStatus } from './ipfs-pinning.types';
+import { DistributedLockService } from '../common/redis/distributed-lock.service';
+
+/** Flushes the microtask queue so chained awaits inside a fake-timer tick settle. */
+async function flushPromises(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await Promise.resolve();
+  }
+}
+
+/** Always grants the lock — the distributed-lock mechanics themselves are covered by distributed-lock.service.spec.ts. */
+function fakeLock(): jest.Mocked<Pick<DistributedLockService, 'tryAcquire' | 'release'>> {
+  return {
+    tryAcquire: jest.fn().mockResolvedValue('fake-token'),
+    release: jest.fn().mockResolvedValue(undefined),
+  };
+}
 
 function makeRecord(cid: string, status: PinStatus) {
   return {
@@ -24,7 +40,10 @@ describe('RepinWorkerService', () => {
       findAll: jest.fn().mockReturnValue([]),
       reconcile: jest.fn().mockResolvedValue(undefined),
     };
-    worker = new RepinWorkerService(pinningService as unknown as IpfsPinningService);
+    worker = new RepinWorkerService(
+      pinningService as unknown as IpfsPinningService,
+      fakeLock() as unknown as DistributedLockService,
+    );
   });
 
   afterEach(() => {
@@ -73,7 +92,7 @@ describe('RepinWorkerService', () => {
       expect(pinningService.reconcile).not.toHaveBeenCalled();
 
       jest.advanceTimersByTime(5 * 60 * 1000);
-      return Promise.resolve().then(() => {
+      return flushPromises().then(() => {
         expect(pinningService.reconcile).toHaveBeenCalledWith('cid-a');
       });
     });
@@ -88,7 +107,7 @@ describe('RepinWorkerService', () => {
       expect(pinningService.reconcile).not.toHaveBeenCalled();
 
       jest.advanceTimersByTime(1);
-      return Promise.resolve().then(() => {
+      return flushPromises().then(() => {
         expect(pinningService.reconcile).toHaveBeenCalledWith('cid-a');
       });
     });
