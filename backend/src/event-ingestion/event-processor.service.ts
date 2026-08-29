@@ -18,6 +18,8 @@ export interface ProcessedEvent {
   success: boolean;
   error?: string;
   processedAt: Date;
+  // Store original event data for retry
+  originalEvent?: SorobanEvent;
 }
 
 @Injectable()
@@ -43,6 +45,7 @@ export class EventProcessorService {
         ledger: event.ledger,
         success: true,
         processedAt: new Date(),
+        originalEvent: event,
       };
 
       this.processedEvents.set(eventId, result);
@@ -55,6 +58,7 @@ export class EventProcessorService {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
         processedAt: new Date(),
+        originalEvent: event,
       };
 
       this.processedEvents.set(eventId, result);

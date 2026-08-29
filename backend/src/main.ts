@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
 import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
+import { MetricsHttpInterceptor } from './monitoring/metrics-http.interceptor';
 
 const logger = new Logger('Bootstrap');
 
@@ -35,9 +36,32 @@ async function bootstrap() {
   // Register global exception filter — captures 5xx errors to Sentry
   app.useGlobalFilters(new SentryExceptionFilter(sentryService));
 
+  // Register global metrics interceptor
+  const metricsInterceptor = app.get(MetricsHttpInterceptor);
+  app.useGlobalInterceptors(metricsInterceptor);
+
   // Enable CORS
+  const corsOrigin = process.env.CORS_ORIGIN;
+  const nodeEnv = process.env.NODE_ENV || 'development';
+
+  // Validate CORS configuration in production
+  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
+    logger.error(
+      'CORS_ORIGIN must be explicitly set in production (cannot use wildcard with credentials: true)',
+    );
+    process.exit(1);
+  }
+
+  // Warn if using wildcard in any environment (but only fail in production)
+  if (corsOrigin === '*' && nodeEnv === 'production') {
+    logger.error(
+      'Using wildcard CORS origin with credentials enabled is a security risk. Set CORS_ORIGIN to a comma-separated list of allowed origins.',
+    );
+    process.exit(1);
+  }
+
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: corsOrigin || '*',
     credentials: true,
   });
 

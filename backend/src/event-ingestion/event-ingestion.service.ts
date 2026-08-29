@@ -121,11 +121,13 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     try {
       const allEvents: SorobanEvent[] = [];
       let currentStart = startLedger;
+      let cursor: string | undefined;
 
       while (currentStart <= endLedger) {
         const batchEnd = Math.min(currentStart + 99, endLedger);
-        const response = await this.rpcServer.getEvents({
-          startLedger: currentStart,
+        
+        // Build request parameters — when using cursor, omit startLedger and endLedger
+        const getEventsParams: any = {
           filters: [
             {
               type: 'contract',
@@ -133,10 +135,31 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
             },
           ],
           limit: 100,
-        });
+        };
 
+        if (cursor) {
+          // Use cursor-based pagination for the current batch
+          getEventsParams.cursor = cursor;
+          // When using cursor, endLedger can still be specified to bound the result
+          getEventsParams.endLedger = batchEnd + 1; // +1 because endLedger is exclusive
+        } else {
+          // Start new batch with explicit ledger bounds
+          getEventsParams.startLedger = currentStart;
+          getEventsParams.endLedger = batchEnd + 1; // +1 because endLedger is exclusive
+        }
+
+        const response = await this.rpcServer.getEvents(getEventsParams);
         allEvents.push(...response.events.map(event => this.parseEvent(event)));
-        currentStart = batchEnd + 1;
+
+        // Check if more events exist in this batch via cursor
+        if (response.cursor && response.events.length === 100) {
+          // More events exist in this ledger range, continue with cursor
+          cursor = response.cursor;
+        } else {
+          // No more events in this batch, move to next batch
+          cursor = undefined;
+          currentStart = batchEnd + 1;
+        }
       }
 
       return allEvents.filter(e => e.ledger >= startLedger && e.ledger <= endLedger);
@@ -245,18 +268,16 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     const results: ProcessedEvent[] = [];
 
     for (const failedEvent of failedEvents) {
-      const event: SorobanEvent = {
-        id: failedEvent.eventId,
-        ledger: failedEvent.ledger,
-        contractId: STELLAR_CONFIG.contractId,
-        eventType: 'retry',
-        topic: [],
-        value: {},
-        xdr: '',
-        createdAt: new Date(),
-      };
+      // Use the original event data if available, otherwise skip
+      if (!failedEvent.originalEvent) {
+        this.logger.warn(
+          `Failed event ${failedEvent.eventId} has no original event data, skipping retry`,
+        );
+        continue;
+      }
 
-      const result = await this.eventProcessorService.processEvent(event);
+      // Re-process with the original event data
+      const result = await this.eventProcessorService.processEvent(failedEvent.originalEvent);
       results.push(result);
     }
 
