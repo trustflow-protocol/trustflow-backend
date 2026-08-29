@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
 import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
+import helmet from 'helmet';
 
 const logger = new Logger('Bootstrap');
 
@@ -27,6 +28,20 @@ process.on('uncaughtException', (error: Error) => {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: ["'self'", 'https:'],
+        },
+      },
+    }),
+  );
 
   // Initialize Sentry via the injectable service so it shares the same instance
   const sentryService = app.get(SentryService);
