@@ -43,6 +43,34 @@ describe('HealthService', () => {
     expect(status.checks.database).toBe(true);
   });
 
+  it('reports redis: true when no Redis client is configured', async () => {
+    mockFetchOk(true);
+
+    const status = await new HealthService().check();
+
+    expect(status.checks.redis).toBe(true);
+  });
+
+  it('reports redis: true when Redis responds to ping', async () => {
+    mockFetchOk(true);
+    const redis = { ping: jest.fn().mockResolvedValue('PONG') } as unknown as any;
+
+    const status = await new HealthService(undefined, redis).check();
+
+    expect(status.checks.redis).toBe(true);
+    expect(redis.ping).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports degraded when Redis is unreachable', async () => {
+    mockFetchOk(true);
+    const redis = { ping: jest.fn().mockRejectedValue(new Error('Redis down')) } as unknown as any;
+
+    const status = await new HealthService(undefined, redis).check();
+
+    expect(status.checks.redis).toBe(false);
+    expect(status.status).toBe('degraded');
+  });
+
   it('reports database: true when Postgres is not configured, without pinging', async () => {
     mockFetchOk(true);
     const database = { isConfigured: false, ping: jest.fn() } as unknown as DatabaseService;
@@ -93,6 +121,12 @@ describe('HealthService', () => {
     const status = await service.check();
 
     expect(status.status).toBe('ok');
-    expect(status.checks).toEqual({ api: true, stellar: true, database: true, memory: true });
+    expect(status.checks).toEqual({
+      api: true,
+      stellar: true,
+      database: true,
+      redis: true,
+      memory: true,
+    });
   });
 });
