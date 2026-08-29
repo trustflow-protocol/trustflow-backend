@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
 import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
+import { getCorsOrigin } from './cors.util';
 
 const logger = new Logger('Bootstrap');
 
@@ -37,7 +38,7 @@ async function bootstrap() {
 
   // Enable CORS
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: getCorsOrigin(),
     credentials: true,
   });
 
