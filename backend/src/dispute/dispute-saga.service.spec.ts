@@ -35,6 +35,15 @@ function buildMocks() {
       escrow.status = 'released';
       return escrow;
     }),
+    cancel: jest.fn().mockImplementation(async () => {
+      escrow.status = 'cancelled';
+      return escrow;
+    }),
+    split: jest.fn().mockImplementation(async (_id: string, splitPercentage: number) => {
+      escrow.status = 'released';
+      (escrow as any).splitPercentage = splitPercentage;
+      return escrow;
+    }),
   };
 
   const webhookService = { dispatch: jest.fn().mockResolvedValue(undefined) };
@@ -305,18 +314,25 @@ describe('DisputeSagaService', () => {
       await service.castVote(sagaId, { jurorAddress: JURORS[2], vote: 'depositor' });
     }
 
-    it('completes saga and sets COMPLETED for DEPOSITOR_WINS', async () => {
+    it('completes saga and calls escrowService.cancel for DEPOSITOR_WINS', async () => {
       await runToPayoutStep('depositor');
       const saga = await service.executePayout(sagaId, {});
       expect(saga.currentStep).toBe(DisputeStep.COMPLETED);
       expect(saga.payoutTxHash).toBeDefined();
       expect(saga.completedAt).toBeDefined();
+      expect(escrowService.cancel).toHaveBeenCalledWith('esc-001');
     });
 
     it('releases escrow for BENEFICIARY_WINS', async () => {
       await runToPayoutStep('beneficiary');
       await service.executePayout(sagaId, {});
       expect(escrowService.release).toHaveBeenCalledWith('esc-001');
+    });
+
+    it('calls escrowService.split with correct percentage for SPLIT', async () => {
+      await runToPayoutStep('split');
+      await service.executePayout(sagaId, { splitPercentage: 70 });
+      expect(escrowService.split).toHaveBeenCalledWith('esc-001', 70);
     });
 
     it('dispatches payout_executed and saga_completed webhooks', async () => {
