@@ -128,6 +128,16 @@ describe('DisputeSagaService', () => {
       expect(escrowService.raiseDispute).toHaveBeenCalledWith('esc-001', ESCALATE_DTO.reason);
     });
 
+    it('allows re-escalation if the previous saga is COMPLETED', async () => {
+      const firstSaga = await service.escalate('esc-001', ESCALATE_DTO);
+      // Simulate completion
+      firstSaga.currentStep = DisputeStep.COMPLETED;
+      
+      const secondSaga = await service.escalate('esc-001', ESCALATE_DTO);
+      expect(secondSaga.sagaId).not.toBe(firstSaga.sagaId);
+      expect(secondSaga.escrowId).toBe('esc-001');
+    });
+
     it('records ESCALATION in stepHistory as completed', async () => {
       const saga = await service.escalate('esc-001', ESCALATE_DTO);
       const record = saga.stepHistory.find(r => r.step === DisputeStep.ESCALATION);
