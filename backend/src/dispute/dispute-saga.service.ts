@@ -84,7 +84,11 @@ export class DisputeSagaService {
   async escalate(escrowId: string, dto: EscalateDisputeDto): Promise<DisputeSaga> {
     // Guard: only one active saga per escrow
     const existing = this.findByEscrowId(escrowId);
-    if (existing && existing.currentStep !== DisputeStep.FAILED) {
+    if (
+      existing &&
+      existing.currentStep !== DisputeStep.FAILED &&
+      existing.currentStep !== DisputeStep.COMPLETED
+    ) {
       throw new ConflictException(`An active dispute saga already exists for escrow ${escrowId}`);
     }
 
