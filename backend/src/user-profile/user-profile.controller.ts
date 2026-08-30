@@ -7,12 +7,14 @@ import {
   Body,
   Param,
   Query,
+  Req,
   UploadedFile,
   UseInterceptors,
   HttpCode,
   HttpStatus,
   UseGuards,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -38,6 +40,14 @@ import { UserType, UserStatus } from './user-profile.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { S3StorageService } from './s3-storage.service';
 
+/**
+ * Shape of `req.user` once `JwtAuthGuard` has run — see
+ * `JwtStrategy.validate()` (src/auth/jwt.strategy.ts).
+ */
+interface AuthenticatedRequest {
+  user: { address: string; sub: string };
+}
+
 @ApiTags('User Profiles')
 @Controller('profiles')
 export class UserProfileController {
@@ -47,10 +57,14 @@ export class UserProfileController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Create a new user profile',
     description:
-      'Creates a new user profile for a freelancer or client. Requires a unique Stellar wallet address.',
+      'Creates a new user profile for a freelancer or client. Requires authentication; ' +
+      '`walletAddress` must match the wallet address on the authenticated JWT — you can only ' +
+      'create a profile for the wallet you signed in with, not on behalf of another address.',
   })
   @ApiBody({
     description: 'User profile creation details',
@@ -140,9 +154,23 @@ export class UserProfileController {
     },
   })
   @ApiResponse({ status: 400, description: 'Invalid input data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'walletAddress does not match the authenticated wallet',
+  })
   @ApiResponse({ status: 409, description: 'Profile with this wallet address already exists' })
-  async create(@Body() dto: CreateUserProfileDto) {
+  async create(@Body() dto: CreateUserProfileDto, @Req() req: AuthenticatedRequest) {
     const validated = CreateUserProfileSchema.parse(dto);
+
+    // The caller can only ever prove ownership of the wallet address on
+    // their own JWT — trusting walletAddress straight from the body would
+    // let anyone squat on someone else's real address before its owner
+    // ever registers (see #205).
+    if (validated.walletAddress !== req.user.address) {
+      throw new ForbiddenException('walletAddress must match the authenticated wallet address');
+    }
+
     return this.userProfileService.create(validated);
   }
 

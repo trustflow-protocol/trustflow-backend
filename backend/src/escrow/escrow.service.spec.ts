@@ -7,6 +7,25 @@ describe('EscrowService', () => {
     service = new EscrowService();
   });
 
+  describe('create', () => {
+    it('generates unique IDs even when called concurrently in a tight loop', async () => {
+      const numEscrows = 1000;
+      const promises = [];
+      for (let i = 0; i < numEscrows; i++) {
+        promises.push(service.create(`GDEP${i}`, `GBEN${i}`, '100'));
+      }
+      
+      const escrows = await Promise.all(promises);
+      const ids = new Set(escrows.map(e => e.id));
+      
+      expect(ids.size).toBe(numEscrows);
+      
+      // Verify UUID format (basic check)
+      const sampleId = escrows[0].id;
+      expect(sampleId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
+  });
+
   describe('findAll', () => {
     it('returns every tracked escrow', async () => {
       await service.create('GDEP1', 'GBEN1', '100');
@@ -19,6 +38,52 @@ describe('EscrowService', () => {
 
     it('returns an empty array when nothing is tracked', async () => {
       await expect(service.findAll()).resolves.toEqual([]);
+    });
+  });
+
+  describe('fund', () => {
+    it('updates status to active for a pending escrow', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      const updated = await service.fund(escrow.id);
+      expect(updated.status).toBe('active');
+    });
+
+    it('throws when trying to fund an already active escrow', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      await service.fund(escrow.id);
+      await expect(service.fund(escrow.id)).rejects.toThrow('Cannot fund escrow in status: active');
+    });
+
+    it('throws when trying to fund a disputed escrow', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      await service.fund(escrow.id); // Must be active to dispute? No, pending can be disputed based on current logic. Wait, let's just make it disputed using applyChainState.
+      await service.applyChainState(escrow.id, { status: 'disputed' });
+      await expect(service.fund(escrow.id)).rejects.toThrow('Cannot fund escrow in status: disputed');
+    });
+  });
+
+  describe('cancel', () => {
+    it('updates status to cancelled', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      const updated = await service.cancel(escrow.id);
+      expect(updated.status).toBe('cancelled');
+    });
+
+    it('throws when escrow does not exist', async () => {
+      await expect(service.cancel('esc-missing')).rejects.toThrow('Escrow not found');
+    });
+  });
+
+  describe('split', () => {
+    it('updates status to released and sets split percentage', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      const updated = await service.split(escrow.id, 70);
+      expect(updated.status).toBe('released');
+      expect(updated.splitPercentage).toBe(70);
+    });
+
+    it('throws when escrow does not exist', async () => {
+      await expect(service.split('esc-missing', 50)).rejects.toThrow('Escrow not found');
     });
   });
 

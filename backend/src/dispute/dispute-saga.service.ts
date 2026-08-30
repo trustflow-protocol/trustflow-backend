@@ -84,7 +84,11 @@ export class DisputeSagaService {
   async escalate(escrowId: string, dto: EscalateDisputeDto): Promise<DisputeSaga> {
     // Guard: only one active saga per escrow
     const existing = this.findByEscrowId(escrowId);
-    if (existing && existing.currentStep !== DisputeStep.FAILED) {
+    if (
+      existing &&
+      existing.currentStep !== DisputeStep.FAILED &&
+      existing.currentStep !== DisputeStep.COMPLETED
+    ) {
       throw new ConflictException(`An active dispute saga already exists for escrow ${escrowId}`);
     }
 
@@ -426,24 +430,11 @@ export class DisputeSagaService {
         break;
 
       case DisputeVerdict.DEPOSITOR_WINS:
-        // Funds returned to depositor — mark as cancelled
-        {
-          const escrow = await this.escrowService.findById(saga.escrowId);
-          if (escrow) escrow.status = 'cancelled';
-        }
+        await this.escrowService.cancel(saga.escrowId);
         break;
 
       case DisputeVerdict.SPLIT:
-        // Partial release — use provided split or default 50/50
-        {
-          const escrow = await this.escrowService.findById(saga.escrowId);
-          if (escrow) {
-            // Record split metadata; actual on-chain split would be handled by Soroban contract
-            (escrow as Escrow & { splitPercentage?: number }).splitPercentage =
-              splitPercentage ?? 50;
-            escrow.status = 'released';
-          }
-        }
+        await this.escrowService.split(saga.escrowId, splitPercentage ?? 50);
         break;
     }
   }

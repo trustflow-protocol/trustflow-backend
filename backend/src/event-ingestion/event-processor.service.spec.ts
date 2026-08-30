@@ -10,6 +10,7 @@ describe('EventProcessorService', () => {
     findById: jest.fn().mockResolvedValue({ id: 'esc-123', status: 'pending' }),
     release: jest.fn().mockResolvedValue({ id: 'esc-123', status: 'released' }),
     raiseDispute: jest.fn().mockResolvedValue({ id: 'esc-123', status: 'disputed' }),
+    fund: jest.fn().mockResolvedValue({ id: 'esc-123', status: 'active' }),
   };
 
   beforeEach(async () => {
@@ -65,6 +66,24 @@ describe('EventProcessorService', () => {
 
       expect(result.success).toBe(true);
       expect(mockEscrowService.release).toHaveBeenCalledWith('esc-123');
+    });
+
+    it('should process escrow_funded event', async () => {
+      const event: SorobanEvent = {
+        id: 'event-funded',
+        ledger: 101,
+        contractId: 'test-contract',
+        eventType: 'escrow_funded',
+        topic: ['escrow_funded', 'esc-123'],
+        value: {},
+        xdr: 'test-xdr',
+        createdAt: new Date(),
+      };
+
+      const result = await service.processEvent(event);
+
+      expect(result.success).toBe(true);
+      expect(mockEscrowService.fund).toHaveBeenCalledWith('esc-123');
     });
 
     it('should process escrow_disputed event', async () => {
