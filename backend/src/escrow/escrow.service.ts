@@ -36,7 +36,7 @@ export class EscrowService {
   private escrows: Map<string, Escrow> = new Map();
 
   async create(depositor: string, beneficiary: string, amountXLM: string): Promise<Escrow> {
-    const id = `esc-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const id = randomUUID();
     const escrow: Escrow = {
       id,
       depositor,
