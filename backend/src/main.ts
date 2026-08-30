@@ -5,6 +5,10 @@ import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
+import {
+  enableRequestContextLogging,
+  requestIdMiddleware,
+} from './common/logging/request-context';
 import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
 import { MetricsHttpInterceptor } from './monitoring/metrics-http.interceptor';
 
@@ -27,7 +31,10 @@ process.on('uncaughtException', (error: Error) => {
 });
 
 async function bootstrap() {
+  enableRequestContextLogging();
+
   const app = await NestFactory.create(AppModule);
+  app.use(requestIdMiddleware);
 
   // Initialize Sentry via the injectable service so it shares the same instance
   const sentryService = app.get(SentryService);

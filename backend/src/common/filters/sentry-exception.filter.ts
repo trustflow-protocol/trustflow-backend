@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
+import { getRequestId } from '../logging/request-context';
 import { SentryService } from '../../sentry/sentry.service';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class SentryExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
+    const requestId = getRequestId(request);
 
     let status: number;
     let message: string;
@@ -44,12 +46,14 @@ export class SentryExceptionFilter implements ExceptionFilter {
       Sentry.withScope(scope => {
         scope.setTag('url', request.url);
         scope.setTag('method', request.method);
+        scope.setTag('request_id', requestId);
+        scope.setTag('correlation_id', requestId);
         scope.setExtra('statusCode', status);
         scope.setUser({ ip_address: request.ip });
         this.sentryService.captureException(exception, 'SentryExceptionFilter');
       });
       this.logger.error(
-        `[${request.method}] ${request.url} — ${status}`,
+        `[${request.method}] ${request.url} — ${status} — requestId=${requestId}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     }
