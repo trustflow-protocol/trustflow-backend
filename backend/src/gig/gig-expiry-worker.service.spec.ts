@@ -1,12 +1,21 @@
 import { GigExpiryWorkerService } from './gig-expiry-worker.service';
 import { GigService } from './gig.service';
 import { Gig, GigStatus } from './gig.entity';
+import { DistributedLockService } from '../common/redis/distributed-lock.service';
 
 /** Flushes the microtask queue so chained awaits inside a fake-timer tick settle. */
 async function flushPromises(): Promise<void> {
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     await Promise.resolve();
   }
+}
+
+/** Always grants the lock — the distributed-lock mechanics themselves are covered by distributed-lock.service.spec.ts. */
+function fakeLock(): jest.Mocked<Pick<DistributedLockService, 'tryAcquire' | 'release'>> {
+  return {
+    tryAcquire: jest.fn().mockResolvedValue('fake-token'),
+    release: jest.fn().mockResolvedValue(undefined),
+  };
 }
 
 function makeGig(id: string, status: GigStatus): Gig {
@@ -31,7 +40,10 @@ describe('GigExpiryWorkerService', () => {
       findExpirable: jest.fn().mockResolvedValue([]),
       expire: jest.fn(),
     };
-    worker = new GigExpiryWorkerService(gigService as unknown as GigService);
+    worker = new GigExpiryWorkerService(
+      gigService as unknown as GigService,
+      fakeLock() as unknown as DistributedLockService,
+    );
   });
 
   afterEach(() => {
