@@ -8,7 +8,7 @@ TrustFlow Core is the backend API service that powers off-chain logic for the Tr
 
 ---
 
-## ✨ Core Features
+## ✨ Core Features.
 
 - 🔐 **JWT Authentication with Wallet Signatures**: Secure wallet-based auth using Stellar signature verification. Users authenticate by signing a cryptographic challenge with their Freighter wallet, proving ownership without exposing private keys.
 - 💼 **Escrow Management**: Full CRUD API for escrow entities — creation, funding, milestone tracking.
