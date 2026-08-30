@@ -62,6 +62,31 @@ describe('EscrowService', () => {
     });
   });
 
+  describe('cancel', () => {
+    it('updates status to cancelled', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      const updated = await service.cancel(escrow.id);
+      expect(updated.status).toBe('cancelled');
+    });
+
+    it('throws when escrow does not exist', async () => {
+      await expect(service.cancel('esc-missing')).rejects.toThrow('Escrow not found');
+    });
+  });
+
+  describe('split', () => {
+    it('updates status to released and sets split percentage', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      const updated = await service.split(escrow.id, 70);
+      expect(updated.status).toBe('released');
+      expect(updated.splitPercentage).toBe(70);
+    });
+
+    it('throws when escrow does not exist', async () => {
+      await expect(service.split('esc-missing', 50)).rejects.toThrow('Escrow not found');
+    });
+  });
+
   describe('linkContractEscrowId / findByContractEscrowId', () => {
     it('links a DB row to its on-chain id and finds it back by that id', async () => {
       const escrow = await service.create('GDEP', 'GBEN', '100');
