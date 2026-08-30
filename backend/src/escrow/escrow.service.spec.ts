@@ -7,6 +7,21 @@ describe('EscrowService', () => {
     service = new EscrowService();
   });
 
+  describe('create', () => {
+    it('generates unique IDs even when called concurrently in a tight loop', async () => {
+      const numEscrows = 1000;
+      const promises = [];
+      for (let i = 0; i < numEscrows; i++) {
+        promises.push(service.create(`GDEP${i}`, `GBEN${i}`, '100'));
+      }
+      
+      const escrows = await Promise.all(promises);
+      const ids = new Set(escrows.map(e => e.id));
+      
+      expect(ids.size).toBe(numEscrows);
+    });
+  });
+
   describe('findAll', () => {
     it('returns every tracked escrow', async () => {
       await service.create('GDEP1', 'GBEN1', '100');
