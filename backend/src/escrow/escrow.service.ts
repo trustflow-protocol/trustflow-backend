@@ -14,6 +14,7 @@ export interface Escrow {
   disputedAt?: string;
   /** On-chain escrow identifier, set once this row is linked to its contract counterpart. */
   contractEscrowId?: string;
+  splitPercentage?: number;
 }
 
 /** Chain-verified fields the reconciler may write when repairing drift. */
@@ -117,6 +118,21 @@ export class EscrowService {
     const escrow = this.escrows.get(id);
     if (!escrow) throw new Error('Escrow not found');
     escrow.status = 'released';
+    return escrow;
+  }
+
+  async cancel(id: string): Promise<Escrow> {
+    const escrow = this.escrows.get(id);
+    if (!escrow) throw new Error('Escrow not found');
+    escrow.status = 'cancelled';
+    return escrow;
+  }
+
+  async split(id: string, splitPercentage: number): Promise<Escrow> {
+    const escrow = this.escrows.get(id);
+    if (!escrow) throw new Error('Escrow not found');
+    escrow.status = 'released';
+    escrow.splitPercentage = splitPercentage;
     return escrow;
   }
 
