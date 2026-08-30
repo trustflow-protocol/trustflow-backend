@@ -136,6 +136,10 @@ describe('DisputeSagaService', () => {
       const secondSaga = await service.escalate('esc-001', ESCALATE_DTO);
       expect(secondSaga.sagaId).not.toBe(firstSaga.sagaId);
       expect(secondSaga.escrowId).toBe('esc-001');
+      
+      // Verify old saga is still tracked
+      const retrievedFirst = service.findById(firstSaga.sagaId);
+      expect(retrievedFirst.currentStep).toBe(DisputeStep.COMPLETED);
     });
 
     it('records ESCALATION in stepHistory as completed', async () => {
