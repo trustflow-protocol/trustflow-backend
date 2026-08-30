@@ -103,6 +103,16 @@ export class EscrowService {
     return escrow;
   }
 
+  async fund(id: string): Promise<Escrow> {
+    const escrow = this.escrows.get(id);
+    if (!escrow) throw new Error('Escrow not found');
+    if (escrow.status !== 'pending') {
+      throw new Error(`Cannot fund escrow in status: ${escrow.status}`);
+    }
+    escrow.status = 'active';
+    return escrow;
+  }
+
   async release(id: string): Promise<Escrow> {
     const escrow = this.escrows.get(id);
     if (!escrow) throw new Error('Escrow not found');
