@@ -94,11 +94,8 @@ export class EventProcessorService {
 
   private async handleEscrowFunded(event: SorobanEvent): Promise<void> {
     const escrowId = event.topic[1];
-    const escrow = await this.escrowService.findById(escrowId);
-    if (escrow) {
-      escrow.status = 'active';
-      this.logger.log(`Escrow funded: ${escrowId}`);
-    }
+    await this.escrowService.fund(escrowId);
+    this.logger.log(`Escrow funded: ${escrowId}`);
   }
 
   private async handleEscrowReleased(event: SorobanEvent): Promise<void> {
