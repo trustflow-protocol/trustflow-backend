@@ -89,7 +89,7 @@ export class EscrowService {
 
   /** Creates a DB row for an escrow found on-chain but never recorded (e.g. a missed creation event). */
   async createFromChainState(seed: ChainEscrowSeed): Promise<Escrow> {
-    const id = `esc-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const id = randomUUID();
     const escrow: Escrow = {
       id,
       depositor: seed.depositor,
