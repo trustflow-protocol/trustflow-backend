@@ -41,6 +41,27 @@ describe('EscrowService', () => {
     });
   });
 
+  describe('fund', () => {
+    it('updates status to active for a pending escrow', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      const updated = await service.fund(escrow.id);
+      expect(updated.status).toBe('active');
+    });
+
+    it('throws when trying to fund an already active escrow', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      await service.fund(escrow.id);
+      await expect(service.fund(escrow.id)).rejects.toThrow('Cannot fund escrow in status: active');
+    });
+
+    it('throws when trying to fund a disputed escrow', async () => {
+      const escrow = await service.create('GDEP', 'GBEN', '100');
+      await service.fund(escrow.id); // Must be active to dispute? No, pending can be disputed based on current logic. Wait, let's just make it disputed using applyChainState.
+      await service.applyChainState(escrow.id, { status: 'disputed' });
+      await expect(service.fund(escrow.id)).rejects.toThrow('Cannot fund escrow in status: disputed');
+    });
+  });
+
   describe('linkContractEscrowId / findByContractEscrowId', () => {
     it('links a DB row to its on-chain id and finds it back by that id', async () => {
       const escrow = await service.create('GDEP', 'GBEN', '100');
