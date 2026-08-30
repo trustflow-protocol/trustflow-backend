@@ -19,6 +19,10 @@ describe('EscrowService', () => {
       const ids = new Set(escrows.map(e => e.id));
       
       expect(ids.size).toBe(numEscrows);
+      
+      // Verify UUID format (basic check)
+      const sampleId = escrows[0].id;
+      expect(sampleId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     });
   });
 
