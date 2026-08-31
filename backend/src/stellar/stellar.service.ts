@@ -2,6 +2,27 @@ import { Injectable } from '@nestjs/common';
 import { Horizon } from '@stellar/stellar-sdk';
 import { RpcFailoverService } from './rpc-failover.service';
 
+/**
+ * Thrown by `getBalance` when Horizon reports the account does not exist
+ * (unfunded or never created). Callers get a typed error to map to a 404
+ * instead of a raw Horizon SDK error (#221).
+ */
+export class StellarAccountNotFoundError extends Error {
+  constructor(public readonly address: string) {
+    super(`Stellar account ${address} was not found on the network (unfunded or nonexistent)`);
+    this.name = 'StellarAccountNotFoundError';
+  }
+}
+
+function isHorizonNotFound(error: unknown): boolean {
+  const e = error as { name?: string; response?: { status?: number }; message?: string };
+  return (
+    e?.response?.status === 404 ||
+    e?.name === 'NotFoundError' ||
+    /\b404\b|not found|resource missing/i.test(e?.message ?? '')
+  );
+}
+
 @Injectable()
 export class StellarService {
   private server: Horizon.Server;
@@ -17,7 +38,15 @@ export class StellarService {
 
   async getBalance(address: string): Promise<string> {
     return this.withFailover(async server => {
-      const account = await server.loadAccount(address);
+      let account: Awaited<ReturnType<Horizon.Server['loadAccount']>>;
+      try {
+        account = await server.loadAccount(address);
+      } catch (error) {
+        if (isHorizonNotFound(error)) {
+          throw new StellarAccountNotFoundError(address);
+        }
+        throw error;
+      }
       const native = account.balances.find((b: any) => b.asset_type === 'native');
       return native?.balance ?? '0';
     });
@@ -56,6 +85,12 @@ export class StellarService {
         return await operation(server);
       } catch (error) {
         lastError = error as Error;
+
+        // A missing account is a definitive answer, not a transport failure —
+        // don't burn retries on it.
+        if (error instanceof StellarAccountNotFoundError) {
+          throw error;
+        }
 
         if (retryOnFailure && attempt < maxRetries) {
           // If this wasn't the last attempt, wait a bit before retrying

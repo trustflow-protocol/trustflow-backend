@@ -63,6 +63,16 @@ export class IpfsPinningService {
    */
   async pinContent(dto: PinContentDto): Promise<PinRecord> {
     const buffer = Buffer.from(dto.content, 'base64');
+
+    // Explicit size guard (belt-and-suspenders alongside the DTO @MaxLength check and
+    // the Express body-size limit configured in main.ts).
+    const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+    if (buffer.length > MAX_BYTES) {
+      throw new BadRequestException(
+        `Decoded content size (${buffer.length} bytes) exceeds the maximum allowed size of 10 MB`,
+      );
+    }
+
     const cid = computeCidV1Raw(buffer);
 
     if (dto.expectedCid && dto.expectedCid !== cid) {
