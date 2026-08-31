@@ -135,3 +135,28 @@ describe('RepinWorkerService', () => {
     });
   });
 });
+
+describe('RepinWorkerService — concurrency & isolation (#237)', () => {
+  it('reconciles degraded pins concurrently and keeps per-CID error isolation', async () => {
+    const records = Array.from({ length: 8 }, (_, i) => makeRecord(`cid-${i}`, PinStatus.DEGRADED));
+    const pinningService: jest.Mocked<Pick<IpfsPinningService, 'findAll' | 'reconcile'>> = {
+      findAll: jest.fn().mockReturnValue(records),
+      reconcile: jest.fn().mockImplementation((cid: string) =>
+        cid === 'cid-3'
+          ? Promise.reject(new Error('provider down'))
+          : new Promise(r => setTimeout(r, 20)),
+      ),
+    };
+    const worker = new RepinWorkerService(
+      pinningService as unknown as IpfsPinningService,
+      fakeLock() as unknown as DistributedLockService,
+    );
+
+    const start = Date.now();
+    await expect(worker.runOnce()).resolves.toBeUndefined(); // one bad CID must not throw
+    const elapsed = Date.now() - start;
+
+    expect(pinningService.reconcile).toHaveBeenCalledTimes(8);
+    expect(elapsed).toBeLessThan(100); // sequential would be ~140ms
+  });
+});
