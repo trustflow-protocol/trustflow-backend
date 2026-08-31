@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { WebhookModule } from './webhook/webhook.module';
@@ -22,9 +22,12 @@ import { DeliverableModule } from './deliverable/deliverable.module';
 import { MilestoneNotificationsModule } from './milestone-notifications/milestone-notifications.module';
 import { SorobanEventIndexerModule } from './soroban-event-indexer/soroban-event-indexer.module';
 import { OutboxModule } from './outbox/outbox.module';
+import { LoggingModule } from './common/logging/logging.module';
+import { CorrelationIdMiddleware } from './common/logging/correlation-id.middleware';
 
 @Module({
   imports: [
+    LoggingModule,
     SentryModule,
     RedisModule,
     DatabaseModule,
@@ -50,4 +53,8 @@ import { OutboxModule } from './outbox/outbox.module';
     OutboxModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+  }
+}
