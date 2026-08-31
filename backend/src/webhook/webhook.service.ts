@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import * as https from 'https';
 import * as http from 'http';
+import { withRetry, isRetryable } from './retry.helper';
+
+/** Base backoff between webhook delivery attempts; grows linearly per attempt. */
+const WEBHOOK_RETRY_BASE_DELAY_MS = 1000;
 
 interface WebhookPayload {
   event: string;
@@ -31,22 +35,16 @@ export class WebhookService {
     if (failed) throw failed.reason;
   }
 
-  private async sendWithRetry(
-    url: string,
-    payload: WebhookPayload,
-    retries: number,
-  ): Promise<void> {
-    let lastError: unknown;
-    for (let i = 0; i < retries; i++) {
-      try {
-        await this.send(url, payload);
-        return;
-      } catch (error) {
-        lastError = error;
-        if (i < retries - 1) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  private sendWithRetry(url: string, payload: WebhookPayload, retries: number): Promise<void> {
+    // Shared retry/backoff + retryability logic — no longer a second inline
+    // copy of what `retry.helper.ts` already provides, and non-retryable
+    // failures (4xx, unrelated errors) now stop immediately (#239).
+    return withRetry(
+      () => this.send(url, payload),
+      retries,
+      WEBHOOK_RETRY_BASE_DELAY_MS,
+      isRetryable,
+    );
   }
 
   private send(url: string, payload: WebhookPayload): Promise<void> {
