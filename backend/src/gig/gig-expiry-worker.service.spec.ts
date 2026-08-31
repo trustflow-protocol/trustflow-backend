@@ -144,3 +144,73 @@ describe('GigExpiryWorkerService', () => {
     });
   });
 });
+
+describe('GigExpiryWorkerService — concurrency & non-overlap (#236)', () => {
+  const originalInterval = process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS;
+
+  afterEach(() => {
+    if (originalInterval === undefined) delete process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS;
+    else process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS = originalInterval;
+    jest.useRealTimers();
+  });
+
+  function slowGigService(
+    perGigMs: number,
+  ): jest.Mocked<Pick<GigService, 'findExpirable' | 'expire'>> {
+    const gigs = Array.from({ length: 10 }, (_, i) => makeGig(`g${i}`, GigStatus.OPEN));
+    return {
+      findExpirable: jest.fn().mockResolvedValue(gigs),
+      expire: jest.fn().mockImplementation(
+        () => new Promise(r => setTimeout(() => r(true), perGigMs)),
+      ),
+    };
+  }
+
+  it('expires gigs concurrently — a 10-gig sweep is far faster than 10x one gig', async () => {
+    const gigService = slowGigService(20);
+    const worker = new GigExpiryWorkerService(
+      gigService as unknown as GigService,
+      fakeLock() as unknown as DistributedLockService,
+    );
+
+    const start = Date.now();
+    await worker.runOnce();
+    const elapsed = Date.now() - start;
+
+    expect(gigService.expire).toHaveBeenCalledTimes(10);
+    // Sequential would be ~200ms; bounded-concurrency finishes well under half.
+    expect(elapsed).toBeLessThan(120);
+  });
+
+  it('skips a tick while a previous sweep is still running', async () => {
+    jest.useFakeTimers();
+    process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS = '10';
+
+    let resolveSweep!: () => void;
+    const gigService: jest.Mocked<Pick<GigService, 'findExpirable' | 'expire'>> = {
+      findExpirable: jest.fn().mockReturnValue(new Promise<never>(() => {})),
+      expire: jest.fn(),
+    };
+    // First sweep hangs until we release it.
+    gigService.findExpirable.mockImplementationOnce(
+      () => new Promise(res => { resolveSweep = () => res([]); }),
+    );
+
+    const lock = fakeLock();
+    const worker = new GigExpiryWorkerService(
+      gigService as unknown as GigService,
+      lock as unknown as DistributedLockService,
+    );
+    worker.onModuleInit();
+
+    jest.advanceTimersByTime(35); // several ticks while the first sweep is stuck
+    await flushPromises();
+
+    // Only the first tick got past the in-flight guard.
+    expect(gigService.findExpirable).toHaveBeenCalledTimes(1);
+
+    resolveSweep();
+    await flushPromises();
+    worker.onModuleDestroy();
+  });
+});
