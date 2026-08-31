@@ -104,7 +104,9 @@ export class UserProfileService {
     userType?: UserType;
     status?: UserStatus;
     minRating?: number;
-  }): Promise<UserProfile[]> {
+    offset?: number;
+    limit?: number;
+  }): Promise<{ data: UserProfile[]; total: number }> {
     let profiles = Array.from(this.profiles.values());
 
     if (filters?.userType) {
@@ -121,7 +123,11 @@ export class UserProfileService {
       profiles = profiles.filter(p => p.rating >= (filters.minRating ?? 0));
     }
 
-    return profiles;
+    const total = profiles.length;
+    const offset = filters?.offset ?? 0;
+    const limit = filters?.limit ?? 20;
+    const data = profiles.slice(offset, offset + limit);
+    return { data, total };
   }
 
   /**
@@ -228,15 +234,42 @@ export class UserProfileService {
   }
 
   /**
-   * Search profiles by name or skills
+   * Search profiles by name, bio, or skills with relevance ranking.
+   * Results are ranked: exact name match > prefix name match > name contains > bio/skills match.
    */
-  async search(query: string): Promise<UserProfile[]> {
+  async search(
+    query: string,
+    options?: { offset?: number; limit?: number },
+  ): Promise<{ data: UserProfile[]; total: number }> {
     const lowerQuery = query.toLowerCase();
-    return Array.from(this.profiles.values()).filter(
-      profile =>
-        profile.name.toLowerCase().includes(lowerQuery) ||
-        profile.bio?.toLowerCase().includes(lowerQuery) ||
-        profile.skills?.some(skill => skill.toLowerCase().includes(lowerQuery)),
-    );
+    const matches = Array.from(this.profiles.values())
+      .filter(
+        profile =>
+          profile.name.toLowerCase().includes(lowerQuery) ||
+          profile.bio?.toLowerCase().includes(lowerQuery) ||
+          profile.skills?.some(skill => skill.toLowerCase().includes(lowerQuery)),
+      )
+      .map(profile => {
+        const nameLower = profile.name.toLowerCase();
+        let rank = 0;
+        if (nameLower === lowerQuery) {
+          rank = 4;
+        } else if (nameLower.startsWith(lowerQuery)) {
+          rank = 3;
+        } else if (nameLower.includes(lowerQuery)) {
+          rank = 2;
+        } else if (profile.bio?.toLowerCase().includes(lowerQuery)) {
+          rank = 1;
+        }
+        return { profile, rank };
+      })
+      .sort((a, b) => b.rank - a.rank)
+      .map(({ profile }) => profile);
+
+    const total = matches.length;
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 20;
+    const data = matches.slice(offset, offset + limit);
+    return { data, total };
   }
 }

@@ -122,26 +122,36 @@ describe('UserProfileService', () => {
     });
 
     it('should return all profiles without filters', async () => {
-      const profiles = await service.findAll();
-      expect(profiles).toHaveLength(3);
+      const result = await service.findAll();
+      expect(result.data).toHaveLength(3);
+      expect(result.total).toBe(3);
     });
 
     it('should filter by userType', async () => {
-      const profiles = await service.findAll({ userType: UserType.FREELANCER });
-      expect(profiles.length).toBeGreaterThanOrEqual(1);
+      const result = await service.findAll({ userType: UserType.FREELANCER });
+      expect(result.data.length).toBeGreaterThanOrEqual(1);
       expect(
-        profiles.every(p => p.userType === UserType.FREELANCER || p.userType === UserType.BOTH),
+        result.data.every(p => p.userType === UserType.FREELANCER || p.userType === UserType.BOTH),
       ).toBe(true);
     });
 
     it('should filter by status', async () => {
-      const profiles = await service.findAll({ status: UserStatus.ACTIVE });
-      expect(profiles).toHaveLength(3);
+      const result = await service.findAll({ status: UserStatus.ACTIVE });
+      expect(result.data).toHaveLength(3);
     });
 
     it('should filter by minRating', async () => {
-      const profiles = await service.findAll({ minRating: 0 });
-      expect(profiles).toHaveLength(3);
+      const result = await service.findAll({ minRating: 0 });
+      expect(result.data).toHaveLength(3);
+    });
+
+    it('should paginate results', async () => {
+      const page1 = await service.findAll({ offset: 0, limit: 2 });
+      const page2 = await service.findAll({ offset: 2, limit: 2 });
+
+      expect(page1.data).toHaveLength(2);
+      expect(page2.data).toHaveLength(1);
+      expect(page1.total).toBe(3);
     });
   });
 
@@ -307,26 +317,66 @@ describe('UserProfileService', () => {
     });
 
     it('should search by name', async () => {
-      const results = await service.search('blockchain');
-      expect(results).toHaveLength(1);
-      expect(results[0].name).toContain('Blockchain');
+      const result = await service.search('blockchain');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].name).toContain('Blockchain');
     });
 
     it('should search by bio', async () => {
-      const results = await service.search('solidity');
-      expect(results).toHaveLength(1);
-      expect(results[0].bio).toContain('Solidity');
+      const result = await service.search('solidity');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].bio).toContain('Solidity');
     });
 
     it('should search by skills', async () => {
-      const results = await service.search('rust');
-      expect(results).toHaveLength(1);
-      expect(results[0].skills).toContain('Rust');
+      const result = await service.search('rust');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].skills).toContain('Rust');
     });
 
     it('should return empty array for no matches', async () => {
-      const results = await service.search('nonexistent');
-      expect(results).toHaveLength(0);
+      const result = await service.search('nonexistent');
+      expect(result.data).toHaveLength(0);
+    });
+
+    it('should rank exact name match above prefix match', async () => {
+      await service.create({
+        walletAddress: 'GZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ',
+        name: 'Blockchain',
+        userType: UserType.FREELANCER,
+      });
+
+      const result = await service.search('blockchain');
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].name).toBe('Blockchain');
+      expect(result.data[1].name).toBe('Blockchain Developer');
+    });
+
+    it('should rank prefix name match above contains match', async () => {
+      await service.create({
+        walletAddress: 'GZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ',
+        name: 'Blockchain Engineer',
+        userType: UserType.FREELANCER,
+      });
+
+      const result = await service.search('blockchain');
+      const names = result.data.map(p => p.name);
+      const hasPrefix = names.indexOf('Blockchain Engineer') >= 0;
+      const hasContains = names.indexOf('Blockchain Developer') >= 0;
+      expect(hasPrefix).toBe(true);
+      expect(hasContains).toBe(true);
+    });
+
+    it('should rank name match above bio match', async () => {
+      const result = await service.search('solidity');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].name).toBe('Blockchain Developer');
+    });
+
+    it('should paginate search results', async () => {
+      const result = await service.search('developer', { offset: 0, limit: 1 });
+      expect(result.data).toHaveLength(1);
+      expect(result.total).toBe(2);
     });
   });
 });

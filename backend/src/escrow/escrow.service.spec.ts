@@ -10,7 +10,7 @@ describe('EscrowService', () => {
   describe('create', () => {
     it('generates unique IDs even when called concurrently in a tight loop', async () => {
       const numEscrows = 1000;
-      const promises = [];
+      const promises: Promise<import('./escrow.service').Escrow>[] = [];
       for (let i = 0; i < numEscrows; i++) {
         promises.push(service.create(`GDEP${i}`, `GBEN${i}`, '100'));
       }
@@ -38,6 +38,38 @@ describe('EscrowService', () => {
 
     it('returns an empty array when nothing is tracked', async () => {
       await expect(service.findAll()).resolves.toEqual([]);
+    });
+  });
+
+  describe('findByDepositor', () => {
+    it('returns paginated results for a depositor', async () => {
+      for (let i = 0; i < 5; i++) {
+        await service.create('GDEP', 'GBEN', '100');
+      }
+      await service.create('GOTHER', 'GBEN', '200');
+
+      const result = await service.findByDepositor('GDEP', 0, 3);
+
+      expect(result.total).toBe(5);
+      expect(result.data).toHaveLength(3);
+    });
+
+    it('returns empty data when offset exceeds total', async () => {
+      await service.create('GDEP', 'GBEN', '100');
+
+      const result = await service.findByDepositor('GDEP', 10, 20);
+
+      expect(result.total).toBe(1);
+      expect(result.data).toHaveLength(0);
+    });
+
+    it('returns empty data for unknown depositor', async () => {
+      await service.create('GDEP', 'GBEN', '100');
+
+      const result = await service.findByDepositor('GUNKNOWN', 0, 20);
+
+      expect(result.total).toBe(0);
+      expect(result.data).toHaveLength(0);
     });
   });
 

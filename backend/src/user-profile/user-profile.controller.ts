@@ -177,7 +177,7 @@ export class UserProfileController {
   @Get()
   @ApiOperation({
     summary: 'Get all user profiles',
-    description: 'Retrieves all user profiles with optional filtering.',
+    description: 'Retrieves all user profiles with optional filtering and pagination.',
   })
   @ApiQuery({
     name: 'userType',
@@ -197,22 +197,40 @@ export class UserProfileController {
     type: Number,
     description: 'Minimum rating filter',
   })
+  @ApiQuery({
+    name: 'offset',
+    required: false,
+    type: Number,
+    description: 'Number of items to skip. Defaults to 0.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Maximum number of items to return (max 100). Defaults to 20.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'List of user profiles',
+    description: 'Paginated list of user profiles',
     schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          walletAddress: { type: 'string' },
-          name: { type: 'string' },
-          userType: { type: 'string' },
-          rating: { type: 'number' },
-          completedJobs: { type: 'number' },
-          isVerified: { type: 'boolean' },
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              walletAddress: { type: 'string' },
+              name: { type: 'string' },
+              userType: { type: 'string' },
+              rating: { type: 'number' },
+              completedJobs: { type: 'number' },
+              isVerified: { type: 'boolean' },
+            },
+          },
         },
+        total: { type: 'number' },
       },
     },
   })
@@ -220,18 +238,24 @@ export class UserProfileController {
     @Query('userType') userType?: UserType,
     @Query('status') status?: UserStatus,
     @Query('minRating') minRating?: number,
+    @Query('offset') offset?: number,
+    @Query('limit') limit?: number,
   ) {
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
     return this.userProfileService.findAll({
       userType,
       status,
       minRating: minRating ? parseFloat(minRating.toString()) : undefined,
+      offset: safeOffset,
+      limit: safeLimit,
     });
   }
 
   @Get('search')
   @ApiOperation({
     summary: 'Search user profiles',
-    description: 'Search profiles by name, bio, or skills.',
+    description: 'Search profiles by name, bio, or skills. Results are ranked by relevance.',
   })
   @ApiQuery({
     name: 'q',
@@ -240,12 +264,30 @@ export class UserProfileController {
     description: 'Search query',
     example: 'blockchain developer',
   })
+  @ApiQuery({
+    name: 'offset',
+    required: false,
+    type: Number,
+    description: 'Number of items to skip. Defaults to 0.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Maximum number of items to return (max 100). Defaults to 20.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Search results',
+    description: 'Paginated search results ranked by relevance',
   })
-  async search(@Query('q') query: string) {
-    return this.userProfileService.search(query);
+  async search(
+    @Query('q') query: string,
+    @Query('offset') offset?: number,
+    @Query('limit') limit?: number,
+  ) {
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
+    return this.userProfileService.search(query, { offset: safeOffset, limit: safeLimit });
   }
 
   @Get(':id')

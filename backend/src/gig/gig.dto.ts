@@ -45,6 +45,8 @@ export const SearchGigsSchema = z.object({
   status: z.nativeEnum(GigStatus).optional(),
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(MAX_GIG_SEARCH_LIMIT).optional(),
+  minBudgetXLM: z.coerce.string().regex(/^\d+(\.\d{1,7})?$/, 'Invalid XLM amount').optional(),
+  maxBudgetXLM: z.coerce.string().regex(/^\d+(\.\d{1,7})?$/, 'Invalid XLM amount').optional(),
 });
 
 export type SearchGigsQuery = z.infer<typeof SearchGigsSchema>;

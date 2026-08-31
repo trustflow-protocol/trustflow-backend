@@ -54,8 +54,15 @@ export class EscrowService {
     return this.escrows.get(id);
   }
 
-  async findByDepositor(address: string): Promise<Escrow[]> {
-    return [...this.escrows.values()].filter(e => e.depositor === address);
+  async findByDepositor(
+    address: string,
+    offset = 0,
+    limit = 20,
+  ): Promise<{ data: Escrow[]; total: number }> {
+    const all = [...this.escrows.values()].filter(e => e.depositor === address);
+    const total = all.length;
+    const data = all.slice(offset, offset + limit);
+    return { data, total };
   }
 
   async findAll(): Promise<Escrow[]> {

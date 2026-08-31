@@ -131,33 +131,57 @@ export class EscrowController {
   @Get('depositor/:address')
   @ApiOperation({
     summary: 'Get escrows by depositor',
-    description: 'Retrieves all escrows created by a specific depositor address.',
+    description: 'Retrieves escrows created by a specific depositor address with pagination.',
   })
   @ApiParam({
     name: 'address',
     description: 'Stellar address of the depositor',
     example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   })
+  @ApiQuery({
+    name: 'offset',
+    required: false,
+    type: Number,
+    description: 'Number of items to skip. Defaults to 0.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Maximum number of items to return (max 100). Defaults to 20.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'List of escrows',
+    description: 'Paginated list of escrows',
     schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          depositor: { type: 'string' },
-          beneficiary: { type: 'string' },
-          amountXLM: { type: 'string' },
-          status: { type: 'string' },
-          createdAt: { type: 'string', format: 'date-time' },
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              depositor: { type: 'string' },
+              beneficiary: { type: 'string' },
+              amountXLM: { type: 'string' },
+              status: { type: 'string' },
+              createdAt: { type: 'string', format: 'date-time' },
+            },
+          },
         },
+        total: { type: 'number' },
       },
     },
   })
-  findByDepositor(@Param('address') address: string) {
-    return this.escrowService.findByDepositor(address);
+  findByDepositor(
+    @Param('address') address: string,
+    @Query('offset') offset?: number,
+    @Query('limit') limit?: number,
+  ) {
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
+    return this.escrowService.findByDepositor(address, safeOffset, safeLimit);
   }
 
   @Post(':id/release')

@@ -131,17 +131,40 @@ export class GigService implements OnModuleInit {
     return gig;
   }
 
-  async findByCreator(address: string): Promise<Gig[]> {
+  async findByCreator(
+    address: string,
+    options?: { status?: GigStatus; minBudgetXLM?: string; maxBudgetXLM?: string; offset?: number; limit?: number },
+  ): Promise<{ data: Gig[]; total: number }> {
+    let gigs: Gig[];
     if (this.redis) {
       try {
         const ids = await this.redis.smembers(this.creatorKey(address));
-        return await this.fetchMany(ids);
+        gigs = await this.fetchMany(ids);
       } catch (err) {
         this.logFallback('findByCreator', err);
+        gigs = [...this.gigs.values()].filter(g => g.creator === address);
       }
+    } else {
+      gigs = [...this.gigs.values()].filter(g => g.creator === address);
     }
 
-    return [...this.gigs.values()].filter(g => g.creator === address);
+    if (options?.status) {
+      gigs = gigs.filter(g => g.status === options.status);
+    }
+    if (options?.minBudgetXLM !== undefined) {
+      const min = parseFloat(options.minBudgetXLM);
+      gigs = gigs.filter(g => parseFloat(g.budgetXLM) >= min);
+    }
+    if (options?.maxBudgetXLM !== undefined) {
+      const max = parseFloat(options.maxBudgetXLM);
+      gigs = gigs.filter(g => parseFloat(g.budgetXLM) <= max);
+    }
+
+    const total = gigs.length;
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 20;
+    const data = gigs.slice(offset, offset + limit);
+    return { data, total };
   }
 
   /** Open gig solicitations whose response deadline has passed as of `now`. */
@@ -176,13 +199,24 @@ export class GigService implements OnModuleInit {
     if (cached) return cached;
 
     const all = await this.findAll();
-    const filtered = all
+    let filtered = all
       .filter(g => g.status === status)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    if (query.minBudgetXLM !== undefined) {
+      const min = parseFloat(query.minBudgetXLM);
+      filtered = filtered.filter(g => parseFloat(g.budgetXLM) >= min);
+    }
+    if (query.maxBudgetXLM !== undefined) {
+      const max = parseFloat(query.maxBudgetXLM);
+      filtered = filtered.filter(g => parseFloat(g.budgetXLM) <= max);
+    }
+
+    const total = filtered.length;
     const start = (page - 1) * limit;
     const result: PaginatedGigs = {
       items: filtered.slice(start, start + limit),
-      total: filtered.length,
+      total,
       page,
       limit,
     };

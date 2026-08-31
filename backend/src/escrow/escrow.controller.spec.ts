@@ -49,6 +49,49 @@ describe('EscrowController', () => {
     expect(controller).toBeDefined();
   });
 
+  describe('findByDepositor', () => {
+    it('returns paginated results with default offset=0, limit=20', async () => {
+      const escrows = Array.from({ length: 5 }, (_, i) => ({
+        id: `esc-${i}`,
+        depositor: VALID_ADDRESS,
+        beneficiary: 'GBEN',
+        amountXLM: '100',
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      }));
+      mockEscrowService.findByDepositor.mockResolvedValue({ data: escrows, total: 5 });
+
+      const result = await controller.findByDepositor(VALID_ADDRESS);
+
+      expect(mockEscrowService.findByDepositor).toHaveBeenCalledWith(VALID_ADDRESS, 0, 20);
+      expect(result).toEqual({ data: escrows, total: 5 });
+    });
+
+    it('applies custom offset and limit', async () => {
+      mockEscrowService.findByDepositor.mockResolvedValue({ data: [], total: 0 });
+
+      await controller.findByDepositor(VALID_ADDRESS, 10, 5);
+
+      expect(mockEscrowService.findByDepositor).toHaveBeenCalledWith(VALID_ADDRESS, 10, 5);
+    });
+
+    it('clamps limit to max 100', async () => {
+      mockEscrowService.findByDepositor.mockResolvedValue({ data: [], total: 0 });
+
+      await controller.findByDepositor(VALID_ADDRESS, 0, 200);
+
+      expect(mockEscrowService.findByDepositor).toHaveBeenCalledWith(VALID_ADDRESS, 0, 100);
+    });
+
+    it('clamps negative offset to 0', async () => {
+      mockEscrowService.findByDepositor.mockResolvedValue({ data: [], total: 0 });
+
+      await controller.findByDepositor(VALID_ADDRESS, -5, 10);
+
+      expect(mockEscrowService.findByDepositor).toHaveBeenCalledWith(VALID_ADDRESS, 0, 10);
+    });
+  });
+
   describe('release', () => {
     it('releases the escrow and records the completion with the reputation engine', async () => {
       const escrow = {

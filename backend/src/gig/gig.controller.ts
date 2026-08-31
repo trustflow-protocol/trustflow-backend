@@ -128,6 +128,18 @@ export class GigController {
     type: Number,
     description: 'Results per page, up to 100. Defaults to 20.',
   })
+  @ApiQuery({
+    name: 'minBudgetXLM',
+    required: false,
+    type: String,
+    description: 'Minimum budget in XLM.',
+  })
+  @ApiQuery({
+    name: 'maxBudgetXLM',
+    required: false,
+    type: String,
+    description: 'Maximum budget in XLM.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Paginated gig solicitations',
@@ -159,15 +171,73 @@ export class GigController {
   }
 
   @Get('creator/:address')
-  @ApiOperation({ summary: 'List gig solicitations posted by a creator' })
+  @ApiOperation({
+    summary: 'List gig solicitations posted by a creator',
+    description: 'Retrieves gig solicitations by a creator with optional filtering and pagination.',
+  })
   @ApiParam({
     name: 'address',
     description: 'Stellar address of the gig creator',
     example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   })
-  @ApiResponse({ status: 200, description: 'List of gig solicitations' })
-  findByCreator(@Param('address') address: string) {
-    return this.gigService.findByCreator(address);
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: GigStatus,
+    description: 'Filter by gig status.',
+  })
+  @ApiQuery({
+    name: 'minBudgetXLM',
+    required: false,
+    type: String,
+    description: 'Minimum budget in XLM.',
+  })
+  @ApiQuery({
+    name: 'maxBudgetXLM',
+    required: false,
+    type: String,
+    description: 'Maximum budget in XLM.',
+  })
+  @ApiQuery({
+    name: 'offset',
+    required: false,
+    type: Number,
+    description: 'Number of items to skip. Defaults to 0.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Maximum number of items to return (max 100). Defaults to 20.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list of gig solicitations',
+    schema: {
+      type: 'object',
+      properties: {
+        data: { type: 'array', items: { type: 'object' } },
+        total: { type: 'number' },
+      },
+    },
+  })
+  findByCreator(
+    @Param('address') address: string,
+    @Query('status') status?: GigStatus,
+    @Query('minBudgetXLM') minBudgetXLM?: string,
+    @Query('maxBudgetXLM') maxBudgetXLM?: string,
+    @Query('offset') offset?: number,
+    @Query('limit') limit?: number,
+  ) {
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
+    return this.gigService.findByCreator(address, {
+      status,
+      minBudgetXLM,
+      maxBudgetXLM,
+      offset: safeOffset,
+      limit: safeLimit,
+    });
   }
 
   @Post(':id/accept')

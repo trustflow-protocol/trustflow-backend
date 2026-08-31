@@ -175,8 +175,64 @@ describe('GigService', () => {
           creator: 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY',
         });
 
-        const results = await service.findByCreator(validDto.creator);
-        expect(results).toEqual([gig]);
+        const result = await service.findByCreator(validDto.creator);
+        expect(result.data).toEqual([gig]);
+        expect(result.total).toBe(1);
+      });
+
+      it('returns paginated results', async () => {
+        for (let i = 0; i < 5; i++) {
+          await service.create({ ...validDto, title: `Gig ${i}` });
+        }
+
+        const page1 = await service.findByCreator(validDto.creator, { offset: 0, limit: 2 });
+        const page2 = await service.findByCreator(validDto.creator, { offset: 2, limit: 2 });
+
+        expect(page1.data).toHaveLength(2);
+        expect(page2.data).toHaveLength(2);
+        expect(page1.total).toBe(5);
+        expect(page1.data[0].id).not.toBe(page2.data[0].id);
+      });
+
+      it('filters by status', async () => {
+        const gig = await service.create(validDto);
+        await service.accept(gig.id, 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY');
+        await service.create({ ...validDto, title: 'Second gig' });
+
+        const result = await service.findByCreator(validDto.creator, { status: GigStatus.OPEN });
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].status).toBe(GigStatus.OPEN);
+      });
+
+      it('filters by minBudgetXLM', async () => {
+        await service.create({ ...validDto, budgetXLM: '50' });
+        await service.create({ ...validDto, budgetXLM: '200', title: 'Expensive gig' });
+
+        const result = await service.findByCreator(validDto.creator, { minBudgetXLM: '100' });
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].budgetXLM).toBe('200');
+      });
+
+      it('filters by maxBudgetXLM', async () => {
+        await service.create({ ...validDto, budgetXLM: '50' });
+        await service.create({ ...validDto, budgetXLM: '200', title: 'Expensive gig' });
+
+        const result = await service.findByCreator(validDto.creator, { maxBudgetXLM: '100' });
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].budgetXLM).toBe('50');
+      });
+
+      it('filters by budget range', async () => {
+        await service.create({ ...validDto, budgetXLM: '10' });
+        await service.create({ ...validDto, budgetXLM: '50', title: 'Mid gig' });
+        await service.create({ ...validDto, budgetXLM: '200', title: 'Expensive gig' });
+
+        const result = await service.findByCreator(validDto.creator, {
+          minBudgetXLM: '25',
+          maxBudgetXLM: '100',
+        });
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].budgetXLM).toBe('50');
       });
     });
 
@@ -259,6 +315,37 @@ describe('GigService', () => {
 
         expect(result.items).toEqual([]);
         expect(result.total).toBe(1);
+      });
+
+      it('filters by minBudgetXLM', async () => {
+        await service.create({ ...validDto, budgetXLM: '50' });
+        await service.create({ ...validDto, budgetXLM: '200', title: 'Expensive gig' });
+
+        const result = await service.search({ minBudgetXLM: '100' });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].budgetXLM).toBe('200');
+      });
+
+      it('filters by maxBudgetXLM', async () => {
+        await service.create({ ...validDto, budgetXLM: '50' });
+        await service.create({ ...validDto, budgetXLM: '200', title: 'Expensive gig' });
+
+        const result = await service.search({ maxBudgetXLM: '100' });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].budgetXLM).toBe('50');
+      });
+
+      it('filters by budget range', async () => {
+        await service.create({ ...validDto, budgetXLM: '10' });
+        await service.create({ ...validDto, budgetXLM: '50', title: 'Mid gig' });
+        await service.create({ ...validDto, budgetXLM: '200', title: 'Expensive gig' });
+
+        const result = await service.search({ minBudgetXLM: '25', maxBudgetXLM: '100' });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].budgetXLM).toBe('50');
       });
     });
 

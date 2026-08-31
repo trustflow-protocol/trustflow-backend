@@ -49,3 +49,7 @@ export const DEFAULT_GIG_SEARCH_LIMIT = 20;
 export const MAX_GIG_SEARCH_LIMIT = 100;
 /** How long a paginated search result page stays cached in Redis. */
 export const DEFAULT_GIG_SEARCH_CACHE_TTL_SECONDS = 30;
+
+export const DEFAULT_GIG_BY_CREATOR_OFFSET = 0;
+export const DEFAULT_GIG_BY_CREATOR_LIMIT = 20;
+export const MAX_GIG_BY_CREATOR_LIMIT = 100;

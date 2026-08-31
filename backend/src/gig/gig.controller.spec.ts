@@ -102,12 +102,50 @@ describe('GigController', () => {
   });
 
   describe('findByCreator', () => {
-    it('delegates to the service', async () => {
-      mockGigService.findByCreator.mockResolvedValue([{ id: 'gig-1' }]);
+    it('delegates to the service with default pagination', async () => {
+      mockGigService.findByCreator.mockResolvedValue({ data: [{ id: 'gig-1' }], total: 1 });
       const address = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 
-      await expect(controller.findByCreator(address)).resolves.toEqual([{ id: 'gig-1' }]);
-      expect(mockGigService.findByCreator).toHaveBeenCalledWith(address);
+      const result = await controller.findByCreator(address);
+
+      expect(result).toEqual({ data: [{ id: 'gig-1' }], total: 1 });
+      expect(mockGigService.findByCreator).toHaveBeenCalledWith(address, {
+        status: undefined,
+        minBudgetXLM: undefined,
+        maxBudgetXLM: undefined,
+        offset: 0,
+        limit: 20,
+      });
+    });
+
+    it('applies custom pagination and filters', async () => {
+      mockGigService.findByCreator.mockResolvedValue({ data: [], total: 0 });
+      const address = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+
+      await controller.findByCreator(address, GigStatus.OPEN, '10', '100', 5, 10);
+
+      expect(mockGigService.findByCreator).toHaveBeenCalledWith(address, {
+        status: GigStatus.OPEN,
+        minBudgetXLM: '10',
+        maxBudgetXLM: '100',
+        offset: 5,
+        limit: 10,
+      });
+    });
+
+    it('clamps limit to max 100', async () => {
+      mockGigService.findByCreator.mockResolvedValue({ data: [], total: 0 });
+      const address = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+
+      await controller.findByCreator(address, undefined, undefined, undefined, 0, 500);
+
+      expect(mockGigService.findByCreator).toHaveBeenCalledWith(address, {
+        status: undefined,
+        minBudgetXLM: undefined,
+        maxBudgetXLM: undefined,
+        offset: 0,
+        limit: 100,
+      });
     });
   });
 
