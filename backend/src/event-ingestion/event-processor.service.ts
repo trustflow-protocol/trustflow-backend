@@ -7,7 +7,8 @@ export interface SorobanEvent {
   contractId: string;
   eventType: string;
   topic: string[];
-  value: any;
+  /** Raw decoded XDR value — type depends on event schema; callers narrow before use. */
+  value: Record<string, unknown>;
   xdr: string;
   createdAt: Date;
 }

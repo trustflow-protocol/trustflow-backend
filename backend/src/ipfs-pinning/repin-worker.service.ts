@@ -2,8 +2,11 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { IpfsPinningService } from './ipfs-pinning.service';
 import { DEFAULT_REPIN_INTERVAL_MS, PinStatus } from './ipfs-pinning.types';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
+import { mapWithConcurrency } from '../common/concurrency';
 
 const LOCK_KEY = 'lock:repin-sweep';
+/** How many CIDs to reconcile in parallel within one sweep (#237). */
+const SWEEP_CONCURRENCY = Number(process.env.IPFS_REPIN_SWEEP_CONCURRENCY) || 8;
 
 /**
  * Periodically sweeps every pin record that isn't fully healthy and re-reconciles it,
@@ -24,6 +27,8 @@ export class RepinWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RepinWorkerService.name);
   private timer?: NodeJS.Timeout;
   private currentLockToken?: string;
+  /** Guards against a slow sweep still running when the next tick fires. */
+  private sweeping = false;
 
   constructor(
     private readonly pinningService: IpfsPinningService,
@@ -54,14 +59,20 @@ export class RepinWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick(intervalMs: number): Promise<void> {
+    if (this.sweeping) {
+      this.logger.warn('Previous re-pin sweep still in flight — skipping this tick');
+      return;
+    }
     const token = await this.lock.tryAcquire(LOCK_KEY, Math.ceil(intervalMs * 1.5));
     if (!token) {
       return; // another instance is holding the lock for this tick
     }
     this.currentLockToken = token;
+    this.sweeping = true;
     try {
       await this.runOnce();
     } finally {
+      this.sweeping = false;
       await this.lock.release(LOCK_KEY, token);
       this.currentLockToken = undefined;
     }
@@ -73,7 +84,12 @@ export class RepinWorkerService implements OnModuleInit, OnModuleDestroy {
       .findAll()
       .filter(record => record.status === PinStatus.DEGRADED || record.status === PinStatus.FAILED);
 
-    for (const record of targets) {
+    // Reconcile CIDs with bounded concurrency rather than serially — each
+    // `reconcile()` makes per-provider network calls, so a sweep over many
+    // degraded pins scaled linearly with pin count x provider latency (#237).
+    // The per-CID try/catch is kept inside the worker so one bad CID is
+    // isolated and logged, exactly as before.
+    await mapWithConcurrency(targets, SWEEP_CONCURRENCY, async record => {
       try {
         await this.pinningService.reconcile(record.cid);
       } catch (error) {
@@ -83,7 +99,7 @@ export class RepinWorkerService implements OnModuleInit, OnModuleDestroy {
           }`,
         );
       }
-    }
+    });
   }
 
   private getIntervalMs(): number {

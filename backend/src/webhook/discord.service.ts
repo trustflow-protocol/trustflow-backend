@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as https from 'https';
+import { config } from '../config/env.config';
 
 interface DiscordEmbed {
   title: string;
@@ -20,7 +21,7 @@ export class DiscordService {
   private readonly webhookUrl: string;
 
   constructor() {
-    this.webhookUrl = process.env.DISCORD_WEBHOOK_URL || '';
+    this.webhookUrl = config.DISCORD_WEBHOOK_URL || '';
   }
 
   /**
@@ -64,9 +65,14 @@ export class DiscordService {
       await this.sendWebhook(payload);
       this.logger.log(`Discord notification sent for dispute: ${disputeData.escrowId}`);
     } catch (error) {
-      this.logger.error(`Failed to send Discord notification: ${error.message}`);
+      this.logger.error(
+        `Failed to send Discord notification: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
+
+  /** Milliseconds to wait for a Discord webhook response before aborting. */
+  static readonly WEBHOOK_TIMEOUT_MS = 5_000;
 
   private async sendWebhook(payload: DiscordWebhookPayload): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -81,6 +87,7 @@ export class DiscordService {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
         },
+        timeout: DiscordService.WEBHOOK_TIMEOUT_MS,
       };
 
       const req = https.request(options, res => {
@@ -89,6 +96,12 @@ export class DiscordService {
         } else {
           reject(new Error(`Discord webhook returned status ${res.statusCode}`));
         }
+      });
+
+      req.on('timeout', () => {
+        req.destroy(
+          new Error(`Discord webhook timed out after ${DiscordService.WEBHOOK_TIMEOUT_MS}ms`),
+        );
       });
 
       req.on('error', reject);

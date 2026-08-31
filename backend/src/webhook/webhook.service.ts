@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import * as https from 'https';
 import * as http from 'http';
+import { withRetry, isRetryable } from './retry.helper';
+
+/** Base backoff between webhook delivery attempts; grows linearly per attempt. */
+const WEBHOOK_RETRY_BASE_DELAY_MS = 1000;
 
 interface WebhookPayload {
   event: string;
@@ -9,6 +13,13 @@ interface WebhookPayload {
   /** Stable key consumers use to collapse retries from the transactional outbox. */
   dedupKey?: string;
 }
+
+/**
+ * Timeout (ms) for outgoing webhook HTTP requests.
+ * Configurable via WEBHOOK_TIMEOUT_MS env var; defaults to 10 seconds.
+ * Prevents a single unresponsive endpoint from stalling dispatch() indefinitely.
+ */
+const WEBHOOK_TIMEOUT_MS = parseInt(process.env.WEBHOOK_TIMEOUT_MS || '10000', 10);
 
 @Injectable()
 export class WebhookService {
@@ -31,22 +42,16 @@ export class WebhookService {
     if (failed) throw failed.reason;
   }
 
-  private async sendWithRetry(
-    url: string,
-    payload: WebhookPayload,
-    retries: number,
-  ): Promise<void> {
-    let lastError: unknown;
-    for (let i = 0; i < retries; i++) {
-      try {
-        await this.send(url, payload);
-        return;
-      } catch (error) {
-        lastError = error;
-        if (i < retries - 1) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  private sendWithRetry(url: string, payload: WebhookPayload, retries: number): Promise<void> {
+    // Shared retry/backoff + retryability logic — no longer a second inline
+    // copy of what `retry.helper.ts` already provides, and non-retryable
+    // failures (4xx, unrelated errors) now stop immediately (#239).
+    return withRetry(
+      () => this.send(url, payload),
+      retries,
+      WEBHOOK_RETRY_BASE_DELAY_MS,
+      isRetryable,
+    );
   }
 
   private send(url: string, payload: WebhookPayload): Promise<void> {
@@ -64,6 +69,9 @@ export class WebhookService {
           else rej(new Error(`${r.statusCode}`));
         },
       );
+      req.setTimeout(WEBHOOK_TIMEOUT_MS, () => {
+        req.destroy(new Error(`Webhook request timed out after ${WEBHOOK_TIMEOUT_MS}ms`));
+      });
       req.on('error', rej);
       req.write(body);
       req.end();

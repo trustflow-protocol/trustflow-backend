@@ -204,3 +204,64 @@ describe('EventIngestionService', () => {
     });
   });
 });
+
+describe('EventIngestionService.processEventBatch — per-escrow ordering (#238)', () => {
+  const mkEvent = (
+    id: string,
+    eventType: string,
+    escrowId?: string,
+  ): import('./event-processor.service').SorobanEvent => ({
+    id,
+    ledger: 1,
+    contractId: 'C1',
+    eventType,
+    topic: escrowId ? [eventType, escrowId] : [eventType],
+    value: {},
+    xdr: '',
+    createdAt: new Date(),
+  });
+
+  it('processes same-escrow events in order and independent escrows in parallel', async () => {
+    const order: string[] = [];
+    jest
+      .spyOn(eventProcessorService, 'processEvent')
+      .mockImplementation(async event => {
+        order.push(event.id);
+        // Make the FIRST call slow so a naive parallel-all would reorder.
+        if (event.id === 'A-fund') await new Promise(r => setTimeout(r, 30));
+        return { eventId: event.id, ledger: 1, success: true, processedAt: new Date() };
+      });
+
+    const events = [
+      mkEvent('A-create', 'escrow_created'),
+      mkEvent('B-create', 'escrow_created'),
+      mkEvent('A-fund', 'escrow_funded', 'A'),
+      mkEvent('A-release', 'escrow_released', 'A'),
+      mkEvent('B-fund', 'escrow_funded', 'B'),
+    ];
+
+    const results = await service.processEventBatch(events);
+
+    expect(results).toHaveLength(5);
+    // Phase 1: both creates ran first, in order.
+    expect(order.slice(0, 2)).toEqual(['A-create', 'B-create']);
+    // Within escrow A, fund strictly precedes release despite fund being slow.
+    expect(order.indexOf('A-fund')).toBeLessThan(order.indexOf('A-release'));
+    // Escrow B was not blocked behind slow escrow A.
+    expect(order.indexOf('B-fund')).toBeLessThan(order.indexOf('A-release'));
+  });
+
+  it('does not throw when an individual event fails', async () => {
+    jest.spyOn(eventProcessorService, 'processEvent').mockImplementation(async event => ({
+      eventId: event.id,
+      ledger: 1,
+      success: event.id !== 'bad',
+      processedAt: new Date(),
+    }));
+    const results = await service.processEventBatch([
+      mkEvent('ok', 'escrow_funded', 'X'),
+      mkEvent('bad', 'escrow_funded', 'Y'),
+    ]);
+    expect(results.map(r => r.success).sort()).toEqual([false, true]);
+  });
+});

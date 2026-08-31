@@ -24,6 +24,7 @@ function mockContext(overrides?: {
   const handler = () => {};
   const cls = class Mock {};
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const context: any = {
     getHandler: () => handler,
     getClass: () => cls,

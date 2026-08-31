@@ -20,11 +20,17 @@ import {
 
 export class PinContentDto {
   @ApiProperty({
-    description: 'Base64-encoded bytes of the deliverable to pin',
+    description:
+      'Base64-encoded bytes of the deliverable to pin. ' +
+      'Maximum decoded size is 10 MB (base64 overhead adds ~33%, so the encoded string cap is ~13.6 MB, ' +
+      'enforced here as 14,316,560 base64 characters).',
     example: 'SGVsbG8sIFRydXN0RmxvdyE=',
   })
   @IsBase64()
   @IsNotEmpty()
+  @MaxLength(14_316_560, {
+    message: 'content exceeds the maximum allowed size of 10 MB (decoded)',
+  })
   content: string;
 
   @ApiPropertyOptional({ description: 'Original filename, stored for display purposes only' })

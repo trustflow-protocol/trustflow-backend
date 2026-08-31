@@ -2,8 +2,11 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { GigService } from './gig.service';
 import { DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS } from './gig.entity';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
+import { mapWithConcurrency, countRejected } from '../common/concurrency';
 
 const LOCK_KEY = 'lock:gig-expiry-sweep';
+/** How many gigs to expire in parallel within one sweep (#236). */
+const SWEEP_CONCURRENCY = Number(process.env.GIG_EXPIRY_SWEEP_CONCURRENCY) || 8;
 
 /**
  * Periodically sweeps the DB for open gig solicitations whose response deadline has
@@ -28,6 +31,8 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(GigExpiryWorkerService.name);
   private timer?: NodeJS.Timeout;
   private currentLockToken?: string;
+  /** Guards against a slow sweep still running when the next tick fires (#236). */
+  private sweeping = false;
 
   constructor(
     private readonly gigService: GigService,
@@ -58,14 +63,20 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick(intervalMs: number): Promise<void> {
+    if (this.sweeping) {
+      this.logger.warn('Previous gig expiry sweep still in flight — skipping this tick');
+      return;
+    }
     const token = await this.lock.tryAcquire(LOCK_KEY, Math.ceil(intervalMs * 1.5));
     if (!token) {
       return; // another instance is holding the lock for this tick
     }
     this.currentLockToken = token;
+    this.sweeping = true;
     try {
       await this.runOnce();
     } finally {
+      this.sweeping = false;
       await this.lock.release(LOCK_KEY, token);
       this.currentLockToken = undefined;
     }
@@ -75,9 +86,17 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
   async runOnce(): Promise<void> {
     const expirable = await this.gigService.findExpirable();
 
-    for (const gig of expirable) {
-      const expired = await this.gigService.expire(gig.id);
-      if (!expired) continue;
+    // Expire gigs with bounded concurrency instead of one-at-a-time: each
+    // `expire()` appends an outbox row the relay then delivers with retries,
+    // so a fully sequential loop over a big batch serialised all of that
+    // latency and could outrun the sweep interval (#236). A failed `expire`
+    // no longer aborts the rest of the sweep — it is counted and logged.
+    const results = await mapWithConcurrency(expirable, SWEEP_CONCURRENCY, gig =>
+      this.gigService.expire(gig.id),
+    );
+    const failed = countRejected(results);
+    if (failed > 0) {
+      this.logger.warn(`Gig expiry sweep: ${failed}/${expirable.length} gigs failed to expire`);
     }
   }
 

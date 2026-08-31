@@ -92,6 +92,22 @@ npm run test:cov
 npm run test:ci
 ```
 
+### Pre-commit hook
+
+`npm install` (in `backend/`) wires up a Husky `pre-commit` hook via the
+`prepare` script. It runs `lint-staged` over staged `.ts` files under
+`backend/` — `eslint --fix` then `prettier --write` — so a lint or formatting
+violation is fixed (or blocks the commit) locally, before it reaches the
+`lint:check` / `format:check` gates in `.github/workflows/backend-ci.yml`.
+
+The hook script is `backend/.husky/pre-commit`; the file globs and commands
+are the `lint-staged` block in `backend/package.json`. To bypass it for a
+single commit (rarely needed): `git commit --no-verify`.
+
+Because the repository keeps the Node project in `backend/` while `.git` is at
+the repo root, `prepare` runs Husky from the repo root and the hook invokes
+`lint-staged --cwd backend`.
+
 ### Code Quality
 
 ```bash

@@ -1,4 +1,5 @@
 import { rpc as SorobanRpc, Transaction, Networks } from '@stellar/stellar-sdk';
+import { config } from '../config/env.config';
 
 export async function simulateTransaction(
   rpcUrl: string,
@@ -11,7 +12,9 @@ export async function simulateTransaction(
   }, rpcUrl);
 }
 
-export function isSimulationError(result: any): boolean {
+export function isSimulationError(
+  result: SorobanRpc.Api.SimulateTransactionResponse,
+): result is SorobanRpc.Api.SimulateTransactionErrorResponse {
   return false;
 }
 
@@ -26,14 +29,12 @@ export async function withSorobanFailover<T>(
   const endpoints = primaryEndpoint
     ? [
         primaryEndpoint,
-        ...(process.env.SOROBAN_RPC_ENDPOINTS || '')
+        ...(config.SOROBAN_RPC_ENDPOINTS || '')
           .split(',')
           .filter(Boolean)
-          .map(url => url.trim()),
+          .map((url: string) => url.trim()),
       ]
-    : (process.env.SOROBAN_RPC_ENDPOINTS || 'https://soroban-testnet.stellar.org')
-        .split(',')
-        .map(url => url.trim());
+    : config.SOROBAN_RPC_URL.split(',').map((url: string) => url.trim());
 
   // Remove duplicates
   const uniqueEndpoints = [...new Set(endpoints.filter(Boolean))];

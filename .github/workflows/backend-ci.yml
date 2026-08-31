@@ -91,6 +91,16 @@ jobs:
         working-directory: ./backend
         run: npm run build
 
+      # Dependency vulnerability scanning with npm audit.
+      # Fails the build if high or critical vulnerabilities are found in the dependency tree.
+      # The --audit-level=high threshold balances security with practicality — low/moderate
+      # findings are logged but don't block CI, giving teams time to evaluate and update
+      # dependencies on a reasonable schedule rather than forcing immediate action on every
+      # minor advisory.
+      - name: Dependency vulnerability scan
+        working-directory: ./backend
+        run: npm audit --audit-level=high
+
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:

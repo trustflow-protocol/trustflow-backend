@@ -12,6 +12,27 @@ import { Redis } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { SKIP_RATE_LIMIT, RATE_LIMIT_POINTS, RATE_LIMIT_DURATION } from './rate-limit.decorator';
+import { config } from '../../config/env.config';
+
+const DEFAULT_POINTS = 100;
+const DEFAULT_DURATION = 60;
+const DEFAULT_ABUSE_WINDOW = 300;
+const DEFAULT_ABUSE_THRESHOLD = 5;
+const DEFAULT_LOCKOUT_DURATION = 900;
+
+/** Minimal shape of the HTTP request object that rate-limiting reads from. */
+interface RateLimitRequest {
+  ip?: string;
+  method?: string;
+  url?: string;
+  route?: { path?: string };
+  headers?: Record<string, string | string[] | undefined>;
+  connection?: { remoteAddress?: string };
+  user?: { address?: string; sub?: string };
+  body?: Record<string, string | undefined>;
+  query?: Record<string, string | undefined>;
+  params?: Record<string, string | undefined>;
+}
 
 const DEFAULT_POINTS = 100;
 const DEFAULT_DURATION = 60;
@@ -180,18 +201,9 @@ export class RateLimitGuard implements CanActivate {
     route: string,
     retryAfter: number,
   ): Promise<number> {
-    const abuseWindow = this.getPositiveInteger(
-      'RATE_LIMIT_ABUSE_WINDOW_SECONDS',
-      DEFAULT_ABUSE_WINDOW,
-    );
-    const abuseThreshold = this.getPositiveInteger(
-      'RATE_LIMIT_ABUSE_THRESHOLD',
-      DEFAULT_ABUSE_THRESHOLD,
-    );
-    const lockoutDuration = this.getPositiveInteger(
-      'RATE_LIMIT_LOCKOUT_SECONDS',
-      DEFAULT_LOCKOUT_DURATION,
-    );
+    const abuseWindow = config.RATE_LIMIT_ABUSE_WINDOW_SECONDS;
+    const abuseThreshold = config.RATE_LIMIT_ABUSE_THRESHOLD;
+    const lockoutDuration = config.RATE_LIMIT_LOCKOUT_SECONDS;
     const now = Date.now();
     const abuseKey = this.buildKey('abuse', identity.scope, identity.value, route);
     const lockoutKey = this.buildKey('lockout', identity.scope, identity.value, route);
@@ -211,12 +223,11 @@ export class RateLimitGuard implements CanActivate {
     return Number(lockoutApplied) > 0 ? Number(lockoutApplied) : retryAfter;
   }
 
-  private getIdentities(request: any): RateLimitIdentity[] {
+  private getIdentities(request: RateLimitRequest): RateLimitIdentity[] {
+    const xForwarded = request.headers?.['x-forwarded-for'];
+    const forwarded = Array.isArray(xForwarded) ? xForwarded[0] : xForwarded?.split(',')[0]?.trim();
     const ip = this.normalizeIdentity(
-      request.ip ||
-        request.headers?.['x-forwarded-for']?.split(',')[0]?.trim() ||
-        request.connection?.remoteAddress ||
-        'unknown',
+      request.ip || forwarded || request.connection?.remoteAddress || 'unknown',
     );
     const wallet = this.extractWallet(request);
     const identities: RateLimitIdentity[] = [{ scope: 'ip', value: ip }];
@@ -228,7 +239,7 @@ export class RateLimitGuard implements CanActivate {
     return identities;
   }
 
-  private extractWallet(request: any): string | undefined {
+  private extractWallet(request: RateLimitRequest): string | undefined {
     return (
       request.user?.address ||
       request.user?.sub ||
@@ -241,7 +252,7 @@ export class RateLimitGuard implements CanActivate {
     );
   }
 
-  private getRoute(request: any): string {
+  private getRoute(request: RateLimitRequest): string {
     const method = request.method || 'GET';
     const route = request.route?.path || request.url || '/';
     return this.normalizeIdentity(`${method}:${route}`);
@@ -255,10 +266,5 @@ export class RateLimitGuard implements CanActivate {
     return String(value)
       .toLowerCase()
       .replace(/[^a-z0-9:._-]/g, '_');
-  }
-
-  private getPositiveInteger(name: string, fallback: number): number {
-    const value = Number(process.env[name]);
-    return Number.isInteger(value) && value > 0 ? value : fallback;
   }
 }
