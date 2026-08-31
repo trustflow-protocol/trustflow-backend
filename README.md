@@ -100,6 +100,12 @@ See [Backend Setup Instructions](backend/SETUP_INSTRUCTIONS.md) for detailed dev
 
 Full guide: [API Documentation](backend/API_DOCUMENTATION.md)
 
+### 🗂️ Off-Chain State Model
+
+[docs/state-model.md](docs/state-model.md) — Reference for the Escrow, Gig, and DisputeSaga state
+machines: which transitions are driven by API calls, on-chain Soroban events, or background workers,
+plus a catalogue of known deviations from the intended model.
+
 ### Auth (`/auth`)
 
 - **`GET /auth/challenge`** — Get authentication challenge for wallet signing

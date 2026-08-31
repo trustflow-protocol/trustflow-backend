@@ -10,6 +10,13 @@ interface WebhookPayload {
   dedupKey?: string;
 }
 
+/**
+ * Timeout (ms) for outgoing webhook HTTP requests.
+ * Configurable via WEBHOOK_TIMEOUT_MS env var; defaults to 10 seconds.
+ * Prevents a single unresponsive endpoint from stalling dispatch() indefinitely.
+ */
+const WEBHOOK_TIMEOUT_MS = parseInt(process.env.WEBHOOK_TIMEOUT_MS || '10000', 10);
+
 @Injectable()
 export class WebhookService {
   private endpoints = new Map<string, string>();
@@ -64,6 +71,9 @@ export class WebhookService {
           else rej(new Error(`${r.statusCode}`));
         },
       );
+      req.setTimeout(WEBHOOK_TIMEOUT_MS, () => {
+        req.destroy(new Error(`Webhook request timed out after ${WEBHOOK_TIMEOUT_MS}ms`));
+      });
       req.on('error', rej);
       req.write(body);
       req.end();
