@@ -47,7 +47,9 @@ export class StellarService {
         }
         throw error;
       }
-      const native = account.balances.find((b: any) => b.asset_type === 'native');
+      const native = account.balances.find(
+        (b: Horizon.HorizonApi.BalanceLine) => b.asset_type === 'native',
+      );
       return native?.balance ?? '0';
     });
   }

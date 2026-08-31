@@ -5,12 +5,13 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { NonceStoreService } from './nonce-store.service';
+import { config } from '../config/env.config';
 
 @Module({
   imports: [
     PassportModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+      secret: config.JWT_SECRET,
       signOptions: { expiresIn: '24h' },
     }),
   ],

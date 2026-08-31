@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  NestInterceptor,
-  ExecutionContext,
-  CallHandler,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { Request, Response } from 'express';
@@ -24,7 +18,7 @@ export class MetricsHttpInterceptor implements NestInterceptor {
 
   constructor(private readonly metrics: MetricsService) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
 
@@ -62,7 +56,7 @@ export class MetricsHttpInterceptor implements NestInterceptor {
           `${method} ${route} completed with status ${statusCode} in ${duration}ms`,
         );
       }),
-      catchError((error) => {
+      catchError(error => {
         const duration = Date.now() - startTime;
         const statusCode = error.status || 500;
 

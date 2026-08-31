@@ -4,6 +4,7 @@ import { REDIS_CLIENT } from '../common/redis/redis.module';
 
 describe('NonceStoreService', () => {
   let service: NonceStoreService;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockRedis: any;
 
   const TEST_ADDRESS = 'GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOP';

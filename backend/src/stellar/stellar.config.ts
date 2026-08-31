@@ -1,3 +1,5 @@
+import { config } from '../config/env.config';
+
 /**
  * Canonical accepted values for STELLAR_NETWORK:
  *   - "TESTNET" — Stellar Testnet (Test SDF Network ; September 2015)
@@ -9,7 +11,7 @@
  * An unrecognized value causes the app to throw at startup rather than silently
  * defaulting to testnet (which would be a dangerous misconfiguration in production).
  */
-const rawNetwork = process.env.STELLAR_NETWORK || 'TESTNET';
+const rawNetwork = config.STELLAR_NETWORK;
 
 // Accept "MAINNET" as an alias for "PUBLIC" (legacy compatibility)
 const normalizedNetwork = rawNetwork === 'MAINNET' ? 'PUBLIC' : rawNetwork;
@@ -33,15 +35,15 @@ const NETWORK_PASSPHRASES: Record<StellarNetworkValue, string> = {
 export const STELLAR_CONFIG = {
   network: normalizedNetwork as StellarNetworkValue,
   // Single endpoint fallback (for backward compatibility)
-  horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-  sorobanRpcUrl: process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org',
+  horizonUrl: config.STELLAR_HORIZON_URL,
+  sorobanRpcUrl: config.SOROBAN_RPC_URL,
   // Multiple endpoints for failover (comma-separated)
-  horizonEndpoints: (process.env.STELLAR_HORIZON_ENDPOINTS || 'https://horizon-testnet.stellar.org')
+  horizonEndpoints: (config.STELLAR_HORIZON_ENDPOINTS || config.STELLAR_HORIZON_URL)
     .split(',')
     .map(url => url.trim()),
-  sorobanRpcEndpoints: (process.env.SOROBAN_RPC_ENDPOINTS || 'https://soroban-testnet.stellar.org')
+  sorobanRpcEndpoints: (config.SOROBAN_RPC_ENDPOINTS || config.SOROBAN_RPC_URL)
     .split(',')
     .map(url => url.trim()),
-  contractId: process.env.TRUSTFLOW_CONTRACT_ID || '',
+  contractId: config.TRUSTFLOW_CONTRACT_ID || '',
   networkPassphrase: NETWORK_PASSPHRASES[normalizedNetwork as StellarNetworkValue],
 };

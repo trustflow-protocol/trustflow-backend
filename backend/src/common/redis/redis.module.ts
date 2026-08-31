@@ -1,6 +1,7 @@
 import { Module, Global, Logger } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { DistributedLockService } from './distributed-lock.service';
+import { config } from '../config/env.config';
 
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 
@@ -20,7 +21,7 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
  * features degrade until it recovers.
  */
 export function createRedisClient(logger: Logger = new Logger('RedisModule')): Redis | null {
-  const url = process.env.REDIS_URL;
+  const url = config.REDIS_URL;
   if (!url) {
     logger.warn(
       'REDIS_URL not set — Redis-backed features (rate limiting, outbox relay, caches) are disabled',
@@ -34,17 +35,17 @@ export function createRedisClient(logger: Logger = new Logger('RedisModule')): R
     lazyConnect: true,
   });
 
-  client.on('error', err =>
-    logger.error(`Redis client error: ${err.message}`, err.stack),
-  );
+  client.on('error', err => logger.error(`Redis client error: ${err.message}`, err.stack));
   client.on('connect', () => logger.log('Redis connected'));
   client.on('reconnecting', () => logger.warn('Redis reconnecting…'));
 
-  client.connect().catch((err: Error) =>
-    logger.error(
-      `Initial Redis connection failed (will keep retrying per retryStrategy): ${err.message}`,
-    ),
-  );
+  client
+    .connect()
+    .catch((err: Error) =>
+      logger.error(
+        `Initial Redis connection failed (will keep retrying per retryStrategy): ${err.message}`,
+      ),
+    );
 
   return client;
 }

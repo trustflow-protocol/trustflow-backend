@@ -9,8 +9,22 @@ import { SentryExceptionFilter } from './common/filters/sentry-exception.filter'
 import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
 import { MetricsHttpInterceptor } from './monitoring/metrics-http.interceptor';
 import { CorrelationIdStore } from './common/logging/correlation-id.store';
+import { validateEnv, config } from './config/env.config';
 
 const logger = new Logger('Bootstrap');
+
+// Validate environment variables at startup before anything else runs.
+// This fails fast with a clear error if required variables are missing or malformed,
+// rather than allowing the app to start with invalid config that only surfaces as
+// runtime errors later.
+try {
+  validateEnv();
+  logger.log('✓ Environment variables validated successfully');
+} catch (error) {
+  logger.error('Environment variable validation failed:');
+  logger.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 
 // Capture unhandled promise rejections before the app is ready
 process.on('unhandledRejection', (reason: unknown) => {
@@ -36,8 +50,7 @@ async function bootstrap() {
   // encodes to ~13.6 MB base64, so a 15 MB JSON limit gives adequate headroom while
   // still providing a deliberate, reviewed DoS control rather than relying on Express's
   // implicit default.  Override via BODY_LIMIT_MB env var if your use case requires it.
-  const bodyLimitMb = parseInt(process.env.BODY_LIMIT_MB || '15', 10);
-  const bodyLimit = `${bodyLimitMb}mb`;
+  const bodyLimit = `${config.BODY_LIMIT_MB}mb`;
   app.use(express.json({ limit: bodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
 
@@ -54,8 +67,8 @@ async function bootstrap() {
   app.useGlobalInterceptors(metricsInterceptor);
 
   // Enable CORS
-  const corsOrigin = process.env.CORS_ORIGIN;
-  const nodeEnv = process.env.NODE_ENV || 'development';
+  const corsOrigin = config.CORS_ORIGIN;
+  const nodeEnv = config.NODE_ENV;
 
   // Validate CORS configuration in production
   if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
@@ -113,7 +126,7 @@ async function bootstrap() {
     .setVersion('1.0.0')
     .setContact('TrustFlow Protocol', 'https://trustflow.xyz', 'support@trustflow.xyz')
     .setLicense('MIT', 'https://opensource.org/licenses/MIT')
-    .addServer(process.env.API_URL || 'http://localhost:3001', 'Development')
+    .addServer(config.API_URL, 'Development')
     .addServer('https://api.trustflow.xyz', 'Production')
     .addBearerAuth(
       {
@@ -176,7 +189,7 @@ async function bootstrap() {
   const indexer = app.get(SorobanEventIndexerService);
   indexer.start();
 
-  const port = process.env.PORT || 3001;
+  const port = config.PORT;
   await app.listen(port);
 
   logger.log(`🚀 TrustFlow API running on: http://localhost:${port}`);

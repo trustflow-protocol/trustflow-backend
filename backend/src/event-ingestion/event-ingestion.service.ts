@@ -1,12 +1,13 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
+import { rpc as SorobanRpc, xdr } from '@stellar/stellar-sdk';
 import { LedgerCursorService, LedgerCheckpoint } from './ledger-cursor.service';
 import { EventProcessorService, SorobanEvent, ProcessedEvent } from './event-processor.service';
 import { STELLAR_CONFIG } from '../stellar/stellar.config';
 import { mapWithConcurrency } from '../common/concurrency';
+import { config } from '../config/env.config';
 
 /** How many independent escrows to process in parallel per ingestion batch (#238). */
-const EVENT_PROCESSING_CONCURRENCY = Number(process.env.EVENT_PROCESSING_CONCURRENCY) || 8;
+const EVENT_PROCESSING_CONCURRENCY = config.EVENT_PROCESSING_CONCURRENCY;
 
 @Injectable()
 export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
@@ -188,9 +189,9 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
 
       while (currentStart <= endLedger) {
         const batchEnd = Math.min(currentStart + 99, endLedger);
-        
+
         // Build request parameters — when using cursor, omit startLedger and endLedger
-        const getEventsParams: any = {
+        const getEventsParams: SorobanRpc.Server.GetEventsRequest = {
           filters: [
             {
               type: 'contract',
@@ -242,25 +243,25 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
       contractId: event.contractId?.toString() || '',
       eventType: topics[0] || 'unknown',
       topic: topics,
-      value: parsedValue,
-      xdr: event.value.toXDR().toString(),
+      value: typeof parsedValue === 'string' ? { raw: parsedValue } : parsedValue,
+      xdr: event.value.toXDR().toString('base64'),
       createdAt: new Date(),
     };
   }
 
-  private parseEventValue(value: any): any {
+  private parseEventValue(value: xdr.ScVal): Record<string, unknown> | string {
     try {
       if (value.switch().name === 'SCV_BYTES') {
         const bytes = value.bytes();
-        return JSON.parse(Buffer.from(bytes).toString());
+        return JSON.parse(Buffer.from(bytes).toString()) as Record<string, unknown>;
       }
-      return value.toXDR();
+      return value.toXDR().toString();
     } catch {
-      return value.toXDR();
+      return value.toXDR().toString();
     }
   }
 
-  private parseTopic(topic: any): string {
+  private parseTopic(topic: xdr.ScVal): string {
     try {
       if (topic.switch().name === 'SCV_SYMBOL') {
         return topic.sym().toString();
@@ -268,7 +269,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
       if (topic.switch().name === 'SCV_BYTES') {
         return Buffer.from(topic.bytes()).toString();
       }
-      return topic.toXDR();
+      return topic.toXDR().toString();
     } catch {
       return 'unknown';
     }

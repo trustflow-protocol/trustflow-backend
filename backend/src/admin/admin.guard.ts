@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { config } from '../config/env.config';
 
 /**
  * Restricts access to addresses listed in `ADMIN_ADDRESSES` (comma-separated Stellar public
@@ -22,9 +23,9 @@ export class AdminGuard implements CanActivate {
 
   constructor() {
     this.adminAddresses = new Set(
-      (process.env.ADMIN_ADDRESSES ?? '')
+      (config.ADMIN_ADDRESSES ?? '')
         .split(',')
-        .map(address => address.trim())
+        .map((address: string) => address.trim())
         .filter(Boolean),
     );
 

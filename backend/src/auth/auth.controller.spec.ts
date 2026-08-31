@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 
 describe('AuthController', () => {
   let controller: AuthController;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockAuthService: any;
 
   const TEST_ADDRESS = 'GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOP';

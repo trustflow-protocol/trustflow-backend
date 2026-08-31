@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as https from 'https';
+import { config } from '../config/env.config';
 
 interface DiscordEmbed {
   title: string;
@@ -20,7 +21,7 @@ export class DiscordService {
   private readonly webhookUrl: string;
 
   constructor() {
-    this.webhookUrl = process.env.DISCORD_WEBHOOK_URL || '';
+    this.webhookUrl = config.DISCORD_WEBHOOK_URL || '';
   }
 
   /**
@@ -64,7 +65,9 @@ export class DiscordService {
       await this.sendWebhook(payload);
       this.logger.log(`Discord notification sent for dispute: ${disputeData.escrowId}`);
     } catch (error) {
-      this.logger.error(`Failed to send Discord notification: ${error.message}`);
+      this.logger.error(
+        `Failed to send Discord notification: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -97,9 +100,7 @@ export class DiscordService {
 
       req.on('timeout', () => {
         req.destroy(
-          new Error(
-            `Discord webhook timed out after ${DiscordService.WEBHOOK_TIMEOUT_MS}ms`,
-          ),
+          new Error(`Discord webhook timed out after ${DiscordService.WEBHOOK_TIMEOUT_MS}ms`),
         );
       });
 

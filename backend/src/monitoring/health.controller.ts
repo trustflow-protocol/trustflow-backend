@@ -31,7 +31,7 @@ export class HealthController {
     },
   })
   @ApiResponse({ status: 503, description: 'Service is unhealthy' })
-  async getHealth(): Promise<any> {
+  async getHealth(): Promise<import('./health.service').HealthStatus> {
     return this.health.check();
   }
 

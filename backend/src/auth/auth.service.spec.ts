@@ -6,7 +6,9 @@ import { NonceStoreService } from './nonce-store.service';
 
 describe('AuthService', () => {
   let service: AuthService;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockNonceStore: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockJwtService: any;
 
   const TEST_ADDRESS = 'GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOP';

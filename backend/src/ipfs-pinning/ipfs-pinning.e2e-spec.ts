@@ -125,7 +125,7 @@ describe('IPFS Pinning (API integration)', () => {
       expect(res.body.cid).toBe(EXPECTED_CID);
       expect(res.body.status).toBe('HEALTHY');
       expect(res.body.providers).toHaveLength(2);
-      expect(res.body.providers.every((p: any) => p.status === 'PINNED')).toBe(true);
+      expect(res.body.providers.every((p: { status: string }) => p.status === 'PINNED')).toBe(true);
       expect(providerA.pinned.has(EXPECTED_CID)).toBe(true);
       expect(providerB.pinned.has(EXPECTED_CID)).toBe(true);
     });
@@ -152,7 +152,7 @@ describe('IPFS Pinning (API integration)', () => {
 
       expect(res.body.status).toBe('DEGRADED');
       const byProvider = Object.fromEntries(
-        res.body.providers.map((p: any) => [p.provider, p.status]),
+        res.body.providers.map((p: { provider: string; status: string }) => [p.provider, p.status]),
       );
       expect(byProvider[PinProviderName.PINATA]).toBe('FAILED');
       expect(byProvider[PinProviderName.WEB3_STORAGE]).toBe('PINNED');
@@ -182,7 +182,7 @@ describe('IPFS Pinning (API integration)', () => {
         .get('/ipfs/pins')
         .set('Authorization', authHeader)
         .expect(200);
-      expect(list.body.some((p: any) => p.cid === EXPECTED_CID)).toBe(true);
+      expect(list.body.some((p: { cid: string }) => p.cid === EXPECTED_CID)).toBe(true);
 
       const single = await request(app.getHttpServer())
         .get(`/ipfs/pins/${EXPECTED_CID}`)

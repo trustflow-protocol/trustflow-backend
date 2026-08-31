@@ -2,6 +2,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import { DatabaseService } from '../common/database/database.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { config } from '../config/env.config';
 
 export interface HealthStatus {
   status: 'ok' | 'degraded' | 'down';
@@ -62,7 +63,7 @@ export class HealthService {
 
   private async checkStellar(): Promise<boolean> {
     try {
-      const url = process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org';
+      const url = config.STELLAR_HORIZON_URL;
       const r = await fetch(`${url}/`);
       return r.ok;
     } catch {
