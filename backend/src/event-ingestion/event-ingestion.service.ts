@@ -3,6 +3,10 @@ import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { LedgerCursorService, LedgerCheckpoint } from './ledger-cursor.service';
 import { EventProcessorService, SorobanEvent, ProcessedEvent } from './event-processor.service';
 import { STELLAR_CONFIG } from '../stellar/stellar.config';
+import { mapWithConcurrency } from '../common/concurrency';
+
+/** How many independent escrows to process in parallel per ingestion batch (#238). */
+const EVENT_PROCESSING_CONCURRENCY = Number(process.env.EVENT_PROCESSING_CONCURRENCY) || 8;
 
 @Injectable()
 export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
@@ -73,12 +77,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Ingesting events from ledger ${startLedger} to ${endLedger}`);
 
     const events = await this.fetchEvents(contractId, startLedger, endLedger);
-    const processedEvents: ProcessedEvent[] = [];
-
-    for (const event of events) {
-      const result = await this.eventProcessorService.processEvent(event);
-      processedEvents.push(result);
-    }
+    const processedEvents = await this.processEventBatch(events);
 
     const latestProcessedLedger = events.length > 0 ? events[events.length - 1].ledger : endLedger;
     const networkHash = await this.getNetworkHash();
@@ -95,12 +94,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
 
   async ingestSingleLedger(contractId: string, ledger: number): Promise<ProcessedEvent[]> {
     const events = await this.fetchEvents(contractId, ledger, ledger);
-    const processedEvents: ProcessedEvent[] = [];
-
-    for (const event of events) {
-      const result = await this.eventProcessorService.processEvent(event);
-      processedEvents.push(result);
-    }
+    const processedEvents = await this.processEventBatch(events);
 
     const networkHash = await this.getNetworkHash();
     await this.ledgerCursorService.updateCursor(
@@ -111,6 +105,75 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     );
 
     return processedEvents;
+  }
+
+  /**
+   * Process a fetched batch of events with per-escrow ordering preserved and
+   * independent escrows processed in parallel (#238).
+   *
+   * Concurrency-safety analysis:
+   *  - `escrow_funded` / `escrow_released` / `escrow_disputed` carry the
+   *    escrow id in `topic[1]`. Events with the *same* `topic[1]` MUST keep
+   *    their relative order (e.g. funded before released), so they are grouped
+   *    and each group runs sequentially.
+   *  - `escrow_created` (and any unknown type) has no `topic[1]`. It cannot be
+   *    correlated to a specific later keyed event, and a keyed event may
+   *    depend on it (created must precede funded for the same escrow). So all
+   *    id-less events run first, strictly in their original order, before any
+   *    keyed group starts — no keyed handler can observe a missing escrow.
+   *  - Groups for different escrow ids are independent (they touch different
+   *    rows), so they run concurrently, bounded by `EVENT_PROCESSING_CONCURRENCY`.
+   *  - `processEvent` swallows its own errors (returns `{ success: false }`),
+   *    so per-event isolation is unchanged.
+   *
+   * The returned array is ordered id-less-first then by group; callers use it
+   * for counts/status only (the ledger cursor is advanced from `events`, not
+   * from this array).
+   */
+  async processEventBatch(events: SorobanEvent[]): Promise<ProcessedEvent[]> {
+    const unkeyed: SorobanEvent[] = [];
+    const keyed = new Map<string, SorobanEvent[]>();
+
+    for (const event of events) {
+      const key = event.topic[1];
+      if (key === undefined || key === '') {
+        unkeyed.push(event);
+        continue;
+      }
+      let bucket = keyed.get(key);
+      if (!bucket) {
+        bucket = [];
+        keyed.set(key, bucket);
+      }
+      bucket.push(event);
+    }
+
+    const processed: ProcessedEvent[] = [];
+
+    // Phase 1 — id-less events (escrow_created, unknown), strict original order.
+    for (const event of unkeyed) {
+      processed.push(await this.eventProcessorService.processEvent(event));
+    }
+
+    // Phase 2 — one group per escrow id, groups in parallel, sequential within.
+    const groupResults = await mapWithConcurrency(
+      [...keyed.values()],
+      EVENT_PROCESSING_CONCURRENCY,
+      async group => {
+        const groupOut: ProcessedEvent[] = [];
+        for (const event of group) {
+          groupOut.push(await this.eventProcessorService.processEvent(event));
+        }
+        return groupOut;
+      },
+    );
+    for (const result of groupResults) {
+      if (result.status === 'fulfilled') {
+        processed.push(...result.value);
+      }
+    }
+
+    return processed;
   }
 
   private async fetchEvents(
