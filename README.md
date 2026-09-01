@@ -145,10 +145,11 @@ curl http://localhost:3001/escrows \
 - **`POST /escrow/:id/release`** — Approve a milestone tranche.
 - **`POST /escrow/:id/dispute`** — Raise a dispute (triggers Discord notification).
 
-### Webhooks (`/webhook`)
+### Webhooks (`/webhooks`)
 
-- **`POST /webhook`** — Register a webhook endpoint.
-- **`DELETE /webhook/:id`** — Unregister a webhook.
+- **`POST /webhooks`** — Register a webhook endpoint (supports optional HMAC `secret` for payload signing).
+- **`DELETE /webhooks/:id`** — Unregister a webhook.
+- **HMAC Signatures**: Secure outgoing payloads with `X-TrustFlow-Signature` (HMAC-SHA256). [Verification Guide](docs/webhook-signatures.md)
 - Automatic retry logic handles delivery failures gracefully.
 - **Discord Integration**: Automatically notifies a Discord channel when disputes need jurors. [Setup Guide](backend/src/webhook/DISCORD_INTEGRATION.md)
 

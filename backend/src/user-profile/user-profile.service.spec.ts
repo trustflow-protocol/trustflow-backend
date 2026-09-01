@@ -268,6 +268,44 @@ describe('UserProfileService', () => {
 
       expect(updated.totalEarned).toBe('100.5000000');
     });
+
+    it('accumulates small decimal amounts without float precision loss (e.g. 0.1 repeated)', async () => {
+      const created = await service.create({
+        walletAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+        name: 'John Doe',
+        userType: UserType.FREELANCER,
+      });
+
+      // In IEEE 754 floating-point, 0.1 + 0.2 !== 0.3 and accumulating 0.1 100 times drifts
+      for (let i = 0; i < 100; i++) {
+        await service.updateTotalEarned(created.id, '0.1');
+      }
+
+      const finalProfile = await service.findById(created.id);
+      expect(finalProfile.totalEarned).toBe('10.0000000');
+    });
+
+    it('maintains exact 7-decimal precision across 1-stroop (0.0000001) micropayments', async () => {
+      const created = await service.create({
+        walletAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+        name: 'John Doe',
+        userType: UserType.FREELANCER,
+      });
+
+      // Add 0.1 and 0.2
+      await service.updateTotalEarned(created.id, '0.1');
+      await service.updateTotalEarned(created.id, '0.2');
+      let profile = await service.findById(created.id);
+      expect(profile.totalEarned).toBe('0.3000000');
+
+      // Add 1000 stroops (0.0000001 XLM each)
+      for (let i = 0; i < 1000; i++) {
+        await service.updateTotalEarned(created.id, '0.0000001');
+      }
+
+      profile = await service.findById(created.id);
+      expect(profile.totalEarned).toBe('0.3001000');
+    });
   });
 
   describe('updateTotalSpent', () => {
@@ -281,6 +319,41 @@ describe('UserProfileService', () => {
       const updated = await service.updateTotalSpent(created.id, '200.75');
 
       expect(updated.totalSpent).toBe('200.7500000');
+    });
+
+    it('accumulates small decimal amounts without float precision loss (e.g. 0.1 repeated)', async () => {
+      const created = await service.create({
+        walletAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+        name: 'John Doe',
+        userType: UserType.CLIENT,
+      });
+
+      for (let i = 0; i < 100; i++) {
+        await service.updateTotalSpent(created.id, '0.1');
+      }
+
+      const finalProfile = await service.findById(created.id);
+      expect(finalProfile.totalSpent).toBe('10.0000000');
+    });
+
+    it('maintains exact 7-decimal precision across micropayments', async () => {
+      const created = await service.create({
+        walletAddress: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+        name: 'John Doe',
+        userType: UserType.CLIENT,
+      });
+
+      await service.updateTotalSpent(created.id, '0.1');
+      await service.updateTotalSpent(created.id, '0.2');
+      let profile = await service.findById(created.id);
+      expect(profile.totalSpent).toBe('0.3000000');
+
+      for (let i = 0; i < 500; i++) {
+        await service.updateTotalSpent(created.id, '0.0000002');
+      }
+
+      profile = await service.findById(created.id);
+      expect(profile.totalSpent).toBe('0.3001000');
     });
   });
 

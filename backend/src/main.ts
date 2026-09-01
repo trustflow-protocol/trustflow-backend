@@ -3,6 +3,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import * as Sentry from '@sentry/node';
 import * as express from 'express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
@@ -44,6 +45,23 @@ process.on('uncaughtException', (error: Error) => {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Apply Helmet security headers middleware before other middleware.
+  // Content Security Policy is configured to allow Swagger UI at /api/docs to render
+  // correctly with inline scripts, styles, and external favicon/images.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: [`'self'`],
+          styleSrc: [`'self'`, `'unsafe-inline'`],
+          imgSrc: [`'self'`, 'data:', 'https:'],
+          scriptSrc: [`'self'`, `'unsafe-inline'`],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
 
   // Explicit body-size limit for JSON payloads.
   // The IPFS pin endpoint accepts base64-encoded deliverable content; 10 MB decoded

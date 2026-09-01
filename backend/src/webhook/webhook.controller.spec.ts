@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ZodError } from 'zod';
 import { WebhookController } from './webhook.controller';
 import { WebhookService } from './webhook.service';
 
@@ -30,7 +31,7 @@ describe('WebhookController', () => {
   // ─── POST /webhooks (register) ────────────────────────────────────────────
 
   describe('register()', () => {
-    it('calls WebhookService.register() with id and url from the body', () => {
+    it('calls WebhookService.register() with id and url from the body when secret is omitted', () => {
       const body = { id: 'hook-1', url: 'https://example.com/webhook' };
 
       controller.register(body);
@@ -38,7 +39,46 @@ describe('WebhookController', () => {
       expect(mockWebhookService.register).toHaveBeenCalledWith(
         'hook-1',
         'https://example.com/webhook',
+        undefined,
       );
+    });
+
+    it('calls WebhookService.register() with id, url, and secret when secret is provided', () => {
+      const body = {
+        id: 'hook-with-secret',
+        url: 'https://example.com/webhook',
+        secret: 'my-secret-key-at-least-16-chars',
+      };
+
+      controller.register(body);
+
+      expect(mockWebhookService.register).toHaveBeenCalledWith(
+        'hook-with-secret',
+        'https://example.com/webhook',
+        'my-secret-key-at-least-16-chars',
+      );
+    });
+
+    it('throws ZodError when secret is provided but shorter than 16 characters', () => {
+      const body = {
+        id: 'hook-short-secret',
+        url: 'https://example.com/webhook',
+        secret: 'too-short',
+      };
+
+      expect(() => controller.register(body)).toThrow(ZodError);
+    });
+
+    it('throws ZodError when url is not a valid URL', () => {
+      const body = { id: 'hook-bad-url', url: 'not-a-valid-url' };
+
+      expect(() => controller.register(body)).toThrow(ZodError);
+    });
+
+    it('throws ZodError when id is empty', () => {
+      const body = { id: '', url: 'https://example.com/webhook' };
+
+      expect(() => controller.register(body)).toThrow(ZodError);
     });
 
     it('returns { registered: true, id } on success', () => {
@@ -103,6 +143,7 @@ describe('WebhookController', () => {
       expect(mockWebhookService.register).toHaveBeenCalledWith(
         'round-trip',
         'https://example.com/rt',
+        undefined,
       );
       expect(mockWebhookService.unregister).toHaveBeenCalledWith('round-trip');
     });

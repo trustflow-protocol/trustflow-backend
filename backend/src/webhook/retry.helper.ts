@@ -39,9 +39,7 @@ export async function withRetry<T>(
 export function isRetryable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? '');
 
-  if (
-    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|socket hang up/i.test(message)
-  ) {
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|socket hang up/i.test(message)) {
     return true;
   }
 

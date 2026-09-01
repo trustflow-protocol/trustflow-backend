@@ -179,12 +179,9 @@ describe('isRetryable()', () => {
 
   // ─── HTTP 5xx ─────────────────────────────────────────────────────────────
 
-  it.each([500, 502, 503, 504, 520, 599])(
-    'returns true for HTTP %d (5xx)',
-    (status) => {
-      expect(isRetryable(new Error(String(status)))).toBe(true);
-    },
-  );
+  it.each([500, 502, 503, 504, 520, 599])('returns true for HTTP %d (5xx)', status => {
+    expect(isRetryable(new Error(String(status)))).toBe(true);
+  });
 
   it('returns true for verbose 5xx messages like "HTTP 502 Bad Gateway"', () => {
     expect(isRetryable(new Error('HTTP 502 Bad Gateway'))).toBe(true);
@@ -194,7 +191,7 @@ describe('isRetryable()', () => {
 
   it.each([400, 401, 403, 404, 422, 429])(
     'returns false for HTTP %d (4xx) — non-retryable',
-    (status) => {
+    status => {
       expect(isRetryable(new Error(String(status)))).toBe(false);
     },
   );
@@ -205,12 +202,9 @@ describe('isRetryable()', () => {
 
   // ─── HTTP 2xx / 3xx ───────────────────────────────────────────────────────
 
-  it.each([200, 201, 301, 302])(
-    'returns false for HTTP %d (2xx/3xx)',
-    (status) => {
-      expect(isRetryable(new Error(String(status)))).toBe(false);
-    },
-  );
+  it.each([200, 201, 301, 302])('returns false for HTTP %d (2xx/3xx)', status => {
+    expect(isRetryable(new Error(String(status)))).toBe(false);
+  });
 
   // ─── Ambiguous / unrecognised errors ─────────────────────────────────────
 

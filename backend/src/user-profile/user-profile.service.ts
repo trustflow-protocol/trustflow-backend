@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import BigNumber from 'bignumber.js';
 import { UserType, UserStatus } from './user-profile.entity';
 import { CreateUserProfileDto, UpdateUserProfileDto, RateUserDto } from './user-profile.dto';
 import { randomUUID } from 'crypto';
@@ -196,9 +197,9 @@ export class UserProfileService {
    */
   async updateTotalEarned(id: string, amount: string): Promise<UserProfile> {
     const profile = await this.findById(id);
-    const currentEarned = parseFloat(profile.totalEarned || '0');
-    const additionalAmount = parseFloat(amount);
-    profile.totalEarned = (currentEarned + additionalAmount).toFixed(7);
+    const currentEarned = new BigNumber(profile.totalEarned || '0');
+    const additionalAmount = new BigNumber(amount);
+    profile.totalEarned = currentEarned.plus(additionalAmount).toFixed(7);
     profile.updatedAt = new Date().toISOString();
     return profile;
   }
@@ -208,9 +209,9 @@ export class UserProfileService {
    */
   async updateTotalSpent(id: string, amount: string): Promise<UserProfile> {
     const profile = await this.findById(id);
-    const currentSpent = parseFloat(profile.totalSpent || '0');
-    const additionalAmount = parseFloat(amount);
-    profile.totalSpent = (currentSpent + additionalAmount).toFixed(7);
+    const currentSpent = new BigNumber(profile.totalSpent || '0');
+    const additionalAmount = new BigNumber(amount);
+    profile.totalSpent = currentSpent.plus(additionalAmount).toFixed(7);
     profile.updatedAt = new Date().toISOString();
     return profile;
   }

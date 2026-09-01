@@ -1,8 +1,9 @@
 import * as http from 'http';
 import * as net from 'net';
+import * as crypto from 'crypto';
 import { AddressInfo } from 'net';
 import { Test, TestingModule } from '@nestjs/testing';
-import { WebhookService } from './webhook.service';
+import { WebhookService, computeWebhookSignature } from './webhook.service';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,9 @@ async function serverWithStatus(status: number) {
 
 /** Starts a server that accepts connections but never writes back (simulates a hung endpoint). */
 async function silentServer() {
-  return startServer((_req, _res) => { /* intentionally no response */ });
+  return startServer((_req, _res) => {
+    /* intentionally no response */
+  });
 }
 
 // ─── Test suite ───────────────────────────────────────────────────────────────
@@ -58,6 +61,33 @@ describe('WebhookService', () => {
     expect(service).toBeDefined();
   });
 
+  // ─── computeWebhookSignature() ──────────────────────────────────────────
+
+  describe('computeWebhookSignature()', () => {
+    it('computes HMAC-SHA256 hex signature matching a known test vector', () => {
+      const secret = 'test-secret-key-123456';
+      const payload =
+        '{"event":"escrow.created","data":{"id":"esc-1"},"timestamp":"2026-08-31T00:00:00.000Z"}';
+      const expected = crypto.createHmac('sha256', secret).update(payload, 'utf8').digest('hex');
+
+      const signature = computeWebhookSignature(payload, secret);
+
+      expect(signature).toBe(expected);
+      expect(signature).toHaveLength(64); // 32-byte SHA-256 = 64 hex chars
+      expect(signature).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('produces different signatures for different secrets or payloads', () => {
+      const payload = '{"event":"test"}';
+      const sig1 = computeWebhookSignature(payload, 'secret-1-12345678');
+      const sig2 = computeWebhookSignature(payload, 'secret-2-12345678');
+      const sig3 = computeWebhookSignature('{"event":"other"}', 'secret-1-12345678');
+
+      expect(sig1).not.toBe(sig2);
+      expect(sig1).not.toBe(sig3);
+    });
+  });
+
   // ─── register / unregister ────────────────────────────────────────────────
 
   describe('register() / unregister()', () => {
@@ -66,7 +96,10 @@ describe('WebhookService', () => {
       const { url, close } = await startServer((req, res) => {
         let body = '';
         req.on('data', chunk => (body += chunk));
-        req.on('end', () => { requests.push(body); res.writeHead(200).end(); });
+        req.on('end', () => {
+          requests.push(body);
+          res.writeHead(200).end();
+        });
       });
 
       service.register('hook-1', url);
@@ -101,7 +134,10 @@ describe('WebhookService', () => {
     it('registers multiple endpoints under distinct ids', async () => {
       const hits: string[] = [];
       const makeServer = async (tag: string) =>
-        startServer((_req, res) => { hits.push(tag); res.writeHead(200).end(); });
+        startServer((_req, res) => {
+          hits.push(tag);
+          res.writeHead(200).end();
+        });
 
       const s1 = await makeServer('A');
       const s2 = await makeServer('B');
@@ -126,7 +162,10 @@ describe('WebhookService', () => {
       const { url, close } = await startServer((req, res) => {
         let body = '';
         req.on('data', c => (body += c));
-        req.on('end', () => { received = JSON.parse(body); res.writeHead(200).end(); });
+        req.on('end', () => {
+          received = JSON.parse(body);
+          res.writeHead(200).end();
+        });
       });
 
       service.register('hook', url);
@@ -145,7 +184,10 @@ describe('WebhookService', () => {
       const { url, close } = await startServer((req, res) => {
         let body = '';
         req.on('data', c => (body += c));
-        req.on('end', () => { received = JSON.parse(body); res.writeHead(200).end(); });
+        req.on('end', () => {
+          received = JSON.parse(body);
+          res.writeHead(200).end();
+        });
       });
 
       service.register('hook', url);
@@ -154,6 +196,78 @@ describe('WebhookService', () => {
       expect(received.dedupKey).toBe('dedup-key-xyz');
 
       await close();
+    });
+
+    it('sends X-TrustFlow-Signature header matching raw body when secret is configured', async () => {
+      let receivedHeaders: http.IncomingHttpHeaders | undefined;
+      let receivedBody = '';
+      const secret = 'super-secret-hmac-key-1234';
+
+      const { url, close } = await startServer((req, res) => {
+        receivedHeaders = req.headers;
+        req.on('data', c => (receivedBody += c));
+        req.on('end', () => res.writeHead(200).end());
+      });
+
+      service.register('signed-hook', url, secret);
+      await service.dispatch('dispute.raised', { disputeId: 'disp-1' });
+
+      expect(receivedHeaders).toBeDefined();
+      const signatureHeader = receivedHeaders!['x-trustflow-signature'];
+      expect(signatureHeader).toBeDefined();
+      expect(signatureHeader).toBe(computeWebhookSignature(receivedBody, secret));
+
+      await close();
+    });
+
+    it('omits X-TrustFlow-Signature header when secret is not configured', async () => {
+      let receivedHeaders: http.IncomingHttpHeaders | undefined;
+
+      const { url, close } = await startServer((req, res) => {
+        receivedHeaders = req.headers;
+        req.on('data', () => {});
+        req.on('end', () => res.writeHead(200).end());
+      });
+
+      service.register('unsigned-hook', url); // no secret
+      await service.dispatch('dispute.resolved', { disputeId: 'disp-1' });
+
+      expect(receivedHeaders).toBeDefined();
+      expect(receivedHeaders!['x-trustflow-signature']).toBeUndefined();
+
+      await close();
+    });
+
+    it('handles mixed endpoints in a single dispatch: signed and unsigned receive correct headers', async () => {
+      let signedHeaders: http.IncomingHttpHeaders | undefined;
+      let signedBody = '';
+      let unsignedHeaders: http.IncomingHttpHeaders | undefined;
+      const secret = 'endpoint-a-secret-key-1234';
+
+      const serverA = await startServer((req, res) => {
+        signedHeaders = req.headers;
+        req.on('data', c => (signedBody += c));
+        req.on('end', () => res.writeHead(200).end());
+      });
+
+      const serverB = await startServer((req, res) => {
+        unsignedHeaders = req.headers;
+        req.on('data', () => {});
+        req.on('end', () => res.writeHead(200).end());
+      });
+
+      service.register('signed-ep', serverA.url, secret);
+      service.register('unsigned-ep', serverB.url);
+
+      await service.dispatch('escrow.created', { id: 'esc-mix' });
+
+      expect(signedHeaders!['x-trustflow-signature']).toBe(
+        computeWebhookSignature(signedBody, secret),
+      );
+      expect(unsignedHeaders!['x-trustflow-signature']).toBeUndefined();
+
+      await serverA.close();
+      await serverB.close();
     });
 
     it('resolves without error when no endpoints are registered', async () => {
@@ -195,16 +309,15 @@ describe('WebhookService', () => {
       // We cannot easily spin up TLS in a unit test, so we verify by checking
       // that the service does not throw simply because the URL starts with
       // https:// — we mock send() to avoid actual network I/O.
-      const sendSpy = jest
-        .spyOn(service as any, 'send')
-        .mockResolvedValue(undefined);
+      const sendSpy = jest.spyOn(service as any, 'send').mockResolvedValue(undefined);
 
-      service.register('tls-hook', 'https://example.com/webhook');
+      service.register('tls-hook', 'https://example.com/webhook', 'tls-secret-12345678');
       await service.dispatch('tls.event', {});
 
       expect(sendSpy).toHaveBeenCalledWith(
         'https://example.com/webhook',
         expect.objectContaining({ event: 'tls.event' }),
+        'tls-secret-12345678',
       );
 
       sendSpy.mockRestore();
@@ -262,26 +375,23 @@ describe('WebhookService', () => {
   // ─── send() — status code handling ───────────────────────────────────────
 
   describe('send() — HTTP status handling', () => {
-    it.each([200, 201, 204, 302])(
-      'resolves for HTTP %d (< 400)',
-      async (status) => {
-        const { url, close } = await serverWithStatus(status);
-        service.register('hook', url);
-        await expect(service.dispatch('ok.event', {})).resolves.not.toThrow();
-        await close();
-      },
-    );
+    it.each([200, 201, 204, 302])('resolves for HTTP %d (< 400)', async status => {
+      const { url, close } = await serverWithStatus(status);
+      service.register('hook', url);
+      await expect(service.dispatch('ok.event', {})).resolves.not.toThrow();
+      await close();
+    });
 
-    it.each([400, 401, 403, 422])(
-      'rejects (no retry) for HTTP %d (4xx)',
-      async (status) => {
-        let calls = 0;
-        const { url, close } = await startServer((_req, res) => { calls++; res.writeHead(status).end(); });
-        service.register('hook', url);
-        await expect(service.dispatch('err.event', {})).rejects.toThrow(String(status));
-        expect(calls).toBe(1);
-        await close();
-      },
-    );
+    it.each([400, 401, 403, 422])('rejects (no retry) for HTTP %d (4xx)', async status => {
+      let calls = 0;
+      const { url, close } = await startServer((_req, res) => {
+        calls++;
+        res.writeHead(status).end();
+      });
+      service.register('hook', url);
+      await expect(service.dispatch('err.event', {})).rejects.toThrow(String(status));
+      expect(calls).toBe(1);
+      await close();
+    });
   });
 });

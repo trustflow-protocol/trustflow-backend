@@ -7,7 +7,7 @@ export const RegisterWebhookSchema = z.object({
   secret: z.string().min(16).optional(),
 });
 
-export type RegisterWebhookDto = z.infer<typeof RegisterWebhookSchema>;
+export type RegisterWebhookDto = z.input<typeof RegisterWebhookSchema>;
 
 export enum WebhookEvent {
   EscrowCreated = 'escrow.created',
