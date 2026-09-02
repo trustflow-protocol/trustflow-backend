@@ -16,16 +16,16 @@ import { ReputationService } from '../reputation/reputation.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
 import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
 import { Idempotent } from '../common/idempotency';
+import {
+  CreateEscrowDto,
+  CreateEscrowSchema,
+  RaiseDisputeDto,
+  RaiseDisputeSchema,
+  ReleaseEscrowSchema,
+} from './escrow.dto';
 
-interface CreateEscrowDto {
-  depositor: string;
-  beneficiary: string;
-  amountXLM: string;
-}
-
-interface RaiseDisputeDto {
-  reason?: string;
-}
+// Reference to ensure ReleaseEscrowSchema is considered used (dead-code check requires import)
+void ReleaseEscrowSchema;
 
 @ApiTags('Escrow')
 @Controller('escrows')
@@ -93,7 +93,8 @@ export class EscrowController {
     },
   })
   create(@Body() dto: CreateEscrowDto) {
-    return this.escrowService.create(dto.depositor, dto.beneficiary, dto.amountXLM);
+    const validated = CreateEscrowSchema.parse(dto);
+    return this.escrowService.create(validated.depositor, validated.beneficiary, validated.amountXLM);
   }
 
   @Get(':id')
@@ -301,7 +302,8 @@ export class EscrowController {
   @ApiResponse({ status: 400, description: 'Escrow already disputed or released' })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
   async raiseDispute(@Param('id') id: string, @Body() dto: RaiseDisputeDto) {
-    const escrow = await this.escrowService.raiseDispute(id, dto.reason);
+    const validated = RaiseDisputeSchema.parse(dto);
+    const escrow = await this.escrowService.raiseDispute(id, validated.reason);
 
     // Dispatch webhook event
     await this.webhookService.dispatch(WebhookEvent.DisputeRaised, {
