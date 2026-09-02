@@ -18,3 +18,13 @@ export const ReleaseEscrowSchema = z.object({
 });
 
 export type ReleaseEscrowDto = z.infer<typeof ReleaseEscrowSchema>;
+
+export const RaiseDisputeSchema = z.object({
+  reason: z
+    .string()
+    .min(1, 'Dispute reason cannot be empty')
+    .max(1000, 'Dispute reason must be at most 1000 characters')
+    .optional(),
+});
+
+export type RaiseDisputeDto = z.infer<typeof RaiseDisputeSchema>;

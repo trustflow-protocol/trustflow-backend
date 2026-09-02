@@ -24,7 +24,10 @@ const EnvSchema = z.object({
   BODY_LIMIT_MB: z.coerce.number().int().positive().default(15),
 
   // Authentication & Security
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters for security'),
+  // JWT_SECRET is required in production but may fall back to a clearly-marked
+  // test-only default in non-production environments so local dev/test can boot
+  // without a real secret. Production without a secret must fail fast.
+  JWT_SECRET: z.string().optional(),
   ADMIN_ADDRESSES: z
     .string()
     .optional()
@@ -88,9 +91,42 @@ const EnvSchema = z.object({
 
   // Reputation System Configuration
   REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
+}).superRefine((data, ctx) => {
+  const secret = data.JWT_SECRET;
+  if (data.NODE_ENV === 'production') {
+    if (!secret || secret.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET'],
+        message: 'JWT_SECRET is required in production',
+      });
+    } else if (secret.length < 16) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET'],
+        message: 'JWT_SECRET must be at least 16 characters for security',
+      });
+    }
+  } else {
+    // Development/test: if a value is explicitly provided it must still meet minimum length
+    if (secret !== undefined && secret !== '' && secret.length < 16) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET'],
+        message: 'JWT_SECRET must be at least 16 characters for security',
+      });
+    }
+  }
 });
 
 export type EnvConfig = z.infer<typeof EnvSchema>;
+
+/**
+ * Fallback used only when NODE_ENV !== 'production' and no JWT_SECRET is provided.
+ * Clearly marked as test-only so it cannot be mistaken for a production secret.
+ */
+export const TEST_ONLY_JWT_SECRET =
+  'test-only-jwt-secret-for-development-and-test-do-not-use-in-production';
 
 let validatedConfig: EnvConfig | null = null;
 
@@ -109,7 +145,14 @@ export function validateEnv(): EnvConfig {
   }
 
   try {
-    validatedConfig = EnvSchema.parse(process.env);
+    const parsed = EnvSchema.parse(process.env) as EnvConfig;
+    // Inject clearly-marked test-only fallback for non-production when no secret is provided
+    if (!parsed.JWT_SECRET || parsed.JWT_SECRET.trim() === '') {
+      if (parsed.NODE_ENV !== 'production') {
+        (parsed as Record<string, unknown>).JWT_SECRET = TEST_ONLY_JWT_SECRET;
+      }
+    }
+    validatedConfig = parsed;
     return validatedConfig;
   } catch (error) {
     if (error instanceof z.ZodError) {

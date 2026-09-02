@@ -59,9 +59,9 @@ export class WebhookController {
     },
   })
   @ApiResponse({ status: 400, description: 'Invalid webhook URL, ID, or secret' })
-  register(@Body() body: RegisterWebhookDto) {
+  async register(@Body() body: RegisterWebhookDto) {
     const validated = RegisterWebhookSchema.parse(body);
-    this.webhookService.register(validated.id, validated.url, validated.secret);
+    await this.webhookService.register(validated.id, validated.url, validated.secret);
     return { registered: true, id: validated.id };
   }
 
