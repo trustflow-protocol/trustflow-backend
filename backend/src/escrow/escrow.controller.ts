@@ -1,4 +1,14 @@
-import { Controller, Get, NotFoundException, Post, Body, Param, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  NotFoundException,
+  Post,
+  Body,
+  Param,
+  Query,
+} from '@nestjs/common';
+import { ZodError } from 'zod';
 import {
   ApiBody,
   ApiHeader,
@@ -93,8 +103,20 @@ export class EscrowController {
     },
   })
   create(@Body() dto: CreateEscrowDto) {
-    const validated = CreateEscrowSchema.parse(dto);
-    return this.escrowService.create(validated.depositor, validated.beneficiary, validated.amountXLM);
+    let validated: CreateEscrowDto;
+    try {
+      validated = CreateEscrowSchema.parse(dto);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        throw new BadRequestException(err.errors[0]?.message ?? 'Invalid escrow payload');
+      }
+      throw err;
+    }
+    return this.escrowService.create(
+      validated.depositor,
+      validated.beneficiary,
+      validated.amountXLM,
+    );
   }
 
   @Get(':id')
@@ -125,8 +147,10 @@ export class EscrowController {
     },
   })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
-  findOne(@Param('id') id: string) {
-    return this.escrowService.findById(id);
+  async findOne(@Param('id') id: string) {
+    const escrow = await this.escrowService.findById(id);
+    if (!escrow) throw new NotFoundException(`Escrow ${id} not found`);
+    return escrow;
   }
 
   @Get('depositor/:address')

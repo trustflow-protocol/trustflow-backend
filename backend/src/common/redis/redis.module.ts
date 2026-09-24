@@ -1,7 +1,7 @@
 import { Module, Global, Logger } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { DistributedLockService } from './distributed-lock.service';
-import { config } from '../config/env.config';
+import { config } from '../../config/env.config';
 
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 

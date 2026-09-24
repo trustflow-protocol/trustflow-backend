@@ -113,19 +113,13 @@ describe('ReputationService', () => {
       expect(secondContribution).toBeCloseTo(afterFirst, 5);
     });
 
-    it('naturally dampens self-dealing without special-casing', async () => {
-      // depositor === beneficiary: a single escrow paid to oneself. Both "sides" of the
-      // contribution land on the same address, and the second one is a repeat interaction
-      // with itself, so it gets dampened — the address doesn't get full credit twice.
+    it('never grants reputation for a self-dealing escrow (depositor === beneficiary) (#437)', async () => {
+      // The dampening formula alone does NOT neutralise self-dealing — see the class
+      // comment above. recordEscrowCompleted() explicitly no-ops in this case instead.
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'GSELF', beneficiary: 'GSELF' }));
       const selfScore = service.getScore('GSELF').score;
 
-      const undampedTotal =
-        2 * REPUTATION_WEIGHTS[ReputationEventType.ESCROW_COMPLETED] * Math.sqrt(100);
-
-      // Undamped it would be full weight twice (1 + 1); dampened it's 1 + 1/2 — 75% of that total.
-      expect(selfScore).toBeLessThan(undampedTotal);
-      expect(selfScore).toBeCloseTo(undampedTotal * 0.75, 5);
+      expect(selfScore).toBe(0);
     });
   });
 
@@ -152,6 +146,16 @@ describe('ReputationService', () => {
 
       expect(service.getScore('GDEPOSITOR').score).toBeLessThan(0);
       expect(service.getScore('GBENEFICIARY').score).toBeLessThan(0);
+    });
+
+    it('never changes reputation for a self-dealing escrow (depositor === beneficiary) (#437)', async () => {
+      await service.recordDisputeResolved(
+        makeEscrow({ depositor: 'GSELF', beneficiary: 'GSELF' }),
+        'won',
+        'lost',
+      );
+
+      expect(service.getScore('GSELF').score).toBe(0);
     });
   });
 

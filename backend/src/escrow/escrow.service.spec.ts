@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { Logger } from '@nestjs/common';
 import { EscrowService } from './escrow.service';
 
 // ─── Test suite ───────────────────────────────────────────────────────────────
@@ -25,15 +26,18 @@ describe('EscrowService', () => {
       for (let i = 0; i < numEscrows; i++) {
         promises.push(service.create(`GDEP${i}`, `GBEN${i}`, '100'));
       }
-      
+
       const escrows = await Promise.all(promises);
       const ids = new Set(escrows.map(e => e.id));
-      
+
       expect(ids.size).toBe(numEscrows);
-      
+
       // Verify UUID format (basic check)
       const sampleId = escrows[0].id;
       expect(sampleId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
+  });
+
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
@@ -69,6 +73,52 @@ describe('EscrowService', () => {
       expect(escrow.disputeReason).toBeUndefined();
       expect(escrow.disputedAt).toBeUndefined();
     });
+
+    it('still stores a self-dealing escrow (depositor === beneficiary) but logs a warning (#437)', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      const escrow = await service.create(DEPOSITOR, DEPOSITOR, AMOUNT);
+
+      expect(escrow.depositor).toBe(DEPOSITOR);
+      expect(escrow.beneficiary).toBe(DEPOSITOR);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('self-dealing'));
+
+      warnSpy.mockRestore();
+    });
+  });
+
+  // ─── createFromChainState() ───────────────────────────────────────────────
+
+  describe('createFromChainState()', () => {
+    it('stores an escrow seeded from on-chain state', async () => {
+      const escrow = await service.createFromChainState({
+        contractEscrowId: 'chain-esc-1',
+        depositor: DEPOSITOR,
+        beneficiary: BENEFICIARY,
+        amountXLM: AMOUNT,
+        status: 'active',
+      });
+
+      expect(escrow.contractEscrowId).toBe('chain-esc-1');
+      expect(escrow.status).toBe('active');
+    });
+
+    it('still stores a self-dealing escrow found on-chain but logs a warning (#437)', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      const escrow = await service.createFromChainState({
+        contractEscrowId: 'chain-esc-2',
+        depositor: DEPOSITOR,
+        beneficiary: DEPOSITOR,
+        amountXLM: AMOUNT,
+        status: 'active',
+      });
+
+      expect(escrow.depositor).toBe(escrow.beneficiary);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('self-dealing'));
+
+      warnSpy.mockRestore();
+    });
   });
 
   // ─── findById() ───────────────────────────────────────────────────────────
@@ -87,9 +137,11 @@ describe('EscrowService', () => {
 
   // ─── findByDepositor() ────────────────────────────────────────────────────
 
-  describe('findByDepositor()', () => {
-    it('returns an empty array when no escrows exist for that depositor', async () => {
-      expect(await service.findByDepositor(DEPOSITOR)).toEqual([]);
+  describe('findByDepositor', () => {
+    it('returns empty data when no escrows exist for that depositor', async () => {
+      const result = await service.findByDepositor(DEPOSITOR);
+      expect(result.data).toEqual([]);
+      expect(result.total).toBe(0);
     });
 
     it('returns only escrows belonging to the given depositor', async () => {
@@ -97,21 +149,18 @@ describe('EscrowService', () => {
       const mine = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
       await service.create(OTHER, BENEFICIARY, AMOUNT);
 
-      const results = await service.findByDepositor(DEPOSITOR);
-      expect(results).toHaveLength(1);
-      expect(results[0].id).toBe(mine.id);
+      const result = await service.findByDepositor(DEPOSITOR);
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].id).toBe(mine.id);
     });
 
     it('returns multiple escrows for the same depositor', async () => {
       await service.create(DEPOSITOR, BENEFICIARY, '50');
       await service.create(DEPOSITOR, BENEFICIARY, '75');
 
-      const results = await service.findByDepositor(DEPOSITOR);
-      expect(results).toHaveLength(2);
+      const result = await service.findByDepositor(DEPOSITOR);
+      expect(result.data).toHaveLength(2);
     });
-  });
-
-  describe('findByDepositor', () => {
     it('returns paginated results for a depositor', async () => {
       for (let i = 0; i < 5; i++) {
         await service.create('GDEP', 'GBEN', '100');
@@ -143,11 +192,6 @@ describe('EscrowService', () => {
     });
   });
 
-  describe('fund', () => {
-    it('updates status to active for a pending escrow', async () => {
-      const escrow = await service.create('GDEP', 'GBEN', '100');
-      const updated = await service.fund(escrow.id);
-      expect(updated.status).toBe('active');
   // ─── release() ────────────────────────────────────────────────────────────
 
   describe('release()', () => {
@@ -309,9 +353,9 @@ describe('EscrowService', () => {
     });
 
     it('throws when the escrow id is unknown', async () => {
-      await expect(
-        service.applyChainState('esc-unknown', { status: 'active' }),
-      ).rejects.toThrow('Escrow not found');
+      await expect(service.applyChainState('esc-unknown', { status: 'active' })).rejects.toThrow(
+        'Escrow not found',
+      );
     });
   });
 

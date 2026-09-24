@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
 export type EscrowStatus = 'pending' | 'active' | 'released' | 'disputed' | 'cancelled';
@@ -34,10 +34,26 @@ export interface ChainEscrowSeed {
 
 @Injectable()
 export class EscrowService {
+  private readonly logger = new Logger(EscrowService.name);
   private escrows: Map<string, Escrow> = new Map();
+
+  /**
+   * A self-dealing escrow (depositor === beneficiary) can only reach here
+   * via an on-chain event or reconciler backfill — `CreateEscrowSchema`
+   * rejects it at the API boundary (#437). On-chain state is a fact we
+   * can't un-happen, so we store it (never silently drop real chain data)
+   * but log a warning; `ReputationService` is the actual enforcement point
+   * that refuses to let it earn reputation.
+   */
+  private warnIfSelfDealing(depositor: string, beneficiary: string, id: string): void {
+    if (depositor === beneficiary) {
+      this.logger.warn(`Escrow ${id} is self-dealing (depositor === beneficiary === ${depositor})`);
+    }
+  }
 
   async create(depositor: string, beneficiary: string, amountXLM: string): Promise<Escrow> {
     const id = randomUUID();
+    this.warnIfSelfDealing(depositor, beneficiary, id);
     const escrow: Escrow = {
       id,
       depositor,
@@ -98,6 +114,7 @@ export class EscrowService {
   /** Creates a DB row for an escrow found on-chain but never recorded (e.g. a missed creation event). */
   async createFromChainState(seed: ChainEscrowSeed): Promise<Escrow> {
     const id = randomUUID();
+    this.warnIfSelfDealing(seed.depositor, seed.beneficiary, id);
     const escrow: Escrow = {
       id,
       depositor: seed.depositor,

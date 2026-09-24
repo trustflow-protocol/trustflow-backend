@@ -28,9 +28,15 @@ import {
  *    with that specific counterparty — harmonic diminishing returns. Two colluding
  *    addresses looping fake escrows back and forth see their mutual contribution
  *    shrink every round; a wide base of distinct, one-off counterparties does not.
- *    This also naturally dampens self-dealing (depositor === beneficiary), since
- *    the two sides of that single escrow already count as a repeat interaction
- *    with each other — no special-casing required.
+ *  - Self-dealing (depositor === beneficiary) is *not* naturally dampened by the
+ *    above: recordEscrowCompleted() applies two contributions for one escrow —
+ *    (address, counterparty) then (counterparty, address) — and for a self-escrow
+ *    both calls hit the *same* record. The first sees zero prior interactions
+ *    with itself (full weight); only the second is halved, so a wallet looping
+ *    escrows with itself nets 1.5x what a genuine two-party escrow gives each
+ *    side. recordEscrowCompleted()/recordDisputeResolved() explicitly no-op on
+ *    depositor === beneficiary instead (see #437) — this is real special-casing,
+ *    not an emergent property of the dampening formula above.
  */
 @Injectable()
 export class ReputationService {
@@ -39,6 +45,12 @@ export class ReputationService {
   constructor(private readonly store: ReputationScoreStore) {}
 
   async recordEscrowCompleted(escrow: EscrowParties): Promise<void> {
+    if (escrow.depositor === escrow.beneficiary) {
+      this.logger.debug(
+        `Skipping reputation for self-dealing escrow (depositor === beneficiary === ${escrow.depositor})`,
+      );
+      return;
+    }
     const now = new Date();
     this.applyContribution(
       escrow.depositor,
@@ -61,6 +73,12 @@ export class ReputationService {
     depositorOutcome: ReputationOutcome,
     beneficiaryOutcome: ReputationOutcome,
   ): Promise<void> {
+    if (escrow.depositor === escrow.beneficiary) {
+      this.logger.debug(
+        `Skipping reputation for self-dealing escrow (depositor === beneficiary === ${escrow.depositor})`,
+      );
+      return;
+    }
     const now = new Date();
     this.applyContribution(
       escrow.depositor,
