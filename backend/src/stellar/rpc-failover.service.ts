@@ -116,16 +116,30 @@ export class RpcFailoverService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.HEALTH_CHECK_TIMEOUT_MS);
 
-      const response = await fetch(`${endpoint.url}/health`, {
+      const response = await fetch(endpoint.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getHealth',
+        }),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
       if (response.ok) {
-        endpoint.healthy = true;
-        endpoint.failureCount = 0;
-        endpoint.lastError = undefined;
+        const data = (await response.json()) as any;
+        if (data?.result?.status === 'healthy') {
+          endpoint.healthy = true;
+          endpoint.failureCount = 0;
+          endpoint.lastError = undefined;
+        } else {
+          endpoint.healthy = false;
+          endpoint.failureCount++;
+          endpoint.lastError = `Unhealthy status: ${JSON.stringify(data)}`;
+        }
       } else {
         endpoint.healthy = false;
         endpoint.failureCount++;
