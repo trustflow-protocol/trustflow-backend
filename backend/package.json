@@ -30,6 +30,7 @@
     "@nestjs/jwt": "^10.0.0",
     "@nestjs/passport": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/platform-socket.io": "^10.0.0",
     "@nestjs/swagger": "^7.0.0",
     "@nestjs/websockets": "^10.0.0",
     "@sentry/node": "^8.55.2",
