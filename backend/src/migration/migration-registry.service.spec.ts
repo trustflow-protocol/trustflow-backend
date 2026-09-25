@@ -1,9 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
-import {
-  MigrationRegistryService,
-  MIGRATION_DEFINITIONS,
-} from './migration-registry.service';
+import { MigrationRegistryService, MIGRATION_DEFINITIONS } from './migration-registry.service';
 import { SchemaMigration, BackfillBatchResult } from './migration.types';
 
 // ─── Minimal concrete SchemaMigration for testing ────────────────────────────

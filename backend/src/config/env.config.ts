@@ -13,111 +13,113 @@ import { z } from 'zod';
  * throughout the application, replacing inline `process.env.X || fallback` reads.
  */
 
-const EnvSchema = z.object({
-  // Node environment
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+const EnvSchema = z
+  .object({
+    // Node environment
+    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
-  // Server configuration
-  PORT: z.coerce.number().int().positive().default(3001),
-  CORS_ORIGIN: z.string().optional(),
-  API_URL: z.string().url().optional().default('http://localhost:3001'),
-  BODY_LIMIT_MB: z.coerce.number().int().positive().default(15),
+    // Server configuration
+    PORT: z.coerce.number().int().positive().default(3001),
+    CORS_ORIGIN: z.string().optional(),
+    API_URL: z.string().url().optional().default('http://localhost:3001'),
+    BODY_LIMIT_MB: z.coerce.number().int().positive().default(15),
 
-  // Authentication & Security
-  // JWT_SECRET is required in production but may fall back to a clearly-marked
-  // test-only default in non-production environments so local dev/test can boot
-  // without a real secret. Production without a secret must fail fast.
-  JWT_SECRET: z.string().optional(),
-  ADMIN_ADDRESSES: z
-    .string()
-    .optional()
-    .describe('Comma-separated list of Stellar addresses with admin access'),
+    // Authentication & Security
+    // JWT_SECRET is required in production but may fall back to a clearly-marked
+    // test-only default in non-production environments so local dev/test can boot
+    // without a real secret. Production without a secret must fail fast.
+    JWT_SECRET: z.string().optional(),
+    ADMIN_ADDRESSES: z
+      .string()
+      .optional()
+      .describe('Comma-separated list of Stellar addresses with admin access'),
 
-  // Stellar Network Configuration
-  STELLAR_NETWORK: z.enum(['TESTNET', 'PUBLIC', 'MAINNET']).default('TESTNET'),
-  STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
-  SOROBAN_RPC_URL: z.string().url().default('https://soroban-testnet.stellar.org'),
-  TRUSTFLOW_CONTRACT_ID: z
-    .string()
-    .regex(/^C[A-Z2-7]{55}$/, 'TRUSTFLOW_CONTRACT_ID must be a valid Stellar contract address')
-    .optional()
-    .describe('Required for on-chain operations; optional for off-chain-only deployments'),
+    // Stellar Network Configuration
+    STELLAR_NETWORK: z.enum(['TESTNET', 'PUBLIC', 'MAINNET']).default('TESTNET'),
+    STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
+    SOROBAN_RPC_URL: z.string().url().default('https://soroban-testnet.stellar.org'),
+    TRUSTFLOW_CONTRACT_ID: z
+      .string()
+      .regex(/^C[A-Z2-7]{55}$/, 'TRUSTFLOW_CONTRACT_ID must be a valid Stellar contract address')
+      .optional()
+      .describe('Required for on-chain operations; optional for off-chain-only deployments'),
 
-  // Stellar failover endpoints (comma-separated URLs)
-  STELLAR_HORIZON_ENDPOINTS: z.string().optional(),
-  SOROBAN_RPC_ENDPOINTS: z.string().optional(),
+    // Stellar failover endpoints (comma-separated URLs)
+    STELLAR_HORIZON_ENDPOINTS: z.string().optional(),
+    SOROBAN_RPC_ENDPOINTS: z.string().optional(),
 
-  // Redis Configuration
-  REDIS_URL: z
-    .string()
-    .url()
-    .optional()
-    .describe('Required for rate limiting, outbox relay, and distributed caches'),
+    // Redis Configuration
+    REDIS_URL: z
+      .string()
+      .url()
+      .optional()
+      .describe('Required for rate limiting, outbox relay, and distributed caches'),
 
-  // Database Configuration (PostgreSQL)
-  DATABASE_URL: z
-    .string()
-    .url()
-    .optional()
-    .describe('PostgreSQL connection string; currently optional infrastructure'),
+    // Database Configuration (PostgreSQL)
+    DATABASE_URL: z
+      .string()
+      .url()
+      .optional()
+      .describe('PostgreSQL connection string; currently optional infrastructure'),
 
-  // Monitoring & Observability
-  SENTRY_DSN: z
-    .string()
-    .url()
-    .optional()
-    .describe('Sentry error tracking DSN; errors are logged but not reported when unset'),
+    // Monitoring & Observability
+    SENTRY_DSN: z
+      .string()
+      .url()
+      .optional()
+      .describe('Sentry error tracking DSN; errors are logged but not reported when unset'),
 
-  // Discord Integration
-  DISCORD_WEBHOOK_URL: z
-    .string()
-    .url()
-    .optional()
-    .describe('Discord webhook for dispute notifications'),
+    // Discord Integration
+    DISCORD_WEBHOOK_URL: z
+      .string()
+      .url()
+      .optional()
+      .describe('Discord webhook for dispute notifications'),
 
-  // Rate Limiting Configuration
-  RATE_LIMIT_ABUSE_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
-  RATE_LIMIT_ABUSE_THRESHOLD: z.coerce.number().int().positive().default(5),
-  RATE_LIMIT_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
+    // Rate Limiting Configuration
+    RATE_LIMIT_ABUSE_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
+    RATE_LIMIT_ABUSE_THRESHOLD: z.coerce.number().int().positive().default(5),
+    RATE_LIMIT_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
 
-  // Event Processing Configuration
-  EVENT_PROCESSING_CONCURRENCY: z.coerce.number().int().positive().default(8),
+    // Event Processing Configuration
+    EVENT_PROCESSING_CONCURRENCY: z.coerce.number().int().positive().default(8),
 
-  // IPFS Pinning Configuration
-  IPFS_PINATA_JWT: z.string().optional().describe('Pinata API JWT token'),
-  IPFS_WEB3_STORAGE_TOKEN: z.string().optional().describe('Web3.Storage API token'),
-  IPFS_INFURA_PROJECT_ID: z.string().optional().describe('Infura IPFS project ID'),
-  IPFS_INFURA_PROJECT_SECRET: z.string().optional().describe('Infura IPFS project secret'),
+    // IPFS Pinning Configuration
+    IPFS_PINATA_JWT: z.string().optional().describe('Pinata API JWT token'),
+    IPFS_WEB3_STORAGE_TOKEN: z.string().optional().describe('Web3.Storage API token'),
+    IPFS_INFURA_PROJECT_ID: z.string().optional().describe('Infura IPFS project ID'),
+    IPFS_INFURA_PROJECT_SECRET: z.string().optional().describe('Infura IPFS project secret'),
 
-  // Reputation System Configuration
-  REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
-}).superRefine((data, ctx) => {
-  const secret = data.JWT_SECRET;
-  if (data.NODE_ENV === 'production') {
-    if (!secret || secret.trim() === '') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['JWT_SECRET'],
-        message: 'JWT_SECRET is required in production',
-      });
-    } else if (secret.length < 16) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['JWT_SECRET'],
-        message: 'JWT_SECRET must be at least 16 characters for security',
-      });
+    // Reputation System Configuration
+    REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const secret = data.JWT_SECRET;
+    if (data.NODE_ENV === 'production') {
+      if (!secret || secret.trim() === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET is required in production',
+        });
+      } else if (secret.length < 16) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET must be at least 16 characters for security',
+        });
+      }
+    } else {
+      // Development/test: if a value is explicitly provided it must still meet minimum length
+      if (secret !== undefined && secret !== '' && secret.length < 16) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET must be at least 16 characters for security',
+        });
+      }
     }
-  } else {
-    // Development/test: if a value is explicitly provided it must still meet minimum length
-    if (secret !== undefined && secret !== '' && secret.length < 16) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['JWT_SECRET'],
-        message: 'JWT_SECRET must be at least 16 characters for security',
-      });
-    }
-  }
-});
+  });
 
 export type EnvConfig = z.infer<typeof EnvSchema>;
 

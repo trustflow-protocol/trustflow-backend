@@ -133,7 +133,13 @@ export class GigService implements OnModuleInit {
 
   async findByCreator(
     address: string,
-    options?: { status?: GigStatus; minBudgetXLM?: string; maxBudgetXLM?: string; offset?: number; limit?: number },
+    options?: {
+      status?: GigStatus;
+      minBudgetXLM?: string;
+      maxBudgetXLM?: string;
+      offset?: number;
+      limit?: number;
+    },
   ): Promise<{ data: Gig[]; total: number }> {
     let gigs: Gig[];
     if (this.redis) {

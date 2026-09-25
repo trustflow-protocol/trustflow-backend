@@ -30,7 +30,10 @@ export class StellarController {
   })
   @ApiResponse({ status: 200, schema: { example: { address: 'GA7Q…', balance: '99.5000000' } } })
   @ApiResponse({ status: 400, description: 'Malformed Stellar address' })
-  @ApiResponse({ status: 404, description: 'Account not found on the network (unfunded or nonexistent)' })
+  @ApiResponse({
+    status: 404,
+    description: 'Account not found on the network (unfunded or nonexistent)',
+  })
   async getBalance(
     @Param('address') address: string,
   ): Promise<{ address: string; balance: string }> {
