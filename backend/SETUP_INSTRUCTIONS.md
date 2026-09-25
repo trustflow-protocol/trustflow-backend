@@ -26,6 +26,10 @@ Copy the example environment file and configure it:
 cp ../.env.example .env
 ```
 
+`npm run dev` and `npm start` load `backend/.env` automatically on startup (a missing file is
+fine — it's optional). Any variable already set in the real environment (your shell, a
+container, CI) takes precedence over the same variable in `.env`.
+
 Edit `.env` and set your values:
 
 ```env

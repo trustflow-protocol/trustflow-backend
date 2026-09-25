@@ -52,10 +52,11 @@ npm install
 
 ### Environment Setup
 
-Copy the example env file and fill in your values:
+Copy the example env file into `backend/` (where the app looks for it) and fill in your values:
 
 ```bash
-cp .env.example .env
+cd backend
+cp ../.env.example .env
 ```
 
 Key variables:
