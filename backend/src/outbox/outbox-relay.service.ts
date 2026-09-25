@@ -3,6 +3,7 @@ import { MetricsService } from '../monitoring/metrics.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { OutboxPublisherService } from './outbox-publisher.service';
 import { OutboxService } from './outbox.service';
+import { OutboxEventDispatcher } from './outbox-event-dispatcher.service';
 
 const DEFAULT_RELAY_INTERVAL_MS = 1000;
 const DEFAULT_BATCH_SIZE = 100;
@@ -18,6 +19,7 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
     private readonly outbox: OutboxService,
     private readonly publisher: OutboxPublisherService,
     private readonly webhookService: WebhookService,
+    private readonly dispatcher: OutboxEventDispatcher,
     private readonly metrics: MetricsService,
   ) {}
 
@@ -47,6 +49,7 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
         // all destinations receive the stable dedupKey to collapse duplicates.
         await this.publisher.publish(event);
         await this.webhookService.dispatch(event.type, event.payload, event.dedupKey);
+        await this.dispatcher.dispatch(event);
         await this.outbox.markDelivered(event);
         this.metrics.increment('outbox_delivery_total', { result: 'delivered', type: event.type });
       } catch (error) {

@@ -24,7 +24,9 @@ export type RegisterWebhookDto = z.input<typeof RegisterWebhookSchema>;
 
 export enum WebhookEvent {
   EscrowCreated = 'escrow.created',
+  EscrowFunded = 'escrow.funded',
   EscrowReleased = 'escrow.released',
-  DisputeRaised = 'dispute.raised',
-  DisputeResolved = 'dispute.resolved',
+  EscrowCancelled = 'escrow.cancelled',
+  EscrowSplit = 'escrow.split',
+  EscrowDisputed = 'escrow.disputed',
 }

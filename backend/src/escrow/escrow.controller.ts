@@ -19,9 +19,6 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { EscrowService } from './escrow.service';
-import { WebhookService } from '../webhook/webhook.service';
-import { DiscordService } from '../webhook/discord.service';
-import { WebhookEvent } from '../webhook/webhook.dto';
 import { ReputationService } from '../reputation/reputation.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
 import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
@@ -42,9 +39,6 @@ void ReleaseEscrowSchema;
 export class EscrowController {
   constructor(
     private readonly escrowService: EscrowService,
-    private readonly webhookService: WebhookService,
-    private readonly discordService: DiscordService,
-    private readonly reputationService: ReputationService,
     private readonly escrowReleaseTransactionBuilderService: EscrowReleaseTransactionBuilderService,
   ) {}
 
@@ -226,7 +220,6 @@ export class EscrowController {
   @ApiResponse({ status: 404, description: 'Escrow not found' })
   async release(@Param('id') id: string) {
     const escrow = await this.escrowService.release(id);
-    await this.reputationService.recordEscrowCompleted(escrow);
     return escrow;
   }
 
@@ -328,25 +321,6 @@ export class EscrowController {
   async raiseDispute(@Param('id') id: string, @Body() dto: RaiseDisputeDto) {
     const validated = RaiseDisputeSchema.parse(dto);
     const escrow = await this.escrowService.raiseDispute(id, validated.reason);
-
-    // Dispatch webhook event
-    await this.webhookService.dispatch(WebhookEvent.DisputeRaised, {
-      escrowId: escrow.id,
-      depositor: escrow.depositor,
-      beneficiary: escrow.beneficiary,
-      amountXLM: escrow.amountXLM,
-      reason: escrow.disputeReason,
-      disputedAt: escrow.disputedAt,
-    });
-
-    // Send Discord notification
-    await this.discordService.notifyDisputeNeedsJurors({
-      escrowId: escrow.id,
-      depositor: escrow.depositor,
-      beneficiary: escrow.beneficiary,
-      amountXLM: escrow.amountXLM,
-      reason: escrow.disputeReason,
-    });
 
     return escrow;
   }

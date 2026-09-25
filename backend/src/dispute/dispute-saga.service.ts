@@ -20,9 +20,6 @@ import {
 import { EscalateDisputeDto, AssignJurorsDto, CastVoteDto, ExecutePayoutDto } from './dispute.dto';
 import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
-import { DiscordService } from '../webhook/discord.service';
-import { ReputationService } from '../reputation/reputation.service';
-import { ReputationOutcome } from '../reputation/reputation.types';
 import { NotificationService } from '../notification/notification.service';
 
 /** Webhook event names emitted by the saga */
@@ -80,8 +77,6 @@ export class DisputeSagaService implements OnModuleInit {
   constructor(
     private readonly escrowService: EscrowService,
     private readonly webhookService: WebhookService,
-    private readonly discordService: DiscordService,
-    private readonly reputationService: ReputationService,
     private readonly notificationService: NotificationService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly metrics: MetricsService,
@@ -186,13 +181,6 @@ export class DisputeSagaService implements OnModuleInit {
       await this.createSaga(saga);
 
       await this.webhookService.dispatch(SAGA_EVENTS.ESCALATED, { sagaId, escrowId });
-      await this.discordService.notifyDisputeNeedsJurors({
-        escrowId,
-        depositor: escrow.depositor,
-        beneficiary: escrow.beneficiary,
-        amountXLM: escrow.amountXLM,
-        reason: dto.reason,
-      });
       await this.notificationService.notifyDisputeEscalated({
         escrowId,
         disputeId: sagaId,
@@ -436,7 +424,6 @@ export class DisputeSagaService implements OnModuleInit {
 
     try {
       await this.applyPayout(saga, dto.splitPercentage);
-      await this.recordReputationOutcome(saga);
 
       saga.payoutTxHash = `payout-tx-${sagaId}-${Date.now()}`;
       this.recordStepComplete(saga, DisputeStep.PAYOUT);
@@ -471,19 +458,6 @@ export class DisputeSagaService implements OnModuleInit {
       await this.compensatePayout(saga, error);
       throw error;
     }
-  }
-
-  /** Feeds the verdict into the reputation engine so trust scores reflect who was vindicated. */
-  private async recordReputationOutcome(saga: DisputeSaga): Promise<void> {
-    const escrow = await this.escrowService.findById(saga.escrowId);
-    if (!escrow || !saga.verdict) return;
-
-    const outcome = REPUTATION_OUTCOME_BY_VERDICT[saga.verdict];
-    await this.reputationService.recordDisputeResolved(
-      escrow,
-      outcome.depositor,
-      outcome.beneficiary,
-    );
   }
 
   /** Apply the payout by releasing or marking the escrow based on the verdict */

@@ -6,11 +6,12 @@ import { OutboxController } from './outbox.controller';
 import { OutboxPublisherService } from './outbox-publisher.service';
 import { OutboxRelayService } from './outbox-relay.service';
 import { OutboxService } from './outbox.service';
+import { OutboxEventDispatcher } from './outbox-event-dispatcher.service';
 
 @Module({
   imports: [RedisModule, MonitoringModule, WebhookModule],
   controllers: [OutboxController],
-  providers: [OutboxService, OutboxPublisherService, OutboxRelayService],
-  exports: [OutboxService],
+  providers: [OutboxService, OutboxPublisherService, OutboxRelayService, OutboxEventDispatcher],
+  exports: [OutboxService, OutboxEventDispatcher],
 })
 export class OutboxModule {}
