@@ -2,12 +2,9 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { rpc as SorobanRpc, xdr } from '@stellar/stellar-sdk';
 import { LedgerCursorService, LedgerCheckpoint } from './ledger-cursor.service';
 import { EventProcessorService, SorobanEvent, ProcessedEvent } from './event-processor.service';
-import { STELLAR_CONFIG } from '../stellar/stellar.config';
+import { getStellarConfig } from '../stellar/stellar.config';
 import { mapWithConcurrency } from '../common/concurrency';
 import { config } from '../config/env.config';
-
-/** How many independent escrows to process in parallel per ingestion batch (#238). */
-const EVENT_PROCESSING_CONCURRENCY = config.EVENT_PROCESSING_CONCURRENCY;
 
 @Injectable()
 export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
@@ -17,6 +14,8 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
   private isRunning = false;
   private readonly POLL_INTERVAL_MS = 5000;
   private readonly MAX_LEDGER_RANGE = 100;
+  /** How many independent escrows to process in parallel per ingestion batch (#238). */
+  private readonly eventProcessingConcurrency = config.EVENT_PROCESSING_CONCURRENCY;
 
   constructor(
     private readonly ledgerCursorService: LedgerCursorService,
@@ -24,7 +23,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    this.rpcServer = new SorobanRpc.Server(STELLAR_CONFIG.sorobanRpcUrl);
+    this.rpcServer = new SorobanRpc.Server(getStellarConfig().sorobanRpcUrl);
     this.logger.log('EventIngestionService initialized');
   }
 
@@ -41,7 +40,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     this.isRunning = true;
     this.logger.log('Starting event polling');
 
-    const targetContract = contractId || STELLAR_CONFIG.contractId;
+    const targetContract = contractId || getStellarConfig().contractId;
 
     this.pollingInterval = setInterval(async () => {
       try {
@@ -159,7 +158,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     // Phase 2 — one group per escrow id, groups in parallel, sequential within.
     const groupResults = await mapWithConcurrency(
       [...keyed.values()],
-      EVENT_PROCESSING_CONCURRENCY,
+      this.eventProcessingConcurrency,
       async group => {
         const groupOut: ProcessedEvent[] = [];
         for (const event of group) {
@@ -317,7 +316,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     checkpoint?: LedgerCheckpoint;
     failedEvents: number;
   }> {
-    const checkpoint = await this.ledgerCursorService.getCursor(STELLAR_CONFIG.contractId);
+    const checkpoint = await this.ledgerCursorService.getCursor(getStellarConfig().contractId);
     const failedEvents = await this.eventProcessorService.getFailedEvents();
 
     return {

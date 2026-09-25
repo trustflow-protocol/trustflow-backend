@@ -47,25 +47,18 @@ export class MigrationRunnerService {
     private readonly store: MigrationStateStore,
   ) {}
 
-  findById(runId: string): MigrationRun {
-    const run = this.store.findById(runId);
+  async findById(runId: string): Promise<MigrationRun> {
+    const run = await this.store.findById(runId);
     if (!run) throw new NotFoundException(`Migration run ${runId} not found`);
     return run;
   }
 
-  findAll(): MigrationRun[] {
+  async findAll(): Promise<MigrationRun[]> {
     return this.store.findAll();
   }
 
   async run(name: string, options: RunMigrationOptions = {}): Promise<MigrationRun> {
     const migration = this.registry.get(name);
-
-    const existing = this.store.findActiveByName(name);
-    if (existing && IN_PROGRESS_STATUSES.has(existing.status)) {
-      throw new ConflictException(
-        `Migration "${name}" already has an active run (${existing.runId}, status ${existing.status})`,
-      );
-    }
 
     const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
     const batchDelayMs = options.batchDelayMs ?? 0;
@@ -82,8 +75,22 @@ export class MigrationRunnerService {
       updatedAt: now,
     };
 
-    this.store.create(run);
-    this.store.markActive(name, run.runId);
+    // Must be this function's first `await` — see claimAndCreate()'s doc comment for why a
+    // separate findActiveByName()-then-create() pair would race two overlapping calls.
+    const claim = await this.store.claimAndCreate(run);
+    if (!claim.claimed) {
+      const existing = claim.activeRunId ? await this.store.findById(claim.activeRunId) : undefined;
+      if (existing && IN_PROGRESS_STATUSES.has(existing.status)) {
+        throw new ConflictException(
+          `Migration "${name}" already has an active run (${existing.runId}, status ${existing.status})`,
+        );
+      }
+      // The active marker pointed at a run that's missing or no longer in progress (every
+      // terminal path clears it, so this is a stale-data edge case, not the normal flow) —
+      // reclaim the slot and create the record now rather than leaving a dangling pointer behind.
+      await this.store.markActive(name, run.runId);
+      await this.store.create(run);
+    }
 
     try {
       await this.runExpand(migration, run);
@@ -92,8 +99,8 @@ export class MigrationRunnerService {
 
       run.status = MigrationStatus.COMPLETED;
       run.completedAt = new Date().toISOString();
-      this.store.save(run);
-      this.store.clearActive(name);
+      await this.store.save(run);
+      await this.store.clearActive(name);
       this.logger.log(`Migration ${name} (${run.runId}) completed`);
       return run;
     } catch (error) {
@@ -104,7 +111,7 @@ export class MigrationRunnerService {
 
   /** Manually rolls back a run that is no longer in progress (completed or failed). */
   async rollback(runId: string): Promise<MigrationRun> {
-    const run = this.findById(runId);
+    const run = await this.findById(runId);
     if (IN_PROGRESS_STATUSES.has(run.status)) {
       throw new ConflictException(`Migration run ${runId} is still in progress (${run.status})`);
     }
@@ -122,12 +129,12 @@ export class MigrationRunnerService {
   private async runExpand(migration: SchemaMigration, run: MigrationRun): Promise<void> {
     run.status = MigrationStatus.EXPANDING;
     this.recordPhaseStart(run, MigrationPhase.EXPAND);
-    this.store.save(run);
+    await this.store.save(run);
 
     await migration.expand();
 
     this.recordPhaseComplete(run, MigrationPhase.EXPAND);
-    this.store.save(run);
+    await this.store.save(run);
     this.logger.log(`Migration ${run.migrationName}: expand complete`);
   }
 
@@ -141,7 +148,7 @@ export class MigrationRunnerService {
     this.recordPhaseStart(run, MigrationPhase.BACKFILL);
     run.progress.totalRows = await migration.countPending();
     run.progress.startedAt = new Date().toISOString();
-    this.store.save(run);
+    await this.store.save(run);
 
     let cursor: string | undefined;
     let done = run.progress.totalRows === 0;
@@ -151,7 +158,7 @@ export class MigrationRunnerService {
       run.progress.processedRows += result.processed;
       run.progress.failedRows += result.failed;
       run.progress.cursor = result.nextCursor;
-      this.store.save(run);
+      await this.store.save(run);
 
       cursor = result.nextCursor;
       done = result.done;
@@ -167,7 +174,7 @@ export class MigrationRunnerService {
 
     run.progress.completedAt = new Date().toISOString();
     this.recordPhaseComplete(run, MigrationPhase.BACKFILL);
-    this.store.save(run);
+    await this.store.save(run);
     this.logger.log(
       `Migration ${run.migrationName}: backfill complete ` +
         `(${run.progress.processedRows}/${run.progress.totalRows} rows)`,
@@ -177,12 +184,12 @@ export class MigrationRunnerService {
   private async runContract(migration: SchemaMigration, run: MigrationRun): Promise<void> {
     run.status = MigrationStatus.CONTRACTING;
     this.recordPhaseStart(run, MigrationPhase.CONTRACT);
-    this.store.save(run);
+    await this.store.save(run);
 
     await migration.contract();
 
     this.recordPhaseComplete(run, MigrationPhase.CONTRACT);
-    this.store.save(run);
+    await this.store.save(run);
     this.logger.log(`Migration ${run.migrationName}: contract complete`);
   }
 
@@ -206,7 +213,7 @@ export class MigrationRunnerService {
     const contractAttempted = run.stepHistory.some(s => s.phase === MigrationPhase.CONTRACT);
     const expandAttempted = run.stepHistory.some(s => s.phase === MigrationPhase.EXPAND);
     this.recordPhaseStart(run, MigrationPhase.ROLLBACK);
-    this.store.save(run);
+    await this.store.save(run);
 
     try {
       if (contractAttempted) await migration.rollbackContract();
@@ -214,16 +221,16 @@ export class MigrationRunnerService {
 
       this.recordPhaseComplete(run, MigrationPhase.ROLLBACK);
       run.status = MigrationStatus.ROLLED_BACK;
-      this.store.clearActive(run.migrationName);
-      this.store.save(run);
+      await this.store.clearActive(run.migrationName);
+      await this.store.save(run);
     } catch (compensationError) {
       const compensationReason =
         compensationError instanceof Error ? compensationError.message : String(compensationError);
       this.recordPhaseFailed(run, compensationReason);
       run.status = MigrationStatus.FAILED;
       run.failedAt = new Date().toISOString();
-      this.store.clearActive(run.migrationName);
-      this.store.save(run);
+      await this.store.clearActive(run.migrationName);
+      await this.store.save(run);
       this.logger.error(
         `Migration ${run.migrationName} (${run.runId}): rollback itself failed`,
         compensationError instanceof Error ? compensationError.stack : String(compensationError),

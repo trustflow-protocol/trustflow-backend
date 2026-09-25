@@ -7,6 +7,8 @@ import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
 import { ReputationService } from '../reputation/reputation.service';
 import { NotificationService } from '../notification/notification.service';
+import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { MetricsService } from '../monitoring/metrics.service';
 
 // ─── Shared mock factories ────────────────────────────────────────────────────
 
@@ -44,6 +46,12 @@ function buildMocks() {
       (escrow as any).splitPercentage = splitPercentage;
       return escrow;
     }),
+    correctStatus: jest
+      .fn()
+      .mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        Object.assign(escrow, patch);
+        return escrow;
+      }),
   };
 
   const webhookService = { dispatch: jest.fn().mockResolvedValue(undefined) };
@@ -105,6 +113,8 @@ describe('DisputeSagaService', () => {
         { provide: DiscordService, useValue: discordService },
         { provide: ReputationService, useValue: reputationService },
         { provide: NotificationService, useValue: notificationService },
+        { provide: REDIS_CLIENT, useValue: null },
+        { provide: MetricsService, useValue: { increment: jest.fn() } },
       ],
     }).compile();
 
@@ -132,13 +142,13 @@ describe('DisputeSagaService', () => {
       const firstSaga = await service.escalate('esc-001', ESCALATE_DTO);
       // Simulate completion
       firstSaga.currentStep = DisputeStep.COMPLETED;
-      
+
       const secondSaga = await service.escalate('esc-001', ESCALATE_DTO);
       expect(secondSaga.sagaId).not.toBe(firstSaga.sagaId);
       expect(secondSaga.escrowId).toBe('esc-001');
-      
+
       // Verify old saga is still tracked
-      const retrievedFirst = service.findById(firstSaga.sagaId);
+      const retrievedFirst = await service.findById(firstSaga.sagaId);
       expect(retrievedFirst.currentStep).toBe(DisputeStep.COMPLETED);
     });
 
@@ -146,7 +156,7 @@ describe('DisputeSagaService', () => {
       const firstSaga = await service.escalate('esc-001', ESCALATE_DTO);
       // Simulate failure
       firstSaga.currentStep = DisputeStep.FAILED;
-      
+
       const secondSaga = await service.escalate('esc-001', ESCALATE_DTO);
       expect(secondSaga.sagaId).not.toBe(firstSaga.sagaId);
       expect(secondSaga.escrowId).toBe('esc-001');
@@ -206,7 +216,8 @@ describe('DisputeSagaService', () => {
       escrowService.raiseDispute.mockRejectedValueOnce(new Error('on-chain error'));
       await expect(service.escalate('esc-001', ESCALATE_DTO)).rejects.toThrow('on-chain error');
       // No saga stored — compensation cleaned up
-      expect(service.findAll().filter(s => s.currentStep !== DisputeStep.FAILED).length).toBe(0);
+      const all = await service.findAll();
+      expect(all.filter(s => s.currentStep !== DisputeStep.FAILED).length).toBe(0);
     });
   });
 
@@ -427,7 +438,7 @@ describe('DisputeSagaService', () => {
 
       await expect(service.executePayout(sagaId, {})).rejects.toThrow('on-chain payout failed');
 
-      const failed = service.findById(sagaId);
+      const failed = await service.findById(sagaId);
       expect(failed.currentStep).toBe(DisputeStep.FAILED);
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         'dispute.saga_failed',
@@ -439,19 +450,19 @@ describe('DisputeSagaService', () => {
   // ─── findById / findByEscrowId ────────────────────────────────────
 
   describe('findById()', () => {
-    it('throws NotFoundException for unknown sagaId', () => {
-      expect(() => service.findById('saga-unknown')).toThrow(NotFoundException);
+    it('throws NotFoundException for unknown sagaId', async () => {
+      await expect(service.findById('saga-unknown')).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('findByEscrowId()', () => {
-    it('returns undefined when no saga exists for escrow', () => {
-      expect(service.findByEscrowId('esc-999')).toBeUndefined();
+    it('returns undefined when no saga exists for escrow', async () => {
+      expect(await service.findByEscrowId('esc-999')).toBeUndefined();
     });
 
     it('returns the saga when one exists', async () => {
       const saga = await service.escalate('esc-001', ESCALATE_DTO);
-      expect(service.findByEscrowId('esc-001')?.sagaId).toBe(saga.sagaId);
+      expect((await service.findByEscrowId('esc-001'))?.sagaId).toBe(saga.sagaId);
     });
   });
 });

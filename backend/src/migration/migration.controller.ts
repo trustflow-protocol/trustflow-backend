@@ -17,10 +17,11 @@ import {
   MigrationDefinitionResponseDto,
 } from './migration.dto';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../admin/admin.guard';
 
 @ApiTags('Schema Migrations')
 @ApiBearerAuth('JWT-auth')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('migrations')
 export class MigrationController {
   constructor(
@@ -31,6 +32,7 @@ export class MigrationController {
   @Get()
   @ApiOperation({ summary: 'List registered schema migrations' })
   @ApiResponse({ status: 200, type: [MigrationDefinitionResponseDto] })
+  @ApiResponse({ status: 403, description: 'Caller is authenticated but not an admin address' })
   listDefinitions() {
     return this.registry.list();
   }
@@ -38,6 +40,7 @@ export class MigrationController {
   @Get('runs')
   @ApiOperation({ summary: 'List all migration runs' })
   @ApiResponse({ status: 200, type: [MigrationRunResponseDto] })
+  @ApiResponse({ status: 403, description: 'Caller is authenticated but not an admin address' })
   listRuns() {
     return this.runner.findAll();
   }
@@ -46,6 +49,7 @@ export class MigrationController {
   @ApiOperation({ summary: 'Get a migration run by ID, including live backfill progress' })
   @ApiParam({ name: 'runId', example: 'mig-1234567890-abcd1234' })
   @ApiResponse({ status: 200, type: MigrationRunResponseDto })
+  @ApiResponse({ status: 403, description: 'Caller is authenticated but not an admin address' })
   @ApiResponse({ status: 404, description: 'Run not found' })
   getRun(@Param('runId') runId: string) {
     return this.runner.findById(runId);
@@ -61,6 +65,7 @@ export class MigrationController {
   })
   @ApiParam({ name: 'name', example: 'gigs-add-priority-column' })
   @ApiResponse({ status: 201, type: MigrationRunResponseDto })
+  @ApiResponse({ status: 403, description: 'Caller is authenticated but not an admin address' })
   @ApiResponse({ status: 404, description: 'Migration not registered' })
   @ApiResponse({ status: 409, description: 'Migration already has an active run' })
   run(@Param('name') name: string, @Body() dto: RunMigrationDto) {
@@ -75,6 +80,7 @@ export class MigrationController {
   @ApiParam({ name: 'runId', example: 'mig-1234567890-abcd1234' })
   @ApiResponse({ status: 200, type: MigrationRunResponseDto })
   @ApiResponse({ status: 400, description: 'Run already rolled back' })
+  @ApiResponse({ status: 403, description: 'Caller is authenticated but not an admin address' })
   @ApiResponse({ status: 409, description: 'Run still in progress' })
   rollback(@Param('runId') runId: string) {
     return this.runner.rollback(runId);

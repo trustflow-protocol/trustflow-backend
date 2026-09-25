@@ -3,6 +3,11 @@ import { EventIngestionService } from './event-ingestion.service';
 import { LedgerCursorService } from './ledger-cursor.service';
 import { EventProcessorService } from './event-processor.service';
 import { EscrowService } from '../escrow/escrow.service';
+import { validateEnv } from '../config/env.config';
+
+// EventIngestionService reads config.EVENT_PROCESSING_CONCURRENCY in its constructor,
+// which requires validateEnv() to have run first — normally done once in main.ts.
+validateEnv();
 
 describe('EventIngestionService', () => {
   let service: EventIngestionService;
@@ -223,14 +228,12 @@ describe('EventIngestionService.processEventBatch — per-escrow ordering (#238)
 
   it('processes same-escrow events in order and independent escrows in parallel', async () => {
     const order: string[] = [];
-    jest
-      .spyOn(eventProcessorService, 'processEvent')
-      .mockImplementation(async event => {
-        order.push(event.id);
-        // Make the FIRST call slow so a naive parallel-all would reorder.
-        if (event.id === 'A-fund') await new Promise(r => setTimeout(r, 30));
-        return { eventId: event.id, ledger: 1, success: true, processedAt: new Date() };
-      });
+    jest.spyOn(eventProcessorService, 'processEvent').mockImplementation(async event => {
+      order.push(event.id);
+      // Make the FIRST call slow so a naive parallel-all would reorder.
+      if (event.id === 'A-fund') await new Promise(r => setTimeout(r, 30));
+      return { eventId: event.id, ledger: 1, success: true, processedAt: new Date() };
+    });
 
     const events = [
       mkEvent('A-create', 'escrow_created'),

@@ -6,6 +6,7 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBearerAuth } from '@nestjs/swagger';
@@ -46,8 +47,11 @@ export class DisputeSagaController {
   @ApiOperation({ summary: 'Get the active dispute saga for an escrow' })
   @ApiParam({ name: 'escrowId', example: 'esc-1234567890' })
   @ApiResponse({ status: 200, type: DisputeSagaResponseDto })
+  @ApiResponse({ status: 404, description: 'No active dispute saga for this escrow' })
   findByEscrow(@Param('escrowId') escrowId: string) {
-    return this.sagaService.findByEscrowId(escrowId);
+    const saga = this.sagaService.findByEscrowId(escrowId);
+    if (!saga) throw new NotFoundException(`No active dispute saga for escrow ${escrowId}`);
+    return saga;
   }
 
   @Post('escrow/:escrowId/escalate')

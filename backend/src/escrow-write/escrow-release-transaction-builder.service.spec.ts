@@ -1,6 +1,10 @@
 import { Account, Keypair, Transaction } from '@stellar/stellar-sdk';
 import { EscrowReleaseTransactionBuilderService } from './escrow-release-transaction-builder.service';
-import { STELLAR_CONFIG } from '../stellar/stellar.config';
+import { validateEnv } from '../config/env.config';
+import { getStellarConfig } from '../stellar/stellar.config';
+
+// getStellarConfig() reads validated env config — normally done once in main.ts.
+validateEnv();
 
 const TEST_CONTRACT_ID = 'CBNXX7I4MGHZO3YAKXJIJNR5TTNSP6R2JAXMA44FS47JSTYAW7LIR4CS';
 
@@ -21,7 +25,7 @@ describe('EscrowReleaseTransactionBuilderService', () => {
       service = new EscrowReleaseTransactionBuilderService(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         rpcServer as any,
-        { ...STELLAR_CONFIG, contractId: '' },
+        { ...getStellarConfig(), contractId: '' },
       );
     });
 
@@ -46,7 +50,7 @@ describe('EscrowReleaseTransactionBuilderService', () => {
       service = new EscrowReleaseTransactionBuilderService(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         rpcServer as any,
-        { ...STELLAR_CONFIG, contractId: TEST_CONTRACT_ID },
+        { ...getStellarConfig(), contractId: TEST_CONTRACT_ID },
       );
     });
 
@@ -73,8 +77,8 @@ describe('EscrowReleaseTransactionBuilderService', () => {
 
       expect(result).toEqual({
         xdr: expect.any(String),
-        network: STELLAR_CONFIG.network,
-        networkPassphrase: STELLAR_CONFIG.networkPassphrase,
+        network: getStellarConfig().network,
+        networkPassphrase: getStellarConfig().networkPassphrase,
         contractId: TEST_CONTRACT_ID,
         sourceAccount: sourceKeypair.publicKey(),
       });

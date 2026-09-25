@@ -10,9 +10,15 @@ import { config } from '../config/env.config';
 @Module({
   imports: [
     PassportModule,
-    JwtModule.register({
-      secret: config.JWT_SECRET,
-      signOptions: { expiresIn: '24h' },
+    // registerAsync's useFactory is evaluated when Nest instantiates this module's
+    // providers (during app bootstrap), not when this file is imported — unlike
+    // register(), which would read config.JWT_SECRET as soon as the class is
+    // declared, before validateEnv() has necessarily run (see #428).
+    JwtModule.registerAsync({
+      useFactory: () => ({
+        secret: config.JWT_SECRET,
+        signOptions: { expiresIn: '24h' },
+      }),
     }),
   ],
   controllers: [AuthController],

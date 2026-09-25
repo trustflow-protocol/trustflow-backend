@@ -8,6 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
 import { Redis } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../redis/redis.module';
@@ -16,9 +17,6 @@ import { config } from '../../config/env.config';
 
 const DEFAULT_POINTS = 100;
 const DEFAULT_DURATION = 60;
-const DEFAULT_ABUSE_WINDOW = 300;
-const DEFAULT_ABUSE_THRESHOLD = 5;
-const DEFAULT_LOCKOUT_DURATION = 900;
 
 /** Minimal shape of the HTTP request object that rate-limiting reads from. */
 interface RateLimitRequest {
@@ -29,16 +27,7 @@ interface RateLimitRequest {
   headers?: Record<string, string | string[] | undefined>;
   connection?: { remoteAddress?: string };
   user?: { address?: string; sub?: string };
-  body?: Record<string, string | undefined>;
-  query?: Record<string, string | undefined>;
-  params?: Record<string, string | undefined>;
 }
-
-const DEFAULT_POINTS = 100;
-const DEFAULT_DURATION = 60;
-const DEFAULT_ABUSE_WINDOW = 300;
-const DEFAULT_ABUSE_THRESHOLD = 5;
-const DEFAULT_LOCKOUT_DURATION = 900;
 
 const TOKEN_BUCKET_SCRIPT = `
 local key = KEYS[1]
@@ -108,6 +97,10 @@ type RateLimitDecision = {
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   private readonly logger = new Logger(RateLimitGuard.name);
+  // Not DI-managed: verify() takes the secret per call, so no module wiring is needed,
+  // and this guard runs as a global APP_GUARD before route-level JwtAuthGuard populates
+  // request.user, so it must be able to verify the bearer token itself.
+  private readonly jwtService = new JwtService();
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
@@ -229,7 +222,7 @@ export class RateLimitGuard implements CanActivate {
     const ip = this.normalizeIdentity(
       request.ip || forwarded || request.connection?.remoteAddress || 'unknown',
     );
-    const wallet = this.extractWallet(request);
+    const wallet = this.extractVerifiedWallet(request);
     const identities: RateLimitIdentity[] = [{ scope: 'ip', value: ip }];
 
     if (wallet) {
@@ -239,17 +232,43 @@ export class RateLimitGuard implements CanActivate {
     return identities;
   }
 
-  private extractWallet(request: RateLimitRequest): string | undefined {
-    return (
-      request.user?.address ||
-      request.user?.sub ||
-      request.body?.address ||
-      request.body?.walletAddress ||
-      request.query?.address ||
-      request.query?.walletAddress ||
-      request.params?.address ||
-      request.params?.walletAddress
-    );
+  /**
+   * Only a verified wallet identity may select a wallet-scoped bucket. `request.user` is
+   * set exclusively by an already-verified auth strategy — but this guard is registered
+   * globally and therefore runs before route-level guards like JwtAuthGuard, so
+   * `request.user` is not populated yet on authenticated routes. Verify the bearer token
+   * here instead of trusting it. Caller-controlled body/query/param fields are never
+   * consulted: an unverified value would let a client rotate identities to dodge limits.
+   */
+  private extractVerifiedWallet(request: RateLimitRequest): string | undefined {
+    const verifiedAddress = request.user?.address || request.user?.sub;
+    if (verifiedAddress) {
+      return verifiedAddress;
+    }
+
+    const token = this.extractBearerToken(request);
+    if (!token) {
+      return undefined;
+    }
+
+    try {
+      const payload = this.jwtService.verify<{ address?: string; sub?: string }>(token, {
+        secret: config.JWT_SECRET,
+      });
+      return payload.address || payload.sub;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private extractBearerToken(request: RateLimitRequest): string | undefined {
+    const header = request.headers?.authorization;
+    const value = Array.isArray(header) ? header[0] : header;
+    if (!value || !value.startsWith('Bearer ')) {
+      return undefined;
+    }
+    const token = value.slice('Bearer '.length).trim();
+    return token || undefined;
   }
 
   private getRoute(request: RateLimitRequest): string {

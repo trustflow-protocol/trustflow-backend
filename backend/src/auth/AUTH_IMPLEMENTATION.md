@@ -81,8 +81,15 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ## Security Features
 
-1. **Challenge Expiration**: Challenges expire after 5 minutes to prevent replay attacks
-2. **One-Time Use**: Each challenge can only be used once
+1. **Challenge Expiration**: Challenges expire after 60 seconds to prevent replay attacks
+2. **One-Time Use**: Each challenge can only be used once — `NonceStoreService.consume()` atomically
+   reads and deletes the pending challenge (`GETDEL`), so a second `/auth/verify` call for the same
+   address always fails with "Challenge not found, expired, or already consumed", regardless of
+   whether the first call's signature was valid. **A failed signature still burns the challenge**:
+   since `consume()` runs before signature verification, an attacker cannot brute-force signatures
+   against a single outstanding challenge — each attempt requires a fresh `GET /auth/challenge`.
+   `markNonceUsed()` additionally marks the nonce itself used (atomic `SET NX`) immediately after a
+   *valid* signature, as defense in depth against the nonce being reused across a distinct challenge.
 3. **Stellar Signature Verification**: Uses @stellar/stellar-sdk for cryptographic verification
 4. **JWT Expiration**: Tokens expire after 24 hours
 5. **Address Validation**: Validates Stellar public key format (G-prefixed, 56 characters)
@@ -115,7 +122,7 @@ JWT_SECRET=your-secret-key-here  # Secret for JWT signing
 - **Algorithm**: HS256
 
 ### Challenge Configuration
-- **Expiration**: 5 minutes
+- **Expiration**: 60 seconds
 - **Nonce Length**: 32 bytes (64 hex characters)
 
 ## Error Handling
@@ -224,11 +231,11 @@ localStorage.setItem('jwt', token);
 - Updated JWT token format (now uses standard JWT instead of custom format)
 
 ### Database Changes
-- None - uses in-memory challenge storage (consider Redis for production)
+- None - challenges are stored in Redis (`NonceStoreService`, backed by `REDIS_CLIENT`) rather than a SQL database
 
 ## Production Considerations
 
-1. **Challenge Storage**: Use Redis or similar for distributed challenge storage
+1. **Challenge Storage**: Already backed by Redis (`NonceStoreService`) for distributed, multi-node deployments
 2. **JWT Secret**: Use a strong, randomly generated secret
 3. **HTTPS**: Always use HTTPS in production
 4. **Rate Limiting**: Implement rate limiting to prevent abuse

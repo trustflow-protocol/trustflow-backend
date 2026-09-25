@@ -48,12 +48,13 @@ if [ ! -d "node_modules" ]; then
     echo ""
 fi
 
-# Run all CI checks
+# Run all CI checks, in the same order as .github/workflows/backend-ci.yml
 run_check "Lint Check" "npm run lint:check"
 run_check "Format Check" "npm run format:check"
+run_check "TypeScript Type Check" "npx tsc --noEmit"
 run_check "Unit Tests" "npm run test:ci"
 run_check "TypeScript Build" "npm run build"
-run_check "TypeScript Type Check" "npx tsc --noEmit"
+run_check "Dependency Vulnerability Scan" "npm audit --audit-level=high"
 
 # Summary
 echo "================================"

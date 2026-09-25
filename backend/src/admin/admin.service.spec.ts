@@ -86,14 +86,14 @@ describe('AdminService', () => {
   });
 
   describe('getDisputeAnalytics', () => {
-    it('tallies by step and only counts a verdict once one is reached', () => {
-      mockDisputeSagaService.findAll.mockReturnValue([
+    it('tallies by step and only counts a verdict once one is reached', async () => {
+      mockDisputeSagaService.findAll.mockResolvedValue([
         { currentStep: DisputeStep.VOTING, verdict: undefined },
         { currentStep: DisputeStep.COMPLETED, verdict: DisputeVerdict.BENEFICIARY_WINS },
         { currentStep: DisputeStep.COMPLETED, verdict: DisputeVerdict.BENEFICIARY_WINS },
       ]);
 
-      expect(service.getDisputeAnalytics()).toEqual({
+      expect(await service.getDisputeAnalytics()).toEqual({
         total: 3,
         byStep: { [DisputeStep.VOTING]: 1, [DisputeStep.COMPLETED]: 2 },
         byVerdict: { [DisputeVerdict.BENEFICIARY_WINS]: 2 },
@@ -102,11 +102,11 @@ describe('AdminService', () => {
   });
 
   describe('getReputationAnalytics', () => {
-    it('delegates to the reputation service with the overview top-N limit', () => {
-      mockReputationService.getTrackedAddressCount.mockReturnValue(42);
-      mockReputationService.getLeaderboard.mockReturnValue([{ address: 'GABC', score: 10 }]);
+    it('delegates to the reputation service with the overview top-N limit', async () => {
+      mockReputationService.getTrackedAddressCount.mockResolvedValue(42);
+      mockReputationService.getLeaderboard.mockResolvedValue([{ address: 'GABC', score: 10 }]);
 
-      const result = service.getReputationAnalytics();
+      const result = await service.getReputationAnalytics();
 
       expect(mockReputationService.getLeaderboard).toHaveBeenCalledWith(5);
       expect(result).toEqual({
@@ -117,13 +117,13 @@ describe('AdminService', () => {
   });
 
   describe('getMigrationAnalytics', () => {
-    it('tallies runs by status', () => {
-      mockMigrationRunnerService.findAll.mockReturnValue([
+    it('tallies runs by status', async () => {
+      mockMigrationRunnerService.findAll.mockResolvedValue([
         { status: MigrationStatus.COMPLETED },
         { status: MigrationStatus.FAILED },
       ]);
 
-      expect(service.getMigrationAnalytics()).toEqual({
+      expect(await service.getMigrationAnalytics()).toEqual({
         total: 2,
         byStatus: { [MigrationStatus.COMPLETED]: 1, [MigrationStatus.FAILED]: 1 },
       });
@@ -131,13 +131,13 @@ describe('AdminService', () => {
   });
 
   describe('getReconciliationAnalytics', () => {
-    it('sums drift counts and reports the most recent completion time', () => {
-      mockReconciliationService.findAll.mockReturnValue([
+    it('sums drift counts and reports the most recent completion time', async () => {
+      mockReconciliationService.findAll.mockResolvedValue([
         { completedAt: '2026-01-01T00:00:00.000Z', driftCount: 2, repairedCount: 2 },
         { completedAt: '2026-02-01T00:00:00.000Z', driftCount: 1, repairedCount: 0 },
       ]);
 
-      expect(service.getReconciliationAnalytics()).toEqual({
+      expect(await service.getReconciliationAnalytics()).toEqual({
         totalRuns: 2,
         totalDriftsDetected: 3,
         totalDriftsRepaired: 2,
@@ -145,9 +145,9 @@ describe('AdminService', () => {
       });
     });
 
-    it('reports undefined lastRunAt when no runs exist', () => {
-      mockReconciliationService.findAll.mockReturnValue([]);
-      expect(service.getReconciliationAnalytics().lastRunAt).toBeUndefined();
+    it('reports undefined lastRunAt when no runs exist', async () => {
+      mockReconciliationService.findAll.mockResolvedValue([]);
+      expect((await service.getReconciliationAnalytics()).lastRunAt).toBeUndefined();
     });
   });
 

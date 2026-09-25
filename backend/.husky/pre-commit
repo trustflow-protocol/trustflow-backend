@@ -1,1 +1,1 @@
-npx --no-install lint-staged --cwd backend
+cd backend && npx --no-install lint-staged

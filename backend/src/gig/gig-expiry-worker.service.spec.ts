@@ -160,9 +160,9 @@ describe('GigExpiryWorkerService — concurrency & non-overlap (#236)', () => {
     const gigs = Array.from({ length: 10 }, (_, i) => makeGig(`g${i}`, GigStatus.OPEN));
     return {
       findExpirable: jest.fn().mockResolvedValue(gigs),
-      expire: jest.fn().mockImplementation(
-        () => new Promise(r => setTimeout(() => r(true), perGigMs)),
-      ),
+      expire: jest
+        .fn()
+        .mockImplementation(() => new Promise(r => setTimeout(() => r(true), perGigMs))),
     };
   }
 
@@ -193,7 +193,10 @@ describe('GigExpiryWorkerService — concurrency & non-overlap (#236)', () => {
     };
     // First sweep hangs until we release it.
     gigService.findExpirable.mockImplementationOnce(
-      () => new Promise(res => { resolveSweep = () => res([]); }),
+      () =>
+        new Promise(res => {
+          resolveSweep = () => res([]);
+        }),
     );
 
     const lock = fakeLock();

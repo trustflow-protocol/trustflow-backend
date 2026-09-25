@@ -1,6 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
 import { RpcFailoverService } from './rpc-failover.service';
+import { validateEnv } from '../config/env.config';
+
+// RpcFailoverService falls back to getStellarConfig() when STELLAR_HORIZON_ENDPOINTS /
+// SOROBAN_RPC_ENDPOINTS are unset (see "single endpoint configuration" below), which
+// requires validateEnv() to have already run — normally done once in main.ts.
+validateEnv();
 
 // Mock environment variables before importing the service
 const mockHorizonEndpoints = 'https://horizon-testnet.stellar.org,https://testnet.stellar.org';

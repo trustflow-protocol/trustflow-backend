@@ -180,9 +180,9 @@ describe('IpfsPinningService', () => {
     it('lists and retrieves pin records', async () => {
       await service.pinContent({ content: CONTENT });
 
-      expect(service.findAll()).toHaveLength(1);
-      expect(service.findByCid(CID).cid).toBe(CID);
-      expect(() => service.findByCid('bafkreiunknown')).toThrow();
+      expect(await service.findAll()).toHaveLength(1);
+      expect((await service.findByCid(CID)).cid).toBe(CID);
+      await expect(service.findByCid('bafkreiunknown')).rejects.toThrow();
     });
   });
 });

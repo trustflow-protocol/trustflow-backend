@@ -1,3 +1,4 @@
+import './config/load-dotenv.bootstrap';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe, Logger } from '@nestjs/common';
@@ -119,7 +120,7 @@ async function bootstrap() {
   );
 
   // Swagger configuration
-  const config = new DocumentBuilder()
+  const swaggerConfig = new DocumentBuilder()
     .setTitle('TrustFlow API')
     .setDescription(
       'The TrustFlow Backend API provides off-chain services for the TrustFlow gig economy platform. ' +
@@ -132,8 +133,10 @@ async function bootstrap() {
         '**Error Monitoring:** All 5xx errors and unhandled exceptions are automatically captured by Sentry ' +
         'for real-time alerting and triage. Set the `SENTRY_DSN` environment variable to enable.\n\n' +
         '**Rate Limiting:** Authenticated endpoints benefit from coordinated per-IP and per-wallet ' +
-        'distributed token-bucket limits across API nodes. Unauthenticated endpoints receive IP-scoped ' +
-        'limiting only (no wallet identity is available). Repeated limit violations are tracked in a ' +
+        'distributed token-bucket limits across API nodes. The wallet identity used for the ' +
+        'per-wallet bucket is always derived from a cryptographically verified JWT (never from ' +
+        'request body/query/param values, which a client fully controls) — a request with a ' +
+        'missing or invalid bearer token falls back to IP-scoped limiting only. Repeated limit violations are tracked in a ' +
         'sliding abuse window and can trigger temporary lockouts. When a request is rejected, the API ' +
         'returns `429 Too Many Requests` with `retryAfter` and `scope` fields. Health check (`/health`) ' +
         'and metrics (`/metrics`) endpoints are exempt from rate limiting. Requires `REDIS_URL` to be configured.\n\n' +
@@ -186,7 +189,7 @@ async function bootstrap() {
     )
     .build();
 
-  const document = SwaggerModule.createDocument(app, config);
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
 
   SwaggerModule.setup('api/docs', app, document, {
     customSiteTitle: 'TrustFlow API Documentation',

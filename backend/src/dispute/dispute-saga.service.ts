@@ -1,10 +1,15 @@
 import {
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
+  OnModuleInit,
 } from '@nestjs/common';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { MetricsService } from '../monitoring/metrics.service';
 import {
   DisputeSaga,
   DisputeStep,
@@ -13,7 +18,7 @@ import {
   SagaStepRecord,
 } from './dispute.types';
 import { EscalateDisputeDto, AssignJurorsDto, CastVoteDto, ExecutePayoutDto } from './dispute.dto';
-import { EscrowService, Escrow } from '../escrow/escrow.service';
+import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
 import { ReputationService } from '../reputation/reputation.service';
@@ -42,12 +47,34 @@ const REPUTATION_OUTCOME_BY_VERDICT: Record<
   [DisputeVerdict.SPLIT]: { depositor: 'split', beneficiary: 'split' },
 };
 
+const SAGA_KEY_PREFIX = 'saga:';
+const SAGAS_INDEX_KEY = 'sagas:index';
+const SAGAS_BY_ESCROW_PREFIX = 'sagas:by-escrow:';
+
+/** Emitted (see `GET /metrics`) every time a call falls back to the in-memory store. */
+export const DISPUTE_SAGA_PERSISTENCE_FALLBACK_METRIC = 'dispute_saga_persistence_fallback_total';
+
+/**
+ * Orchestrates the dispute resolution saga (escalation → juror assignment → voting → payout),
+ * with a compensating action for every step. Backed by Redis so saga progress survives restarts
+ * and is shared across instances — see PERSISTENT_STORAGE_SPIKE.md and its "Follow-up decisions"
+ * addendum (#190): losing saga state mid-flight on restart would otherwise leave a dispute stuck
+ * between steps with no record of what was already done.
+ *
+ * Every method that reads a saga then mutates it (`saga.currentStep = ...`, etc.) explicitly
+ * persists the change afterward — unlike the original in-memory `Map`, a Redis-backed read
+ * returns a freshly deserialized copy, not a live reference, so relying on reference semantics
+ * to make a mutation "stick" would silently no-op once the store is Redis-backed.
+ *
+ * Falls back to a process-local Map when Redis is unavailable, logged at `error` level and
+ * counted via `DISPUTE_SAGA_PERSISTENCE_FALLBACK_METRIC`.
+ */
 @Injectable()
-export class DisputeSagaService {
+export class DisputeSagaService implements OnModuleInit {
   private readonly logger = new Logger(DisputeSagaService.name);
-  /** In-memory saga store — keyed by sagaId */
+  /** Fallback saga store, only used while Redis is unavailable. */
   private readonly sagas: Map<string, DisputeSaga> = new Map();
-  /** Secondary index: escrowId → sagaId (one active saga per escrow) */
+  /** Fallback secondary index: escrowId → sagaId (one active saga per escrow). */
   private readonly escrowIndex: Map<string, string> = new Map();
 
   constructor(
@@ -56,22 +83,53 @@ export class DisputeSagaService {
     private readonly discordService: DiscordService,
     private readonly reputationService: ReputationService,
     private readonly notificationService: NotificationService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
+    private readonly metrics: MetricsService,
   ) {}
+
+  onModuleInit(): void {
+    if (!this.redis && process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'DisputeSagaService requires REDIS_URL to be configured in production — refusing to ' +
+          'start with per-instance in-memory storage, which would silently diverge across instances.',
+      );
+    }
+  }
 
   // ─── Queries ──────────────────────────────────────────────────────
 
-  findById(sagaId: string): DisputeSaga {
-    const saga = this.sagas.get(sagaId);
+  async findById(sagaId: string): Promise<DisputeSaga> {
+    const saga = await this.tryFindById(sagaId);
     if (!saga) throw new NotFoundException(`Dispute saga ${sagaId} not found`);
     return saga;
   }
 
-  findByEscrowId(escrowId: string): DisputeSaga | undefined {
+  async findByEscrowId(escrowId: string): Promise<DisputeSaga | undefined> {
+    if (this.redis) {
+      try {
+        const sagaId = await this.redis.get(this.escrowIndexKey(escrowId));
+        return sagaId ? await this.tryFindById(sagaId) : undefined;
+      } catch (err) {
+        this.logFallback('findByEscrowId', err);
+      }
+    }
+
     const sagaId = this.escrowIndex.get(escrowId);
     return sagaId ? this.sagas.get(sagaId) : undefined;
   }
 
-  findAll(): DisputeSaga[] {
+  async findAll(): Promise<DisputeSaga[]> {
+    if (this.redis) {
+      try {
+        const ids = await this.redis.smembers(SAGAS_INDEX_KEY);
+        if (ids.length === 0) return [];
+        const raw = await this.redis.mget(...ids.map(id => this.sagaKey(id)));
+        return raw.filter((r): r is string => r !== null).map(r => JSON.parse(r) as DisputeSaga);
+      } catch (err) {
+        this.logFallback('findAll', err);
+      }
+    }
+
     return [...this.sagas.values()];
   }
 
@@ -83,7 +141,7 @@ export class DisputeSagaService {
    */
   async escalate(escrowId: string, dto: EscalateDisputeDto): Promise<DisputeSaga> {
     // Guard: only one active saga per escrow
-    const existing = this.findByEscrowId(escrowId);
+    const existing = await this.findByEscrowId(escrowId);
     if (
       existing &&
       existing.currentStep !== DisputeStep.FAILED &&
@@ -123,10 +181,9 @@ export class DisputeSagaService {
       saga.escalationTxHash = `escalation-tx-${sagaId}`;
       this.recordStepComplete(saga, DisputeStep.ESCALATION);
       saga.currentStep = DisputeStep.JUROR_ASSIGNMENT;
-
-      this.sagas.set(sagaId, saga);
-      this.escrowIndex.set(escrowId, sagaId);
       this.touch(saga);
+
+      await this.createSaga(saga);
 
       await this.webhookService.dispatch(SAGA_EVENTS.ESCALATED, { sagaId, escrowId });
       await this.discordService.notifyDisputeNeedsJurors({
@@ -165,7 +222,7 @@ export class DisputeSagaService {
       // Compensating action: revert escrow status to active
       const escrow = await this.escrowService.findById(saga.escrowId);
       if (escrow && escrow.status === 'disputed') {
-        escrow.status = 'active';
+        await this.escrowService.correctStatus(saga.escrowId, { status: 'active' });
       }
       this.recordStepCompensated(saga, DisputeStep.ESCALATION);
     } catch (compError) {
@@ -173,6 +230,8 @@ export class DisputeSagaService {
     }
 
     this.markFailed(saga, reason);
+    // The saga never made it past its first successful write on this path, so persist it now.
+    await this.persistSaga(saga);
     await this.webhookService.dispatch(SAGA_EVENTS.SAGA_FAILED, {
       sagaId: saga.sagaId,
       reason,
@@ -187,7 +246,7 @@ export class DisputeSagaService {
    * Compensating action: clear juror list and re-open for assignment.
    */
   async assignJurors(sagaId: string, dto: AssignJurorsDto): Promise<DisputeSaga> {
-    const saga = this.findById(sagaId);
+    const saga = await this.findById(sagaId);
     this.assertStep(saga, DisputeStep.JUROR_ASSIGNMENT);
 
     this.recordStepStart(saga, DisputeStep.JUROR_ASSIGNMENT);
@@ -203,6 +262,7 @@ export class DisputeSagaService {
       this.recordStepComplete(saga, DisputeStep.JUROR_ASSIGNMENT);
       saga.currentStep = DisputeStep.VOTING;
       this.touch(saga);
+      await this.persistSaga(saga);
 
       await this.webhookService.dispatch(SAGA_EVENTS.JURORS_ASSIGNED, {
         sagaId,
@@ -241,6 +301,7 @@ export class DisputeSagaService {
     }
 
     this.markFailed(saga, reason);
+    await this.persistSaga(saga);
     await this.webhookService.dispatch(SAGA_EVENTS.SAGA_COMPENSATING, {
       sagaId: saga.sagaId,
       step: DisputeStep.JUROR_ASSIGNMENT,
@@ -256,7 +317,7 @@ export class DisputeSagaService {
    * Compensating action: remove the vote and mark voting as incomplete.
    */
   async castVote(sagaId: string, dto: CastVoteDto): Promise<DisputeSaga> {
-    const saga = this.findById(sagaId);
+    const saga = await this.findById(sagaId);
     this.assertStep(saga, DisputeStep.VOTING);
 
     if (!saga.assignedJurors?.includes(dto.jurorAddress)) {
@@ -307,6 +368,7 @@ export class DisputeSagaService {
         }
       }
 
+      await this.persistSaga(saga);
       return saga;
     } catch (error) {
       await this.compensateVoting(saga, dto.jurorAddress, error);
@@ -348,6 +410,7 @@ export class DisputeSagaService {
       this.logger.error(`Saga ${saga.sagaId}: voting compensation failed`, compError);
     }
 
+    await this.persistSaga(saga);
     await this.webhookService.dispatch(SAGA_EVENTS.SAGA_COMPENSATING, {
       sagaId: saga.sagaId,
       step: DisputeStep.VOTING,
@@ -362,7 +425,7 @@ export class DisputeSagaService {
    * Compensating action: reverse the release and flag the escrow for manual review.
    */
   async executePayout(sagaId: string, dto: ExecutePayoutDto): Promise<DisputeSaga> {
-    const saga = this.findById(sagaId);
+    const saga = await this.findById(sagaId);
     this.assertStep(saga, DisputeStep.PAYOUT);
 
     if (!saga.verdict) {
@@ -382,6 +445,7 @@ export class DisputeSagaService {
       saga.currentStep = DisputeStep.COMPLETED;
       saga.completedAt = now;
       this.touch(saga);
+      await this.persistSaga(saga);
 
       await this.webhookService.dispatch(SAGA_EVENTS.PAYOUT_EXECUTED, {
         sagaId,
@@ -452,8 +516,11 @@ export class DisputeSagaService {
       // Compensating action: flag escrow for manual admin review
       const escrow = await this.escrowService.findById(saga.escrowId);
       if (escrow) {
-        escrow.status = 'disputed'; // revert to disputed so it isn't lost
-        (escrow as Escrow & { requiresManualReview?: boolean }).requiresManualReview = true;
+        // revert to disputed so it isn't lost, and flag for manual review
+        await this.escrowService.correctStatus(saga.escrowId, {
+          status: 'disputed',
+          requiresManualReview: true,
+        });
       }
       saga.currentStep = DisputeStep.PAYOUT; // allow retry
       this.recordStepCompensated(saga, DisputeStep.PAYOUT);
@@ -462,6 +529,7 @@ export class DisputeSagaService {
     }
 
     this.markFailed(saga, reason);
+    await this.persistSaga(saga);
     await this.webhookService.dispatch(SAGA_EVENTS.SAGA_FAILED, {
       sagaId: saga.sagaId,
       step: DisputeStep.PAYOUT,
@@ -522,5 +590,87 @@ export class DisputeSagaService {
 
   private lastRecord(saga: DisputeSaga, step: DisputeStep): SagaStepRecord | undefined {
     return [...saga.stepHistory].reverse().find(r => r.step === step);
+  }
+
+  // ─── Persistence ──────────────────────────────────────────────────
+
+  /** First write for a new saga: entity + index + by-escrow pointer, atomically. */
+  private async createSaga(saga: DisputeSaga): Promise<void> {
+    if (this.redis) {
+      try {
+        const results = await this.redis
+          .multi()
+          .set(this.sagaKey(saga.sagaId), JSON.stringify(saga))
+          .sadd(SAGAS_INDEX_KEY, saga.sagaId)
+          .set(this.escrowIndexKey(saga.escrowId), saga.sagaId)
+          .exec();
+        this.assertTransactionOk(results);
+        return;
+      } catch (err) {
+        this.logFallback('createSaga', err);
+      }
+    }
+
+    this.sagas.set(saga.sagaId, saga);
+    this.escrowIndex.set(saga.escrowId, saga.sagaId);
+  }
+
+  /** Writes a saga's current field values. Used after every mutation to an already-created saga. */
+  private async persistSaga(saga: DisputeSaga): Promise<void> {
+    if (this.redis) {
+      try {
+        const results = await this.redis
+          .multi()
+          .set(this.sagaKey(saga.sagaId), JSON.stringify(saga))
+          .sadd(SAGAS_INDEX_KEY, saga.sagaId)
+          .exec();
+        this.assertTransactionOk(results);
+        return;
+      } catch (err) {
+        this.logFallback('persistSaga', err);
+      }
+    }
+
+    this.sagas.set(saga.sagaId, saga);
+  }
+
+  private async tryFindById(sagaId: string): Promise<DisputeSaga | undefined> {
+    if (this.redis) {
+      try {
+        const raw = await this.redis.get(this.sagaKey(sagaId));
+        return raw ? (JSON.parse(raw) as DisputeSaga) : undefined;
+      } catch (err) {
+        this.logFallback('findById', err);
+      }
+    }
+
+    return this.sagas.get(sagaId);
+  }
+
+  private assertTransactionOk(results: Array<[Error | null, unknown]> | null): void {
+    if (!results) {
+      throw new Error('Redis transaction aborted (exec() returned null, e.g. a WATCH conflict)');
+    }
+    const failed = results.find(([err]) => err);
+    if (failed) {
+      throw new Error(`Redis transaction command failed: ${failed[0]!.message}`);
+    }
+  }
+
+  private sagaKey(sagaId: string): string {
+    return `${SAGA_KEY_PREFIX}${sagaId}`;
+  }
+
+  private escrowIndexKey(escrowId: string): string {
+    return `${SAGAS_BY_ESCROW_PREFIX}${escrowId}`;
+  }
+
+  private logFallback(operation: string, err: unknown): void {
+    this.metrics.increment(DISPUTE_SAGA_PERSISTENCE_FALLBACK_METRIC, { operation });
+    this.logger.error(
+      `Redis unavailable for disputeSaga.${operation}, falling back to per-instance memory ` +
+        '(multi-instance state will diverge until Redis recovers)',
+      err instanceof Error ? err.stack : String(err),
+    );
   }
 }

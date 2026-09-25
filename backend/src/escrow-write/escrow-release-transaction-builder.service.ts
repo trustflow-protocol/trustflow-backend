@@ -6,7 +6,7 @@ import {
   BASE_FEE,
   nativeToScVal,
 } from '@stellar/stellar-sdk';
-import { STELLAR_CONFIG } from '../stellar/stellar.config';
+import { StellarConfig } from '../stellar/stellar.config';
 
 export const SOROBAN_RPC_SERVER = 'SOROBAN_RPC_SERVER';
 export const ESCROW_WRITE_STELLAR_CONFIG = 'ESCROW_WRITE_STELLAR_CONFIG';
@@ -43,7 +43,7 @@ export class EscrowReleaseTransactionBuilderService {
 
   constructor(
     @Inject(SOROBAN_RPC_SERVER) private readonly rpcServer: SorobanRpc.Server,
-    @Inject(ESCROW_WRITE_STELLAR_CONFIG) private readonly config: typeof STELLAR_CONFIG,
+    @Inject(ESCROW_WRITE_STELLAR_CONFIG) private readonly config: StellarConfig,
   ) {}
 
   get isConfigured(): boolean {

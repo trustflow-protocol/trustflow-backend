@@ -2,54 +2,62 @@
 
 This directory contains GitHub Actions workflow configurations for the TrustFlow Backend.
 
+> **Keep this file and `backend-ci.yml` in sync.** If you change a step, job name, Node
+> version, or service container in the workflow, update the description below in the same
+> PR — see the pointer comment at the top of `backend-ci.yml`.
+
 ## Workflows
 
 ### Backend CI (`backend-ci.yml`)
 
 Automatically runs on:
 
-- **Pull Requests** that modify files in `backend/` directory
-- **Push to main/develop** branches with backend changes
+- **Pull Requests** that modify files in `backend/` directory or the workflow file itself
+- **Push to main/develop** branches with the same paths
 
-#### What it does:
+#### What it does
 
-**Test Job** (Matrix: Node 18.x, 20.x)
+A single job, `ci`, displayed as **"Lint · TypeCheck · Test · Build"**, running on
+`ubuntu-latest` with a `redis:7-alpine` service container (backs the Redis-integration
+tests; tests that don't need it check `REDIS_URL` and skip). Steps, in order:
 
-- ✅ Runs ESLint checks
-- ✅ Validates code formatting with Prettier
-- ✅ Executes Jest test suite
-- ✅ Generates code coverage reports
-- ✅ Uploads coverage to Codecov (Node 20.x only)
-
-**Build Job** (Node 20.x)
-
-- ✅ Compiles TypeScript code
-- ✅ Checks for TypeScript errors
-- ✅ Validates build succeeds
-
-**Status Check Job**
-
-- ✅ Verifies all previous jobs passed
-- ❌ Fails the PR if any check fails
+1. **Checkout**
+2. **Setup Node.js** — version read from the repo-root `.nvmrc` (currently 20), with npm
+   caching keyed on `backend/package-lock.json`
+3. **Install dependencies** — `npm ci` (in `backend/`)
+4. **Lint** — `npm run lint:check` (ESLint)
+5. **Format check** — `npm run format:check` (Prettier)
+6. **TypeScript check** — `npx tsc --noEmit`; blocks the PR on type errors
+7. **Circular dependency check** — `npm run check:cycles` (`madge --circular`); catches an
+   injection-token/service import cycle before it ships (Nest resolves those to an `undefined`
+   token at runtime rather than a compile error — see #429)
+8. **Wait for Redis** — polls the service container before trusting `REDIS_URL`
+9. **Unit tests** — `npm run test:ci` (Jest, `--maxWorkers=2`, with `REDIS_URL` set)
+10. **Build** — `npm run build` (`tsc`)
+11. **Dependency vulnerability scan** — `npm audit --audit-level=high`; gates on high/critical
+    findings only
+12. **Upload coverage** — sends `backend/coverage` to Codecov (`fail_ci_if_error: false`, so a
+    Codecov outage never blocks the PR)
 
 #### Timeout
 
-- Maximum 10 minutes per job
-- Prevents stuck builds from consuming CI minutes
+- `timeout-minutes: 5` for the job
+- Prevents a stuck run from consuming CI minutes
 
-#### CI Performance Target
+#### Concurrency and permissions
 
-- ⏱️ Target: Under 3 minutes per PR
-- Current typical runtime: 2-4 minutes
+- `permissions: contents: read` at the workflow level (least privilege for the job token)
+- A `concurrency` group keyed on `${{ github.workflow }}-${{ github.ref }}` with
+  `cancel-in-progress: true`, so a superseded push to the same PR/branch cancels the older run
+  instead of letting both run to completion
 
 ## Branch Protection Rules (Recommended)
 
 To enforce CI checks, configure these branch protection rules for `main`:
 
 1. **Require status checks to pass before merging**
-   - ✅ Backend CI / Test Backend (20.x)
-   - ✅ Backend CI / Build Backend
-   - ✅ Backend CI / CI Status Check
+   - ✅ `Lint · TypeCheck · Test · Build` — the one check this workflow reports (verify the
+     exact string on a recent PR's checks list; it can drift if the job's `name:` changes)
 
 2. **Require branches to be up to date before merging**
 
@@ -165,8 +173,8 @@ Current optimizations:
 
 - ✅ Path filtering (only runs on backend changes)
 - ✅ npm cache for faster installs
-- ✅ 10 minute timeout prevents runaway jobs
-- ✅ Parallel test matrix (Node 18 & 20 in parallel)
+- ✅ 5 minute job timeout prevents runaway jobs
+- ✅ `cancel-in-progress` concurrency group cancels superseded runs on the same ref
 - ✅ `--maxWorkers=2` for Jest in CI mode
 
 ## Adding Codecov (Optional)
@@ -184,7 +192,8 @@ Coverage reports will appear as comments on PRs.
 ## Future Enhancements
 
 - [ ] E2E integration tests with test database
-- [ ] Security scanning with Snyk or Dependabot
+- [x] Security scanning — `npm audit --audit-level=high` gates the build (Snyk/Dependabot
+      integration is still open)
 - [ ] Automated dependency updates
 - [ ] Performance benchmarking
 - [ ] Docker image build and push

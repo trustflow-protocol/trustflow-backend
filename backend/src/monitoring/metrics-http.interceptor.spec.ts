@@ -22,7 +22,7 @@ describe('MetricsHttpInterceptor', () => {
   });
 
   describe('intercept', () => {
-    it('should track successful HTTP requests', (done) => {
+    it('should track successful HTTP requests', done => {
       const incrementSpy = jest.spyOn(metricsService, 'increment');
 
       const mockRequest = {
@@ -72,7 +72,7 @@ describe('MetricsHttpInterceptor', () => {
       });
     });
 
-    it('should track failed HTTP requests', (done) => {
+    it('should track failed HTTP requests', done => {
       const incrementSpy = jest.spyOn(metricsService, 'increment');
 
       const mockRequest = {
@@ -121,7 +121,7 @@ describe('MetricsHttpInterceptor', () => {
       });
     });
 
-    it('should normalize dynamic route parameters', (done) => {
+    it('should normalize dynamic route parameters', done => {
       const incrementSpy = jest.spyOn(metricsService, 'increment');
 
       const mockRequest = {
@@ -155,7 +155,7 @@ describe('MetricsHttpInterceptor', () => {
       });
     });
 
-    it('should remove query strings from routes', (done) => {
+    it('should remove query strings from routes', done => {
       const incrementSpy = jest.spyOn(metricsService, 'increment');
 
       const mockRequest = {
@@ -191,7 +191,7 @@ describe('MetricsHttpInterceptor', () => {
   });
 
   describe('metrics output', () => {
-    it('should output non-empty metrics after requests', (done) => {
+    it('should output non-empty metrics after requests', done => {
       const mockRequest = {
         method: 'GET',
         originalUrl: '/api/users',

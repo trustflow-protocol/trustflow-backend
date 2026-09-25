@@ -49,14 +49,14 @@ describe('EscrowReconciliationController', () => {
     expect(controller.listRuns()).toEqual([{ runId: 'recon-1' }]);
   });
 
-  it('getRun returns the run when found', () => {
-    mockService.findById.mockReturnValue({ runId: 'recon-1' });
-    expect(controller.getRun('recon-1')).toEqual({ runId: 'recon-1' });
+  it('getRun returns the run when found', async () => {
+    mockService.findById.mockResolvedValue({ runId: 'recon-1' });
+    await expect(controller.getRun('recon-1')).resolves.toEqual({ runId: 'recon-1' });
     expect(mockService.findById).toHaveBeenCalledWith('recon-1');
   });
 
-  it('getRun throws NotFoundException when the run does not exist', () => {
-    mockService.findById.mockReturnValue(undefined);
-    expect(() => controller.getRun('recon-missing')).toThrow(NotFoundException);
+  it('getRun throws NotFoundException when the run does not exist', async () => {
+    mockService.findById.mockResolvedValue(undefined);
+    await expect(controller.getRun('recon-missing')).rejects.toThrow(NotFoundException);
   });
 });

@@ -33,11 +33,11 @@ export class EscrowReconciliationService {
     private readonly store: EscrowReconciliationStateStore,
   ) {}
 
-  findById(runId: string): ReconciliationRun | undefined {
+  async findById(runId: string): Promise<ReconciliationRun | undefined> {
     return this.store.findById(runId);
   }
 
-  findAll(): ReconciliationRun[] {
+  async findAll(): Promise<ReconciliationRun[]> {
     return this.store.findAll();
   }
 
@@ -123,7 +123,7 @@ export class EscrowReconciliationService {
       drifts,
     };
 
-    this.store.save(run);
+    await this.store.save(run);
 
     if (drifts.length > 0) {
       this.logger.warn(

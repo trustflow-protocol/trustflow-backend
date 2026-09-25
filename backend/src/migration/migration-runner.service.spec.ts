@@ -126,7 +126,7 @@ describe('MigrationRunnerService', () => {
     expect(fake.rollbackContractCalls).toBe(0); // contract phase was never reached
     expect(fake.contractCalls).toBe(0);
 
-    const [run] = runner.findAll();
+    const [run] = await runner.findAll();
     expect(run.status).toBe(MigrationStatus.ROLLED_BACK);
     expect(run.rollbackReason).toBe('backfill failed on batch 2');
     const backfillRecord = run.stepHistory.find(s => s.phase === MigrationPhase.BACKFILL);
@@ -142,7 +142,7 @@ describe('MigrationRunnerService', () => {
     expect(fake.rollbackContractCalls).toBe(1);
     expect(fake.rollbackExpandCalls).toBe(1);
 
-    const [run] = runner.findAll();
+    const [run] = await runner.findAll();
     expect(run.status).toBe(MigrationStatus.ROLLED_BACK);
   });
 
@@ -155,7 +155,7 @@ describe('MigrationRunnerService', () => {
       'rollback contract failed',
     );
 
-    const [run] = runner.findAll();
+    const [run] = await runner.findAll();
     expect(run.status).toBe(MigrationStatus.FAILED);
   });
 
@@ -186,7 +186,7 @@ describe('MigrationRunnerService', () => {
   it('refuses to roll back a run that is still in progress', async () => {
     fake.totalRows = 2;
     const inFlight = runner.run(fake.name, { batchSize: 1, batchDelayMs: 20 });
-    const [run] = runner.findAll();
+    const [run] = await runner.findAll();
 
     await expect(runner.rollback(run.runId)).rejects.toThrow(ConflictException);
 
@@ -197,7 +197,7 @@ describe('MigrationRunnerService', () => {
     await expect(runner.run('does-not-exist')).rejects.toThrow(NotFoundException);
   });
 
-  it('throws NotFoundException for an unknown run id', () => {
-    expect(() => runner.findById('mig-unknown')).toThrow(NotFoundException);
+  it('throws NotFoundException for an unknown run id', async () => {
+    await expect(runner.findById('mig-unknown')).rejects.toThrow(NotFoundException);
   });
 });

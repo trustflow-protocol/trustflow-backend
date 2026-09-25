@@ -36,8 +36,8 @@ export class EscrowReconciliationController {
   @ApiParam({ name: 'runId', example: 'recon-1234567890-abcd1234' })
   @ApiResponse({ status: 200, type: ReconciliationRunResponseDto })
   @ApiResponse({ status: 404, description: 'Run not found' })
-  getRun(@Param('runId') runId: string) {
-    const run = this.reconciliationService.findById(runId);
+  async getRun(@Param('runId') runId: string) {
+    const run = await this.reconciliationService.findById(runId);
     if (!run) throw new NotFoundException(`Reconciliation run ${runId} not found`);
     return run;
   }

@@ -25,16 +25,7 @@ function isHorizonNotFound(error: unknown): boolean {
 
 @Injectable()
 export class StellarService {
-  private server: Horizon.Server;
-
-  constructor(private readonly rpcFailoverService: RpcFailoverService) {
-    this.initializeServer();
-  }
-
-  private async initializeServer() {
-    const endpoint = this.rpcFailoverService.getCurrentHorizonEndpoint();
-    this.server = new Horizon.Server(endpoint);
-  }
+  constructor(private readonly rpcFailoverService: RpcFailoverService) {}
 
   async getBalance(address: string): Promise<string> {
     return this.withFailover(async server => {
@@ -66,10 +57,17 @@ export class StellarService {
       try {
         await server.loadAccount(address);
         return true;
-      } catch {
-        return false;
+      } catch (error) {
+        // Only a genuine Horizon 404 means the address doesn't exist. A
+        // transport failure, timeout, rate limit, or Horizon 5xx is not a
+        // verdict on the address — rethrow so withFailover's retry/failover
+        // logic can run, instead of misreporting it as "inactive" (#441).
+        if (isHorizonNotFound(error)) {
+          return false;
+        }
+        throw error;
       }
-    }, false); // Don't retry for address checks - failure means address doesn't exist
+    });
   }
 
   private async withFailover<T>(

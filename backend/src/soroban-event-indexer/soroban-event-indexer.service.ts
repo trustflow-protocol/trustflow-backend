@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
-import { STELLAR_CONFIG } from '../stellar/stellar.config';
+import { getStellarConfig } from '../stellar/stellar.config';
 
 export interface IndexedSorobanEvent {
   eventId: string;
@@ -32,7 +32,7 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis | null) {}
 
   onModuleInit() {
-    this.rpcServer = new SorobanRpc.Server(STELLAR_CONFIG.sorobanRpcUrl);
+    this.rpcServer = new SorobanRpc.Server(getStellarConfig().sorobanRpcUrl);
   }
 
   onModuleDestroy() {
@@ -65,7 +65,7 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
   }
 
   async poll(): Promise<IndexedSorobanEvent[]> {
-    const contractId = STELLAR_CONFIG.contractId;
+    const contractId = getStellarConfig().contractId;
     if (!contractId) {
       this.logger.warn('No TRUSTFLOW_CONTRACT_ID configured, skipping poll');
       return [];

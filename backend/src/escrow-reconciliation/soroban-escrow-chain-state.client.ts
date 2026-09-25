@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { rpc as SorobanRpc, xdr, nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { ChainEscrowRecord } from './escrow-reconciliation.types';
-import { STELLAR_CONFIG } from '../stellar/stellar.config';
+import { getStellarConfig } from '../stellar/stellar.config';
 
 /**
  * Storage-key convention assumed for the TrustFlow escrow contract: each escrow is a
@@ -27,11 +27,11 @@ export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
 
   constructor() {
     super();
-    this.rpcServer = new SorobanRpc.Server(STELLAR_CONFIG.sorobanRpcUrl);
+    this.rpcServer = new SorobanRpc.Server(getStellarConfig().sorobanRpcUrl);
   }
 
   get isConfigured(): boolean {
-    return Boolean(STELLAR_CONFIG.contractId);
+    return Boolean(getStellarConfig().contractId);
   }
 
   /** Test/ops hook for seeding the simulated store when no contract is configured. */
@@ -50,7 +50,7 @@ export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
     ]);
 
     try {
-      const entry = await this.rpcServer.getContractData(STELLAR_CONFIG.contractId, key);
+      const entry = await this.rpcServer.getContractData(getStellarConfig().contractId, key);
       const native = scValToNative(entry.val.contractData().val());
       return this.toChainRecord(contractEscrowId, native);
     } catch (error) {

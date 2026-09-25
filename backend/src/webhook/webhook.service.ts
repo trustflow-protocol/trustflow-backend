@@ -128,7 +128,13 @@ export async function resolveAndValidateHostname(hostname: string): Promise<void
     // DNS errors that mean the name doesn't exist – allow registration to succeed;
     // dispatch-time re-validation will handle later resolution. For known hosts
     // that are syntactically valid but not resolvable in offline CI, don't block.
-    if (err && (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN' || err.code === 'ENODATA' || err.code === 'EREQUEST')) {
+    if (
+      err &&
+      (err.code === 'ENOTFOUND' ||
+        err.code === 'EAI_AGAIN' ||
+        err.code === 'ENODATA' ||
+        err.code === 'EREQUEST')
+    ) {
       return;
     }
     // Re-throw as BadRequest for other DNS failures to avoid SSRF bypass
@@ -154,7 +160,9 @@ export async function validateWebhookUrl(urlString: string): Promise<void> {
   const hostname = url.hostname;
   if (!hostname) throw new BadRequestException('Webhook URL must have a hostname');
   if (isPrivateIP(hostname)) {
-    throw new BadRequestException(`Webhook URL hostname ${hostname} is not allowed (private address)`);
+    throw new BadRequestException(
+      `Webhook URL hostname ${hostname} is not allowed (private address)`,
+    );
   }
   await resolveAndValidateHostname(hostname);
 }

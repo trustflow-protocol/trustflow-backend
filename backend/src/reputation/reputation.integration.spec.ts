@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { RedisModule } from '../common/redis/redis.module';
 import { EscrowModule } from '../escrow/escrow.module';
 import { EscrowController } from '../escrow/escrow.controller';
 import { EscrowService } from '../escrow/escrow.service';
@@ -27,7 +28,10 @@ describe('Reputation engine integration', () => {
 
   beforeEach(async () => {
     module = await Test.createTestingModule({
-      imports: [EscrowModule, DisputeModule, ReputationModule],
+      // RedisModule is @Global() in the real app (bootstrapped once via AppModule), but a
+      // standalone TestingModule needs it imported explicitly — EscrowService and
+      // DisputeSagaService both depend on its REDIS_CLIENT token now that they're Redis-backed.
+      imports: [RedisModule, EscrowModule, DisputeModule, ReputationModule],
     }).compile();
 
     escrowController = module.get(EscrowController);
@@ -47,8 +51,8 @@ describe('Reputation engine integration', () => {
     const escrow = await escrowService.create(depositor, beneficiary, '100');
     await escrowController.release(escrow.id);
 
-    const depositorScore = reputationController.getScore(depositor);
-    const beneficiaryScore = reputationController.getScore(beneficiary);
+    const depositorScore = await reputationController.getScore(depositor);
+    const beneficiaryScore = await reputationController.getScore(beneficiary);
 
     expect(depositorScore.score).toBeGreaterThan(0);
     expect(depositorScore.eventCount).toBe(1);
@@ -63,8 +67,8 @@ describe('Reputation engine integration', () => {
     const escrow = await escrowService.create(depositor, beneficiary, '100');
     await escrowController.raiseDispute(escrow.id, { reason: 'not delivered' });
 
-    expect(reputationController.getScore(depositor).eventCount).toBe(0);
-    expect(reputationController.getScore(beneficiary).eventCount).toBe(0);
+    expect((await reputationController.getScore(depositor)).eventCount).toBe(0);
+    expect((await reputationController.getScore(beneficiary)).eventCount).toBe(0);
   });
 
   it('records a won/lost outcome through the full dispute saga once the verdict payout executes', async () => {
@@ -84,8 +88,8 @@ describe('Reputation engine integration', () => {
     await disputeSagaService.castVote(saga.sagaId, { jurorAddress: JURORS[2], vote: 'depositor' });
     await disputeSagaService.executePayout(saga.sagaId, {});
 
-    const depositorScore = reputationController.getScore(depositor);
-    const beneficiaryScore = reputationController.getScore(beneficiary);
+    const depositorScore = await reputationController.getScore(depositor);
+    const beneficiaryScore = await reputationController.getScore(beneficiary);
 
     expect(depositorScore.score).toBeGreaterThan(0);
     expect(depositorScore.recentEvents[0]).toMatchObject({ type: 'dispute_won' });
@@ -108,7 +112,7 @@ describe('Reputation engine integration', () => {
     await disputeSagaService.castVote(saga.sagaId, { jurorAddress: JURORS[2], vote: 'depositor' });
     await disputeSagaService.executePayout(saga.sagaId, {});
 
-    const leaderboard = reputationController.getLeaderboard(undefined);
+    const leaderboard = await reputationController.getLeaderboard(undefined);
     const winnerRank = leaderboard.findIndex(v => v.address === winner);
     const loserRank = leaderboard.findIndex(v => v.address === loser);
 
