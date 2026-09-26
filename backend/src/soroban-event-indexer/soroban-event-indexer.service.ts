@@ -82,13 +82,19 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
     if (!startLedger) {
       if (config.SOROBAN_START_LEDGER !== undefined) {
         startLedger = Math.max(config.SOROBAN_START_LEDGER, oldestLedger);
-        this.logger.log(`No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`);
+        this.logger.log(
+          `No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`,
+        );
       } else {
         startLedger = Math.max(currentLedger - 1000, oldestLedger);
-        this.logger.log(`No checkpoint found and no config, starting from latest - 1000: ${startLedger}`);
+        this.logger.log(
+          `No checkpoint found and no config, starting from latest - 1000: ${startLedger}`,
+        );
       }
     } else if (startLedger < oldestLedger) {
-      this.logger.warn(`Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`);
+      this.logger.warn(
+        `Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`,
+      );
       startLedger = oldestLedger;
     }
 
@@ -111,7 +117,7 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
         ledger: raw.ledger,
         contractId: raw.contractId?.toString() || contractId,
         eventType: this.parseTopic(raw.topic[0]),
-        topic: raw.topic.map(t => this.parseTopic(t)),
+        topic: raw.topic.map((topic: unknown) => this.parseTopic(topic)),
         value: this.parseValue(raw.value),
         xdr: raw.value.toXDR().toString(),
         indexedAt: new Date().toISOString(),

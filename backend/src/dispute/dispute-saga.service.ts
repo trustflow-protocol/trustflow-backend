@@ -21,6 +21,7 @@ import { EscalateDisputeDto, AssignJurorsDto, CastVoteDto, ExecutePayoutDto } fr
 import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { NotificationService } from '../notification/notification.service';
+import { ReputationOutcome } from '../reputation/reputation.types';
 
 /** Webhook event names emitted by the saga */
 export const SAGA_EVENTS = {

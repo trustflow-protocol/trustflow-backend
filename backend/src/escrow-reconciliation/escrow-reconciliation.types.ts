@@ -5,6 +5,8 @@ export enum DriftType {
   AMOUNT_MISMATCH = 'amount_mismatch',
   MISSING_IN_DB = 'missing_in_db',
   MISSING_ON_CHAIN = 'missing_on_chain',
+  /** The chain returned data that failed validation; nothing was written to the database. */
+  INVALID_CHAIN_DATA = 'invalid_chain_data',
 }
 
 /** Canonical on-chain view of a single escrow, as read by an EscrowChainStateClient. */

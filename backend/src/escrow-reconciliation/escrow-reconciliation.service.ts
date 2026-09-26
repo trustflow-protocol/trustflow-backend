@@ -11,6 +11,9 @@ import {
   RECONCILIATION_EVENTS,
   ReconciliationRun,
 } from './escrow-reconciliation.types';
+import { InvalidChainStateError } from './chain-escrow.validation';
+
+const INVALID = Symbol('invalid-chain-state');
 
 /**
  * Deterministically diffs on-chain escrow state against the DB and repairs drift
@@ -54,7 +57,9 @@ export class EscrowReconciliationService {
     for (const escrow of linked) {
       checked++;
       const contractEscrowId = escrow.contractEscrowId as string;
-      const chainEscrow = await this.chainClient.getEscrow(contractEscrowId);
+      const fetched = await this.fetchChainEscrow(contractEscrowId, drifts);
+      if (fetched === INVALID) continue;
+      const chainEscrow = fetched;
 
       if (!chainEscrow) {
         drifts.push(
@@ -100,8 +105,9 @@ export class EscrowReconciliationService {
       if (knownIds.has(contractEscrowId)) continue;
       checked++;
 
-      const chainEscrow = await this.chainClient.getEscrow(contractEscrowId);
-      if (!chainEscrow) continue;
+      const fetched = await this.fetchChainEscrow(contractEscrowId, drifts);
+      if (fetched === INVALID || !fetched) continue;
+      const chainEscrow = fetched;
 
       const drift = this.recordDrift(
         DriftType.MISSING_IN_DB,
@@ -151,6 +157,31 @@ export class EscrowReconciliationService {
       repaired: false,
       detectedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Reads chain state, converting a validation failure into a recorded, unrepaired drift for that
+   * escrow (so one malformed record neither aborts the run nor is ever written to the database).
+   */
+  private async fetchChainEscrow(
+    contractEscrowId: string,
+    drifts: DriftRecord[],
+  ): Promise<ChainEscrowRecord | undefined | typeof INVALID> {
+    try {
+      return await this.chainClient.getEscrow(contractEscrowId);
+    } catch (error) {
+      if (!(error instanceof InvalidChainStateError)) throw error;
+      this.logger.error(`Invalid chain state for escrow ${contractEscrowId}: ${error.message}`);
+      const drift = this.recordDrift(
+        DriftType.INVALID_CHAIN_DATA,
+        contractEscrowId,
+        undefined,
+        undefined,
+      );
+      drift.repairError = error.message;
+      drifts.push(drift);
+      return INVALID;
+    }
   }
 
   /** Applies both status and amount from chain in a single write, marking every field-level drift it covers. */

@@ -14,7 +14,8 @@ export const ESCROW_EVENTS = {
   ESCROW_DISPUTED: 'escrow.disputed',
 } as const;
 
-export type EscrowStatus = 'pending' | 'active' | 'released' | 'disputed' | 'cancelled';
+export const ESCROW_STATUSES = ['pending', 'active', 'released', 'disputed', 'cancelled'] as const;
+export type EscrowStatus = (typeof ESCROW_STATUSES)[number];
 
 export interface Escrow {
   id: string;
@@ -256,7 +257,12 @@ export class EscrowService implements OnModuleInit {
   async applyChainState(id: string, patch: ChainStatePatch): Promise<Escrow> {
     const escrow = await this.findById(id);
     if (!escrow) throw new Error('Escrow not found');
-    if (patch.status !== undefined) escrow.status = patch.status;
+    if (patch.status !== undefined) {
+      if (!ESCROW_STATUSES.includes(patch.status)) {
+        throw new Error(`Invalid escrow status: ${String(patch.status)}`);
+      }
+      escrow.status = patch.status;
+    }
     if (patch.amountXLM !== undefined) escrow.amountXLM = patch.amountXLM;
     await this.persist(escrow);
     return escrow;
@@ -364,7 +370,9 @@ export class EscrowService implements OnModuleInit {
 
   /** Writes an escrow's current field values without touching any index (its id/depositor never change). */
   private async persist(escrow: Escrow, eventType?: string): Promise<void> {
-    const event = eventType ? this.outbox?.create(eventType, 'escrow', escrow.id, escrow) : undefined;
+    const event = eventType
+      ? this.outbox?.create(eventType, 'escrow', escrow.id, escrow)
+      : undefined;
     if (this.redis) {
       try {
         const transaction = this.redis

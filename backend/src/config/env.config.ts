@@ -13,6 +13,13 @@ import { z } from 'zod';
  * throughout the application, replacing inline `process.env.X || fallback` reads.
  */
 
+/** `.env.example` ships blank values (`DB_HOST=`); treat them as unset. */
+const blankToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+const optionalPositiveInt = () =>
+  z.preprocess(blankToUndefined, z.coerce.number().int().positive().optional());
+const optionalString = () => z.preprocess(blankToUndefined, z.string().optional());
+const optionalBool = () => z.preprocess(blankToUndefined, z.enum(['true', 'false']).optional());
+
 const EnvSchema = z
   .object({
     // Node environment
@@ -47,7 +54,12 @@ const EnvSchema = z
     // Stellar failover endpoints (comma-separated URLs)
     STELLAR_HORIZON_ENDPOINTS: z.string().optional(),
     SOROBAN_RPC_ENDPOINTS: z.string().optional(),
-    SOROBAN_START_LEDGER: z.coerce.number().int().nonnegative().optional().describe('Contract deployment ledger to start ingestion from'),
+    SOROBAN_START_LEDGER: z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe('Contract deployment ledger to start ingestion from'),
 
     // Redis Configuration
     REDIS_URL: z
@@ -58,23 +70,37 @@ const EnvSchema = z
 
     // Database Configuration (PostgreSQL)
     DATABASE_URL: z
-      .string()
-      .url()
-      .optional()
+      .preprocess(blankToUndefined, z.string().url().optional())
       .describe('PostgreSQL connection string; currently optional infrastructure'),
 
     // Monitoring & Observability
+    DB_HOST: optionalString(),
+    DB_PORT: optionalPositiveInt(),
+    DB_NAME: optionalString(),
+    DB_USER: optionalString(),
+    DB_PASSWORD: optionalString(),
+    DB_SSL: optionalBool(),
+    DB_SSL_CA: optionalString(),
+    DB_SSL_CERT: optionalString(),
+    DB_SSL_KEY: optionalString(),
+    DB_SSL_REJECT_UNAUTHORIZED: optionalBool(),
+    DB_POOL_MAX: optionalPositiveInt(),
+    DB_POOL_IDLE_TIMEOUT_MS: optionalPositiveInt(),
+    DB_POOL_CONNECTION_TIMEOUT_MS: optionalPositiveInt(),
+
+    SWAGGER_ENABLED: optionalBool().describe(
+      'Serve Swagger UI and the OpenAPI JSON; defaults to true outside production, false in production',
+    ),
+    SWAGGER_USER: optionalString(),
+    SWAGGER_PASSWORD: optionalString(),
+
     SENTRY_DSN: z
-      .string()
-      .url()
-      .optional()
+      .preprocess(blankToUndefined, z.string().url().optional())
       .describe('Sentry error tracking DSN; errors are logged but not reported when unset'),
 
     // Discord Integration
     DISCORD_WEBHOOK_URL: z
-      .string()
-      .url()
-      .optional()
+      .preprocess(blankToUndefined, z.string().url().optional())
       .describe('Discord webhook for dispute notifications'),
 
     // Rate Limiting Configuration
@@ -95,6 +121,31 @@ const EnvSchema = z
     REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
   })
   .superRefine((data, ctx) => {
+    const issue = (path: string, message: string) =>
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+
+    if (Boolean(data.DB_HOST) !== Boolean(data.DB_NAME)) {
+      issue('DB_HOST', 'DB_HOST and DB_NAME must be set together');
+    }
+    if (data.DATABASE_URL && (data.DB_HOST || data.DB_NAME)) {
+      issue('DATABASE_URL', 'set either DATABASE_URL or DB_HOST/DB_NAME, not both');
+    }
+    if (data.DB_SSL_REJECT_UNAUTHORIZED === 'false' && data.NODE_ENV === 'production') {
+      issue(
+        'DB_SSL_REJECT_UNAUTHORIZED',
+        'disabling PostgreSQL certificate verification is not allowed in production',
+      );
+    }
+    if (Boolean(data.SWAGGER_USER) !== Boolean(data.SWAGGER_PASSWORD)) {
+      issue('SWAGGER_USER', 'SWAGGER_USER and SWAGGER_PASSWORD must be set together');
+    }
+    const swaggerEnabled = data.SWAGGER_ENABLED
+      ? data.SWAGGER_ENABLED === 'true'
+      : data.NODE_ENV !== 'production';
+    if (data.NODE_ENV === 'production' && swaggerEnabled && !data.SWAGGER_USER) {
+      issue('SWAGGER_USER', 'protect production Swagger with SWAGGER_USER and SWAGGER_PASSWORD');
+    }
+
     const secret = data.JWT_SECRET;
     if (data.NODE_ENV === 'production') {
       if (!secret || secret.trim() === '') {

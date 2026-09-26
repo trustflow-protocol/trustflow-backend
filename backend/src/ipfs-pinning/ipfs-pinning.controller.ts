@@ -54,6 +54,7 @@ export class IpfsPinningController {
   }
 
   @Post(':cid/verify')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Re-verify pin durability and top up replication if degraded',
     description:
