@@ -4,6 +4,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
 import { AuthService } from './auth.service';
 import { NonceStoreService } from './nonce-store.service';
+import { JWT_ALGORITHM } from '../config/env.config';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -132,7 +133,9 @@ describe('AuthService', () => {
       const result = service.validateToken('valid-token');
 
       expect(result).toEqual({ address: TEST_ADDRESS, sub: TEST_ADDRESS });
-      expect(mockJwtService.verify).toHaveBeenCalledWith('valid-token');
+      expect(mockJwtService.verify).toHaveBeenCalledWith('valid-token', {
+        algorithms: [JWT_ALGORITHM],
+      });
     });
 
     it('should throw on invalid token', () => {

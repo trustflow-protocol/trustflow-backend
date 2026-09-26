@@ -23,6 +23,7 @@ import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { NotificationService } from '../notification/notification.service';
 import { ReputationOutcome } from '../reputation/reputation.types';
+import { config } from '../config/env.config';
 
 /** Webhook event names emitted by the saga */
 export const SAGA_EVENTS = {
@@ -85,7 +86,7 @@ export class DisputeSagaService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'DisputeSagaService requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',

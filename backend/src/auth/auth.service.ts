@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { NonceStoreService } from './nonce-store.service';
+import { JWT_ALGORITHM } from '../config/env.config';
 
 const CHALLENGE_PREFIX = 'Sign this message to authenticate with TrustFlow: ';
 
@@ -66,7 +67,7 @@ export class AuthService {
 
   validateToken(token: string): unknown {
     try {
-      return this.jwtService.verify(token);
+      return this.jwtService.verify(token, { algorithms: [JWT_ALGORITHM] });
     } catch (error) {
       throw new UnauthorizedException('Invalid token');
     }

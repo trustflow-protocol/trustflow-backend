@@ -17,6 +17,8 @@ import { z } from 'zod';
 const blankToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 const optionalPositiveInt = () =>
   z.preprocess(blankToUndefined, z.coerce.number().int().positive().optional());
+const optionalNonnegativeInt = () =>
+  z.preprocess(blankToUndefined, z.coerce.number().int().nonnegative().optional());
 const optionalString = () => z.preprocess(blankToUndefined, z.string().optional());
 const optionalBool = () => z.preprocess(blankToUndefined, z.enum(['true', 'false']).optional());
 
@@ -108,6 +110,7 @@ const EnvSchema = z
     SENTRY_DSN: z
       .preprocess(blankToUndefined, z.string().url().optional())
       .describe('Sentry error tracking DSN; errors are logged but not reported when unset'),
+    APP_RELEASE: optionalString(),
 
     // Discord Integration
     DISCORD_WEBHOOK_URL: z
@@ -130,12 +133,30 @@ const EnvSchema = z
 
     // Event Processing Configuration
     EVENT_PROCESSING_CONCURRENCY: z.coerce.number().int().positive().default(8),
+    ESCROW_RECONCILIATION_SWEEP_CONCURRENCY: optionalPositiveInt(),
+    ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS: optionalNonnegativeInt(),
+    RUN_MIGRATIONS_ON_STARTUP: optionalBool(),
+    WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    WEBHOOK_RELAY_BATCH_SIZE: z.coerce.number().int().positive().default(50),
+    WEBHOOK_RELAY_LEASE_MS: z.coerce.number().int().positive().default(30_000),
+    OUTBOX_RELAY_INTERVAL_MS: z.coerce.number().int().nonnegative().default(1000),
+    OUTBOX_RELAY_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+    OUTBOX_RELAY_LEASE_MS: z.coerce.number().int().positive().default(30_000),
+    OUTBOX_DELIVERED_TTL_SECONDS: z.coerce.number().int().positive().default(7 * 24 * 60 * 60),
+    OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+    OUTBOX_QUEUE_MAX_LENGTH: z.coerce.number().int().positive().default(1000),
+    IDEMPOTENCY_KEY_TTL_SECONDS: z.coerce.number().int().positive().default(24 * 60 * 60),
+    GIG_SEARCH_CACHE_TTL_SECONDS: optionalPositiveInt(),
+    GIG_EXPIRY_SWEEP_CONCURRENCY: z.coerce.number().int().positive().default(8),
+    GIG_EXPIRY_SWEEP_INTERVAL_MS: optionalNonnegativeInt(),
 
     // IPFS Pinning Configuration
-    IPFS_PINATA_JWT: z.string().optional().describe('Pinata API JWT token'),
-    IPFS_WEB3_STORAGE_TOKEN: z.string().optional().describe('Web3.Storage API token'),
-    IPFS_INFURA_PROJECT_ID: z.string().optional().describe('Infura IPFS project ID'),
-    IPFS_INFURA_PROJECT_SECRET: z.string().optional().describe('Infura IPFS project secret'),
+    PINATA_JWT: z.string().optional().describe('Pinata API JWT token'),
+    WEB3_STORAGE_TOKEN: z.string().optional().describe('Web3.Storage API token'),
+    INFURA_IPFS_PROJECT_ID: z.string().optional().describe('Infura IPFS project ID'),
+    INFURA_IPFS_PROJECT_SECRET: z.string().optional().describe('Infura IPFS project secret'),
+    IPFS_REPIN_SWEEP_CONCURRENCY: z.coerce.number().int().positive().default(8),
+    IPFS_REPIN_INTERVAL_MS: optionalNonnegativeInt(),
 
     // Reputation System Configuration
     REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
@@ -201,6 +222,7 @@ export type EnvConfig = z.infer<typeof EnvSchema>;
  */
 export const TEST_ONLY_JWT_SECRET =
   'test-only-jwt-secret-for-development-and-test-do-not-use-in-production';
+export const JWT_ALGORITHM = 'HS256' as const;
 
 let validatedConfig: EnvConfig | null = null;
 

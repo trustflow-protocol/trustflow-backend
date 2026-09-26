@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Horizon } from '@stellar/stellar-sdk';
 import { getStellarConfig } from './stellar.config';
+import { config } from '../config/env.config';
 
 interface EndpointStatus {
   url: string;
@@ -28,10 +29,10 @@ export class RpcFailoverService {
   }
 
   private initializeEndpoints() {
-    const horizonUrls = (process.env.STELLAR_HORIZON_ENDPOINTS || getStellarConfig().horizonUrl)
+    const horizonUrls = (config.STELLAR_HORIZON_ENDPOINTS || getStellarConfig().horizonUrl)
       .split(',')
       .map(url => url.trim());
-    const sorobanUrls = (process.env.SOROBAN_RPC_ENDPOINTS || getStellarConfig().sorobanRpcUrl)
+    const sorobanUrls = (config.SOROBAN_RPC_ENDPOINTS || getStellarConfig().sorobanRpcUrl)
       .split(',')
       .map(url => url.trim());
 

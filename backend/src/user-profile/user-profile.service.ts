@@ -14,6 +14,7 @@ import { MetricsService } from '../monitoring/metrics.service';
 import { UserType, UserStatus } from './user-profile.entity';
 import { CreateUserProfileDto, UpdateUserProfileDto, RateUserDto } from './user-profile.dto';
 import { randomUUID } from 'crypto';
+import { config } from '../config/env.config';
 
 export interface UserProfile {
   id: string;
@@ -76,7 +77,7 @@ export class UserProfileService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'UserProfileService requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',

@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { MigrationRun } from './migration.types';
+import { config } from '../config/env.config';
 
 const RUN_KEY_PREFIX = 'migration:run:';
 const RUNS_INDEX_KEY = 'migration:runs:index';
@@ -35,7 +36,7 @@ export class MigrationStateStore implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'MigrationStateStore requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',

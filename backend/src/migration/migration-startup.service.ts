@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { MigrationRegistryService } from './migration-registry.service';
 import { MigrationRunnerService } from './migration-runner.service';
+import { config } from '../config/env.config';
 
 /**
  * Runs every registered schema migration automatically when the backend boots, instead
@@ -53,8 +54,9 @@ export class MigrationStartupService implements OnApplicationBootstrap {
   }
 
   private isEnabled(): boolean {
-    const raw = process.env.RUN_MIGRATIONS_ON_STARTUP;
-    if (raw !== undefined) return raw !== 'false';
-    return process.env.NODE_ENV !== 'test';
+    if (config.RUN_MIGRATIONS_ON_STARTUP !== undefined) {
+      return config.RUN_MIGRATIONS_ON_STARTUP === 'true';
+    }
+    return config.NODE_ENV !== 'test';
   }
 }

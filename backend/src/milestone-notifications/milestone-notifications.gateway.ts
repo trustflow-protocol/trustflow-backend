@@ -22,7 +22,7 @@ export interface ClientEventPayload {
   data: unknown;
 }
 
-@WebSocketGateway({ cors: { origin: process.env.CORS_ORIGIN || '*' } })
+@WebSocketGateway({ cors: { origin: '*' } })
 export class MilestoneNotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MilestoneNotificationsGateway.name);
   private subscriber: Redis | null = null;
