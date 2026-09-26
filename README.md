@@ -139,7 +139,7 @@ plus a catalogue of known deviations from the intended model.
 | `/webhooks` | No (IP rate-limited only) | Webhooks |
 | `/health`, `/metrics` | No | Monitoring |
 | `/gigs` | Partial — reads public, writes require JWT | Gigs |
-| `/profiles` | Partial — reads public, writes require JWT | User Profiles |
+| `/profiles` | Partial — reads public (never include the email address), writes and `GET /profiles/me` require JWT | User Profiles |
 | `/deliverables` | Yes (JWT) | Deliverables |
 | `/dispute` | Yes (JWT) | Dispute Resolution |
 | `/reputation` | No | Reputation |

@@ -41,6 +41,13 @@ import {
 import { UserType, UserStatus } from './user-profile.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { S3StorageService } from './s3-storage.service';
+import {
+  toOwnerProfile,
+  toProfileForViewer,
+  toPublicProfile,
+  toPublicProfilePage,
+} from './user-profile.mapper';
+import { OWNER_PROFILE_SCHEMA, PUBLIC_PROFILE_SCHEMA } from './user-profile.swagger';
 
 /**
  * Shape of `req.user` once `JwtAuthGuard` has run — see
@@ -130,30 +137,7 @@ export class UserProfileController {
   @ApiResponse({
     status: 201,
     description: 'Profile created successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', format: 'uuid' },
-        walletAddress: { type: 'string' },
-        name: { type: 'string' },
-        bio: { type: 'string', nullable: true },
-        userType: { type: 'string', enum: ['freelancer', 'client', 'both'] },
-        avatarUrl: { type: 'string', nullable: true },
-        email: { type: 'string', nullable: true },
-        rating: { type: 'number', example: 0 },
-        ratingCount: { type: 'number', example: 0 },
-        completedJobs: { type: 'number', example: 0 },
-        status: { type: 'string', enum: ['active', 'inactive', 'suspended'] },
-        skills: { type: 'array', items: { type: 'string' }, nullable: true },
-        socialLinks: { type: 'object', nullable: true },
-        totalEarned: { type: 'string', example: '0' },
-        totalSpent: { type: 'string', example: '0' },
-        isVerified: { type: 'boolean', example: false },
-        createdAt: { type: 'string', format: 'date-time' },
-        updatedAt: { type: 'string', format: 'date-time' },
-        lastActiveAt: { type: 'string', format: 'date-time', nullable: true },
-      },
-    },
+    schema: OWNER_PROFILE_SCHEMA,
   })
   @ApiResponse({ status: 400, description: 'Invalid input data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -173,13 +157,36 @@ export class UserProfileController {
       throw new ForbiddenException('walletAddress must match the authenticated wallet address');
     }
 
-    return this.userProfileService.create(validated);
+    // The caller is the owner (checked above), so their own email is included.
+    return toOwnerProfile(await this.userProfileService.create(validated));
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get my own profile',
+    description:
+      'Returns the profile of the authenticated wallet, including the email address it was ' +
+      'registered with. This is the only read endpoint that returns an email address.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Your profile, including your email address',
+    schema: OWNER_PROFILE_SCHEMA,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'The authenticated wallet has no profile yet' })
+  async findMine(@Req() req: AuthenticatedRequest) {
+    return toOwnerProfile(await this.userProfileService.findByWalletAddress(req.user.address));
   }
 
   @Get()
   @ApiOperation({
     summary: 'Get all user profiles',
-    description: 'Retrieves all user profiles with optional filtering and pagination.',
+    description:
+      'Retrieves all user profiles with optional filtering and pagination. ' +
+      'Email addresses are never included.',
   })
   @ApiQuery({
     name: 'userType',
@@ -245,19 +252,22 @@ export class UserProfileController {
   ) {
     const safeOffset = Math.max(0, Number(offset) || 0);
     const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
-    return this.userProfileService.findAll({
+    const page = await this.userProfileService.findAll({
       userType,
       status,
       minRating: minRating ? parseFloat(minRating.toString()) : undefined,
       offset: safeOffset,
       limit: safeLimit,
     });
+    return toPublicProfilePage(page);
   }
 
   @Get('search')
   @ApiOperation({
     summary: 'Search user profiles',
-    description: 'Search profiles by name, bio, or skills. Results are ranked by relevance.',
+    description:
+      'Search profiles by name, bio, or skills. Results are ranked by relevance. ' +
+      'Email addresses are never included.',
   })
   @ApiQuery({
     name: 'q',
@@ -300,13 +310,19 @@ export class UserProfileController {
 
     const safeOffset = Math.max(0, Number(offset) || 0);
     const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
-    return this.userProfileService.search(validated.q, { offset: safeOffset, limit: safeLimit });
+    const page = await this.userProfileService.search(validated.q, {
+      offset: safeOffset,
+      limit: safeLimit,
+    });
+    return toPublicProfilePage(page);
   }
 
   @Get(':id')
   @ApiOperation({
     summary: 'Get profile by ID',
-    description: 'Retrieves a user profile by its unique ID.',
+    description:
+      'Retrieves a user profile by its unique ID. The email address is never included; ' +
+      'owners read theirs from `GET /profiles/me`.',
   })
   @ApiParam({
     name: 'id',
@@ -316,16 +332,19 @@ export class UserProfileController {
   @ApiResponse({
     status: 200,
     description: 'Profile details',
+    schema: PUBLIC_PROFILE_SCHEMA,
   })
   @ApiResponse({ status: 404, description: 'Profile not found' })
   async findById(@Param('id') id: string) {
-    return this.userProfileService.findById(id);
+    return toPublicProfile(await this.userProfileService.findById(id));
   }
 
   @Get('wallet/:address')
   @ApiOperation({
     summary: 'Get profile by wallet address',
-    description: 'Retrieves a user profile by their Stellar wallet address.',
+    description:
+      'Retrieves a user profile by their Stellar wallet address. The email address is never ' +
+      'included; owners read theirs from `GET /profiles/me`.',
   })
   @ApiParam({
     name: 'address',
@@ -335,10 +354,11 @@ export class UserProfileController {
   @ApiResponse({
     status: 200,
     description: 'Profile details',
+    schema: PUBLIC_PROFILE_SCHEMA,
   })
   @ApiResponse({ status: 404, description: 'Profile not found' })
   async findByWalletAddress(@Param('address') address: string) {
-    return this.userProfileService.findByWalletAddress(address);
+    return toPublicProfile(await this.userProfileService.findByWalletAddress(address));
   }
 
   @Put(':id')
@@ -370,13 +390,22 @@ export class UserProfileController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Profile updated successfully',
+    description:
+      'Profile updated successfully. The email address is only included when the caller ' +
+      'owns the profile.',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Profile not found' })
-  async update(@Param('id') id: string, @Body() dto: UpdateUserProfileDto) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserProfileDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const validated = UpdateUserProfileSchema.parse(dto);
-    return this.userProfileService.update(id, validated);
+    return toProfileForViewer(
+      await this.userProfileService.update(id, validated),
+      req.user.address,
+    );
   }
 
   @Delete(':id')
@@ -440,13 +469,22 @@ export class UserProfileController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Rating submitted successfully',
+    description:
+      'Rating submitted successfully. The email address is only included when the caller ' +
+      'owns the profile.',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Profile not found' })
-  async rateUser(@Param('id') id: string, @Body() dto: RateUserDto) {
+  async rateUser(
+    @Param('id') id: string,
+    @Body() dto: RateUserDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const validated = RateUserSchema.parse(dto);
-    return this.userProfileService.rateUser(id, validated);
+    return toProfileForViewer(
+      await this.userProfileService.rateUser(id, validated),
+      req.user.address,
+    );
   }
 
   @Post(':id/verify')
@@ -462,12 +500,14 @@ export class UserProfileController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Profile verified successfully',
+    description:
+      'Profile verified successfully. The email address is only included when the caller ' +
+      'owns the profile.',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Profile not found' })
-  async verifyUser(@Param('id') id: string) {
-    return this.userProfileService.verifyUser(id);
+  async verifyUser(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return toProfileForViewer(await this.userProfileService.verifyUser(id), req.user.address);
   }
 
   @Post(':id/avatar')

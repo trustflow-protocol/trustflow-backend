@@ -3287,7 +3287,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
     },
     "/profiles": {
       "get": {
-        "description": "Retrieves all user profiles with optional filtering and pagination.",
+        "description": "Retrieves all user profiles with optional filtering and pagination. Email addresses are never included.",
         "operationId": "UserProfileController_findAll",
         "parameters": [
           {
@@ -3615,9 +3615,131 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         ],
       },
     },
+    "/profiles/me": {
+      "get": {
+        "description": "Returns the profile of the authenticated wallet, including the email address it was registered with. This is the only read endpoint that returns an email address.",
+        "operationId": "UserProfileController_findMine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "avatarUrl": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "bio": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "completedJobs": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "email": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string",
+                    },
+                    "isVerified": {
+                      "example": false,
+                      "type": "boolean",
+                    },
+                    "lastActiveAt": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "rating": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "ratingCount": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "skills": {
+                      "items": {
+                        "type": "string",
+                      },
+                      "nullable": true,
+                      "type": "array",
+                    },
+                    "socialLinks": {
+                      "nullable": true,
+                      "type": "object",
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "inactive",
+                        "suspended",
+                      ],
+                      "type": "string",
+                    },
+                    "totalEarned": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "totalSpent": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "updatedAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "userType": {
+                      "enum": [
+                        "freelancer",
+                        "client",
+                        "both",
+                      ],
+                      "type": "string",
+                    },
+                    "walletAddress": {
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Your profile, including your email address",
+          },
+          "401": {
+            "description": "Unauthorized",
+          },
+          "404": {
+            "description": "The authenticated wallet has no profile yet",
+          },
+        },
+        "security": [
+          {
+            "bearer": [],
+          },
+        ],
+        "summary": "Get my own profile",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
     "/profiles/search": {
       "get": {
-        "description": "Search profiles by name, bio, or skills. Results are ranked by relevance.",
+        "description": "Search profiles by name, bio, or skills. Results are ranked by relevance. Email addresses are never included.",
         "operationId": "UserProfileController_search",
         "parameters": [
           {
@@ -3665,7 +3787,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
     },
     "/profiles/wallet/{address}": {
       "get": {
-        "description": "Retrieves a user profile by their Stellar wallet address.",
+        "description": "Retrieves a user profile by their Stellar wallet address. The email address is never included; owners read theirs from \`GET /profiles/me\`.",
         "operationId": "UserProfileController_findByWalletAddress",
         "parameters": [
           {
@@ -3681,6 +3803,97 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "avatarUrl": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "bio": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "completedJobs": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string",
+                    },
+                    "isVerified": {
+                      "example": false,
+                      "type": "boolean",
+                    },
+                    "lastActiveAt": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "rating": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "ratingCount": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "skills": {
+                      "items": {
+                        "type": "string",
+                      },
+                      "nullable": true,
+                      "type": "array",
+                    },
+                    "socialLinks": {
+                      "nullable": true,
+                      "type": "object",
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "inactive",
+                        "suspended",
+                      ],
+                      "type": "string",
+                    },
+                    "totalEarned": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "totalSpent": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "updatedAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "userType": {
+                      "enum": [
+                        "freelancer",
+                        "client",
+                        "both",
+                      ],
+                      "type": "string",
+                    },
+                    "walletAddress": {
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
             "description": "Profile details",
           },
           "404": {
@@ -3730,7 +3943,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         ],
       },
       "get": {
-        "description": "Retrieves a user profile by its unique ID.",
+        "description": "Retrieves a user profile by its unique ID. The email address is never included; owners read theirs from \`GET /profiles/me\`.",
         "operationId": "UserProfileController_findById",
         "parameters": [
           {
@@ -3746,6 +3959,97 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "avatarUrl": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "bio": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "completedJobs": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string",
+                    },
+                    "isVerified": {
+                      "example": false,
+                      "type": "boolean",
+                    },
+                    "lastActiveAt": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "rating": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "ratingCount": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "skills": {
+                      "items": {
+                        "type": "string",
+                      },
+                      "nullable": true,
+                      "type": "array",
+                    },
+                    "socialLinks": {
+                      "nullable": true,
+                      "type": "object",
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "inactive",
+                        "suspended",
+                      ],
+                      "type": "string",
+                    },
+                    "totalEarned": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "totalSpent": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "updatedAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "userType": {
+                      "enum": [
+                        "freelancer",
+                        "client",
+                        "both",
+                      ],
+                      "type": "string",
+                    },
+                    "walletAddress": {
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
             "description": "Profile details",
           },
           "404": {
@@ -3826,7 +4130,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         },
         "responses": {
           "200": {
-            "description": "Profile updated successfully",
+            "description": "Profile updated successfully. The email address is only included when the caller owns the profile.",
           },
           "401": {
             "description": "Unauthorized",
@@ -3957,7 +4261,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         },
         "responses": {
           "200": {
-            "description": "Rating submitted successfully",
+            "description": "Rating submitted successfully. The email address is only included when the caller owns the profile.",
           },
           "401": {
             "description": "Unauthorized",
@@ -3994,7 +4298,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         ],
         "responses": {
           "200": {
-            "description": "Profile verified successfully",
+            "description": "Profile verified successfully. The email address is only included when the caller owns the profile.",
           },
           "401": {
             "description": "Unauthorized",

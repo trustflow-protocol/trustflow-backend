@@ -121,3 +121,149 @@ describe('UserProfile (E2E) — POST /profiles auth', () => {
     expect(res.body.walletAddress).toBe(OTHER_ADDRESS);
   });
 });
+
+// Covers #446: the read endpoints used to return the raw stored profile, so anyone could
+// harvest every registered user's email address with one list, search or lookup call.
+describe('UserProfile (E2E) — email privacy', () => {
+  let app: INestApplication;
+  let authService: AuthService;
+
+  const OWNER_ADDRESS = 'G' + 'C'.repeat(55);
+  const OTHER_ADDRESS = 'G' + 'D'.repeat(55);
+  const OWNER_EMAIL = 'private.owner@example.com';
+  const OWNER_NAME = 'Privacy Probe Owner';
+  let profileId: string;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [
+        RedisModule,
+        AuthModule,
+        UserProfileModule,
+        SentryModule,
+        LoggingModule,
+        MonitoringModule,
+      ],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    configureApp(app, { skipSentryInit: true, skipIndexerStart: true });
+    await app.init();
+    authService = moduleFixture.get<AuthService>(AuthService);
+
+    const created = await request(app.getHttpServer())
+      .post('/profiles')
+      .set('Authorization', `Bearer ${authService.generateToken(OWNER_ADDRESS)}`)
+      .send({
+        walletAddress: OWNER_ADDRESS,
+        name: OWNER_NAME,
+        userType: UserType.FREELANCER,
+        email: OWNER_EMAIL,
+      })
+      .expect(201);
+    profileId = created.body.id;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const ownerToken = () => `Bearer ${authService.generateToken(OWNER_ADDRESS)}`;
+
+  it('returns the email to the owner when they create their profile', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/profiles')
+      .set('Authorization', `Bearer ${authService.generateToken(OTHER_ADDRESS)}`)
+      .send({
+        walletAddress: OTHER_ADDRESS,
+        name: 'Second Owner',
+        userType: UserType.CLIENT,
+        email: 'second.owner@example.com',
+      })
+      .expect(201);
+
+    expect(res.body.email).toBe('second.owner@example.com');
+  });
+
+  it('omits the email from the unauthenticated list', async () => {
+    const res = await request(app.getHttpServer()).get('/profiles').expect(200);
+
+    expect(res.body.data.length).toBeGreaterThan(0);
+    expect(JSON.stringify(res.body)).not.toContain('@example.com');
+    for (const profile of res.body.data) expect(profile).not.toHaveProperty('email');
+  });
+
+  it('omits the email from search results', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/profiles/search')
+      .query({ q: 'Privacy Probe' })
+      .expect(200);
+
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].name).toBe(OWNER_NAME);
+    expect(JSON.stringify(res.body)).not.toContain(OWNER_EMAIL);
+  });
+
+  it('omits the email from a lookup by id', async () => {
+    const res = await request(app.getHttpServer()).get(`/profiles/${profileId}`).expect(200);
+
+    expect(res.body.name).toBe(OWNER_NAME);
+    expect(res.body).not.toHaveProperty('email');
+  });
+
+  it('omits the email from a lookup by wallet address', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/profiles/wallet/${OWNER_ADDRESS}`)
+      .expect(200);
+
+    expect(res.body.walletAddress).toBe(OWNER_ADDRESS);
+    expect(res.body).not.toHaveProperty('email');
+  });
+
+  it('does not reveal the email to another authenticated user through GET /profiles/:id', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/profiles/${profileId}`)
+      .set('Authorization', `Bearer ${authService.generateToken(OTHER_ADDRESS)}`)
+      .expect(200);
+
+    expect(res.body).not.toHaveProperty('email');
+  });
+
+  it('lets the owner read their own email through GET /profiles/me', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/profiles/me')
+      .set('Authorization', ownerToken())
+      .expect(200);
+
+    expect(res.body.walletAddress).toBe(OWNER_ADDRESS);
+    expect(res.body.email).toBe(OWNER_EMAIL);
+  });
+
+  it('requires authentication for GET /profiles/me', async () => {
+    await request(app.getHttpServer()).get('/profiles/me').expect(401);
+  });
+
+  it('answers 404 on GET /profiles/me for a wallet without a profile', async () => {
+    const stranger = 'G' + 'E'.repeat(55);
+    await request(app.getHttpServer())
+      .get('/profiles/me')
+      .set('Authorization', `Bearer ${authService.generateToken(stranger)}`)
+      .expect(404);
+  });
+
+  it('returns the email from an update only to the owner', async () => {
+    const asOwner = await request(app.getHttpServer())
+      .put(`/profiles/${profileId}`)
+      .set('Authorization', ownerToken())
+      .send({ bio: 'Updated by the owner' })
+      .expect(200);
+    expect(asOwner.body.email).toBe(OWNER_EMAIL);
+
+    const asOther = await request(app.getHttpServer())
+      .put(`/profiles/${profileId}`)
+      .set('Authorization', `Bearer ${authService.generateToken(OTHER_ADDRESS)}`)
+      .send({ bio: 'Updated by someone else' })
+      .expect(200);
+    expect(asOther.body).not.toHaveProperty('email');
+  });
+});
