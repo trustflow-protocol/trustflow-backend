@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiParam, ApiResponse, ApiBearerAuth } from '@ne
 import { IpfsPinningService } from './ipfs-pinning.service';
 import { PinContentDto, PinRecordResponseDto } from './ipfs-pinning.dto';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../admin/admin.guard';
 
 @ApiTags('IPFS Pinning')
 @ApiBearerAuth('JWT-auth')
@@ -38,8 +39,11 @@ export class IpfsPinningController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List all pin records' })
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'List all pin records (admin only)' })
   @ApiResponse({ status: 200, type: [PinRecordResponseDto] })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin privileges required' })
   findAll() {
     return this.pinningService.findAll();
   }
@@ -54,9 +58,10 @@ export class IpfsPinningController {
   }
 
   @Post(':cid/verify')
+  @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Re-verify pin durability and top up replication if degraded',
+    summary: 'Re-verify pin durability and top up replication if degraded (admin only)',
     description:
       'Re-checks every provider believed to hold the pin and, if replication has dropped below the ' +
       'configured factor, attempts to restore it via any remaining providers. The re-pin worker calls ' +
@@ -64,16 +69,32 @@ export class IpfsPinningController {
   })
   @ApiParam({ name: 'cid', example: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' })
   @ApiResponse({ status: 200, type: PinRecordResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin privileges required' })
   @ApiResponse({ status: 404, description: 'Pin record not found' })
   verify(@Param('cid') cid: string) {
     return this.pinningService.reconcile(cid);
   }
 
   @Delete(':cid')
-  @ApiOperation({ summary: 'Unpin content from every provider currently holding it' })
+  @ApiOperation({
+    summary: 'Unpin content from every provider currently holding it',
+    description:
+      'The record only becomes `UNPINNED` (and `ipfs.pin.removed` only fires) once every provider ' +
+      'has released the pin. If a provider fails, the record moves to `UNPINNING`, that provider ' +
+      'stays `PINNED` with `lastError` set, and a 502 lists the per-provider results. Repeat the ' +
+      'request to retry only the providers that still hold the pin.',
+  })
   @ApiParam({ name: 'cid', example: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' })
   @ApiResponse({ status: 200, type: PinRecordResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin privileges required' })
   @ApiResponse({ status: 404, description: 'Pin record not found' })
+  @ApiResponse({
+    status: 502,
+    description:
+      'At least one provider failed to release the pin; the response body carries the per-provider results',
+  })
   unpin(@Param('cid') cid: string) {
     return this.pinningService.unpin(cid);
   }

@@ -28,6 +28,12 @@ export interface DriftRecord {
   detectedAt: string;
 }
 
+export interface ReconciliationError {
+  contractEscrowId: string;
+  message: string;
+  occurredAt: string;
+}
+
 export interface ReconciliationRun {
   runId: string;
   startedAt: string;
@@ -37,6 +43,8 @@ export interface ReconciliationRun {
   driftCount: number;
   repairedCount: number;
   drifts: DriftRecord[];
+  errorCount: number;
+  errors: ReconciliationError[];
 }
 
 /** Webhook events emitted by the reconciler. */
@@ -46,3 +54,4 @@ export const RECONCILIATION_EVENTS = {
 } as const;
 
 export const DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+export const DEFAULT_ESCROW_RECONCILIATION_SWEEP_CONCURRENCY = 8;

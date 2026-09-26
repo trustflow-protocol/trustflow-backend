@@ -1,4 +1,13 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Optional,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -227,7 +236,7 @@ export class EscrowService implements OnModuleInit {
   /** Links a DB row to its on-chain counterpart so the reconciler can diff the two. */
   async linkContractEscrowId(id: string, contractEscrowId: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     escrow.contractEscrowId = contractEscrowId;
 
     if (this.redis) {
@@ -256,10 +265,10 @@ export class EscrowService implements OnModuleInit {
    */
   async applyChainState(id: string, patch: ChainStatePatch): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     if (patch.status !== undefined) {
       if (!ESCROW_STATUSES.includes(patch.status)) {
-        throw new Error(`Invalid escrow status: ${String(patch.status)}`);
+        throw new BadRequestException(`Invalid escrow status: ${String(patch.status)}`);
       }
       escrow.status = patch.status;
     }
@@ -276,7 +285,7 @@ export class EscrowService implements OnModuleInit {
    */
   async correctStatus(id: string, patch: StatusCorrection): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     if (patch.status !== undefined) escrow.status = patch.status;
     if (patch.requiresManualReview !== undefined)
       escrow.requiresManualReview = patch.requiresManualReview;
@@ -320,9 +329,9 @@ export class EscrowService implements OnModuleInit {
 
   async fund(id: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     if (escrow.status !== 'pending') {
-      throw new Error(`Cannot fund escrow in status: ${escrow.status}`);
+      throw new BadRequestException(`Cannot fund escrow in status: ${escrow.status}`);
     }
     escrow.status = 'active';
     await this.persist(escrow, ESCROW_EVENTS.ESCROW_FUNDED);
@@ -331,7 +340,7 @@ export class EscrowService implements OnModuleInit {
 
   async release(id: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     escrow.status = 'released';
     await this.persist(escrow, ESCROW_EVENTS.ESCROW_RELEASED);
     return escrow;
@@ -339,7 +348,7 @@ export class EscrowService implements OnModuleInit {
 
   async cancel(id: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     escrow.status = 'cancelled';
     await this.persist(escrow, ESCROW_EVENTS.ESCROW_CANCELLED);
     return escrow;
@@ -347,7 +356,7 @@ export class EscrowService implements OnModuleInit {
 
   async split(id: string, splitPercentage: number): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     escrow.status = 'released';
     escrow.splitPercentage = splitPercentage;
     await this.persist(escrow, ESCROW_EVENTS.ESCROW_SPLIT);
@@ -356,9 +365,9 @@ export class EscrowService implements OnModuleInit {
 
   async raiseDispute(id: string, reason?: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
-    if (escrow.status === 'released') throw new Error('Cannot dispute a released escrow');
-    if (escrow.status === 'disputed') throw new Error('Escrow is already disputed');
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    if (escrow.status === 'released') throw new BadRequestException('Cannot dispute a released escrow');
+    if (escrow.status === 'disputed') throw new ConflictException('Escrow is already disputed');
 
     escrow.status = 'disputed';
     escrow.disputeReason = reason;

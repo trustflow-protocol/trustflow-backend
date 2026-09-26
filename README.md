@@ -86,9 +86,14 @@ REDIS_URL=redis://localhost:6379
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
+# allow (fail open, default) or deny (503 + Retry-After) when Redis is down; /auth/* always denies
+RATE_LIMIT_ON_REDIS_ERROR=allow
+REDIS_COMMAND_TIMEOUT_MS=1000
 ```
 
 See [`.env.example`](.env.example) for the full list of variables, including optional IPFS, database, and admin settings.
+
+**What dependencies are required?** See [Runtime Dependencies](docs/runtime-dependencies.md) for a detailed breakdown of each external service (Redis, PostgreSQL, Stellar, IPFS, etc.), what happens when they're unset or down, and which are mandatory for production.
 
 ### Running
 
@@ -136,7 +141,7 @@ plus a catalogue of known deviations from the intended model.
 | `/webhooks` | No (IP rate-limited only) | Webhooks |
 | `/health`, `/metrics` | No | Monitoring |
 | `/gigs` | Partial — reads public, writes require JWT | Gigs |
-| `/profiles` | Partial — reads public, writes require JWT | User Profiles |
+| `/profiles` | Partial — reads public (never include the email address), writes and `GET /profiles/me` require JWT | User Profiles |
 | `/deliverables` | Yes (JWT) | Deliverables |
 | `/dispute` | Yes (JWT) | Dispute Resolution |
 | `/reputation` | No | Reputation |

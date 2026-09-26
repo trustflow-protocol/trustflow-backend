@@ -79,6 +79,17 @@ const EnvSchema = z
       .url()
       .optional()
       .describe('Required for rate limiting, outbox relay, and distributed caches'),
+    REDIS_COMMAND_TIMEOUT_MS: z.preprocess(
+      blankToUndefined,
+      z.coerce
+        .number()
+        .int()
+        .positive()
+        .default(1000)
+        .describe(
+          'Max time a single Redis command may wait for a reply before it is rejected, so a stalled Redis costs milliseconds instead of seconds of retries',
+        ),
+    ),
 
     // Database Configuration (PostgreSQL)
     DATABASE_URL: z
@@ -119,6 +130,15 @@ const EnvSchema = z
     RATE_LIMIT_ABUSE_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
     RATE_LIMIT_ABUSE_THRESHOLD: z.coerce.number().int().positive().default(5),
     RATE_LIMIT_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
+    RATE_LIMIT_ON_REDIS_ERROR: z.preprocess(
+      blankToUndefined,
+      z
+        .enum(['allow', 'deny'])
+        .default('allow')
+        .describe(
+          'Default rate limiter behaviour when Redis is unreachable: allow (fail open) or deny (503 + Retry-After). Routes can override it with @RateLimitOnRedisError()',
+        ),
+    ),
 
     // Event Processing Configuration
     EVENT_PROCESSING_CONCURRENCY: z.coerce.number().int().positive().default(8),
@@ -323,3 +343,37 @@ export const config = new Proxy({} as EnvConfig, {
     return getConfig()[prop as keyof EnvConfig];
   },
 });
+
+/**
+ * Test-only helper: clears the cached config so it can be re-initialized.
+ * Used in Jest tests to reset state between test cases.
+ *
+ * @example
+ *   afterEach(() => {
+ *     resetEnvConfig();
+ *   });
+ */
+export function resetEnvConfig(): void {
+  validatedConfig = null;
+}
+
+/**
+ * Test-only helper: merges overrides into process.env, resets the config cache,
+ * and re-runs validation. Use in tests to set specific config values per test case.
+ *
+ * @param overrides - Environment variable overrides (e.g., { ADMIN_ADDRESSES: 'G...' })
+ * @throws {Error} if validation fails after merging overrides
+ *
+ * @example
+ *   beforeEach(() => {
+ *     setTestEnv({ ADMIN_ADDRESSES: 'GXXXXX' });
+ *   });
+ *   afterEach(() => {
+ *     resetEnvConfig();
+ *   });
+ */
+export function setTestEnv(overrides: Record<string, string>): void {
+  resetEnvConfig();
+  Object.assign(process.env, overrides);
+  validateEnv();
+}

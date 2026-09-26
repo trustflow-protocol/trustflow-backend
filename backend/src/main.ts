@@ -34,6 +34,7 @@ process.on('unhandledRejection', (reason: unknown) => {
     'Unhandled Promise Rejection',
     reason instanceof Error ? reason.stack : String(reason),
   );
+  process.exit(1);
 });
 
 // Capture uncaught synchronous exceptions and exit
@@ -199,4 +200,11 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+bootstrap().catch(error => {
+  Sentry.captureException(error);
+  logger.error(
+    'Bootstrap failed — shutting down',
+    error instanceof Error ? error.stack : String(error),
+  );
+  process.exit(1);
+});

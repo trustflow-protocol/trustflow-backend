@@ -43,6 +43,44 @@ describe('SentryExceptionFilter', () => {
     expect(filter).toBeDefined();
   });
 
+  describe('structured HttpException responses', () => {
+    it('forwards extra fields the handler attached, without letting them override the standard ones', () => {
+      const host = buildHost('/ipfs/pins/cid', 'DELETE');
+      const exception = new HttpException(
+        {
+          statusCode: HttpStatus.BAD_GATEWAY,
+          message: 'partial failure',
+          error: 'Bad Gateway',
+          failedProviders: ['pinata'],
+          path: '/spoofed',
+        },
+        HttpStatus.BAD_GATEWAY,
+      );
+      filter.catch(exception, host);
+
+      const { response } = host as unknown as { response: { status: jest.Mock; json: jest.Mock } };
+      expect(response.status).toHaveBeenCalledWith(HttpStatus.BAD_GATEWAY);
+      const body = response.json.mock.calls[0][0];
+      expect(body).toMatchObject({
+        statusCode: HttpStatus.BAD_GATEWAY,
+        message: 'partial failure',
+        failedProviders: ['pinata'],
+        path: '/ipfs/pins/cid',
+      });
+      expect(body).not.toHaveProperty('error');
+    });
+
+    it('keeps the body unchanged when the response carries only the standard fields', () => {
+      const host = buildHost();
+      filter.catch(new HttpException('Not Found', HttpStatus.NOT_FOUND), host);
+
+      const { response } = host as unknown as { response: { status: jest.Mock; json: jest.Mock } };
+      expect(Object.keys(response.json.mock.calls[0][0]).sort()).toEqual(
+        ['message', 'path', 'statusCode', 'timestamp'].sort(),
+      );
+    });
+  });
+
   describe('HttpException — 4xx (client errors)', () => {
     it('should respond with 404 status and NOT capture to Sentry', () => {
       const host = buildHost();
