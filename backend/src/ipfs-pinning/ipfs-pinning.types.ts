@@ -10,8 +10,14 @@ export enum PinStatus {
   DEGRADED = 'DEGRADED',
   /** Not currently pinned on any provider. */
   FAILED = 'FAILED',
-  /** Explicitly unpinned by the caller. */
+  /** Explicitly unpinned by the caller, and every provider confirmed it released the pin. */
   UNPINNED = 'UNPINNED',
+  /**
+   * An unpin was requested but at least one provider still holds the pin (its `unpin()`
+   * failed). The content is retained and `DELETE` can be retried; only the providers still
+   * holding the pin are contacted again. The re-pin worker leaves these records alone.
+   */
+  UNPINNING = 'UNPINNING',
 }
 
 export enum ProviderPinStatus {

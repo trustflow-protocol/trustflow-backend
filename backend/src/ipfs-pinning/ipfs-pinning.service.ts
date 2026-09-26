@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   Inject,
   Injectable,
@@ -33,6 +34,9 @@ const PINS_INDEX_KEY = 'pins:index';
 
 /** Emitted (see `GET /metrics`) every time a call falls back to the in-memory store. */
 export const IPFS_PINNING_PERSISTENCE_FALLBACK_METRIC = 'ipfs_pinning_persistence_fallback_total';
+
+/** Emitted every time a provider fails to release a pin during `unpin()`. */
+export const IPFS_UNPIN_FAILURE_METRIC = 'ipfs_unpin_failure_total';
 
 /**
  * Pin registry. Backed by Redis so pin metadata survives restarts and is shared across
@@ -151,6 +155,8 @@ export class IpfsPinningService implements OnModuleInit {
       createdAt: now,
       updatedAt: now,
     };
+    // A fresh pin request supersedes a half-finished unpin; let replicate() recompute the status.
+    if (record.status === PinStatus.UNPINNING) record.status = PinStatus.FAILED;
     record.replicationFactor = Math.max(record.replicationFactor, replicationFactor);
     this.content.set(cid, buffer);
     await this.persist(record);
@@ -196,7 +202,8 @@ export class IpfsPinningService implements OnModuleInit {
       }
     }
 
-    const buffer = this.content.get(cid);
+    // Never top up replication for a pin the caller asked to remove.
+    const buffer = record.status === PinStatus.UNPINNING ? undefined : this.content.get(cid);
     if (this.countHealthy(record) < record.replicationFactor && buffer) {
       await this.replicate(record, buffer).catch(error => {
         this.logger.warn(
@@ -225,31 +232,57 @@ export class IpfsPinningService implements OnModuleInit {
     return record;
   }
 
-  /** Unpins the CID from every provider currently holding it. */
+  /**
+   * Unpins the CID from every provider currently holding it.
+   *
+   * A provider entry only becomes `UNPINNED` once its `unpin()` succeeded (or the provider
+   * confirms the pin is already absent). If any provider fails, the record moves to
+   * `UNPINNING`, the retained content is kept, `ipfs.pin.removed` is NOT dispatched and a
+   * 502 carrying the per-provider results is thrown. Calling `unpin()` again retries only
+   * the providers that still hold the pin; once all have released it the removal completes.
+   */
   async unpin(cid: string): Promise<PinRecord> {
     const record = await this.findByCid(cid);
+    if (record.status === PinStatus.UNPINNED) return record;
 
     await Promise.all(
       record.providers
         .filter(entry => entry.status === ProviderPinStatus.PINNED)
         .map(async entry => {
-          const provider = this.providers.find(p => p.name === entry.provider);
           try {
-            await provider?.unpin(cid);
-          } catch (error) {
-            this.logger.warn(
-              `Failed to unpin ${cid} from ${entry.provider}: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            );
-          } finally {
+            await this.releasePin(cid, entry.provider);
             entry.status = ProviderPinStatus.UNPINNED;
+            entry.lastError = undefined;
+          } catch (error) {
+            entry.lastError = error instanceof Error ? error.message : String(error);
+            this.metrics?.increment(IPFS_UNPIN_FAILURE_METRIC, { provider: entry.provider });
+            this.logger.warn(`Failed to unpin ${cid} from ${entry.provider}: ${entry.lastError}`);
           }
         }),
     );
 
-    record.status = PinStatus.UNPINNED;
     record.updatedAt = new Date().toISOString();
+
+    const stillHolding = record.providers.filter(e => e.status === ProviderPinStatus.PINNED);
+    if (stillHolding.length > 0) {
+      record.status = PinStatus.UNPINNING;
+      await this.persist(record);
+
+      const failedProviders = stillHolding.map(entry => entry.provider);
+      throw new BadGatewayException({
+        statusCode: 502,
+        message:
+          `Failed to unpin ${cid} from ${failedProviders.join(', ')}; the pin is still held ` +
+          'there. Retry DELETE to release the remaining provider(s).',
+        error: 'Bad Gateway',
+        cid,
+        status: record.status,
+        failedProviders,
+        providers: record.providers,
+      });
+    }
+
+    record.status = PinStatus.UNPINNED;
     this.content.delete(cid);
     await this.persist(record);
 
@@ -314,6 +347,23 @@ export class IpfsPinningService implements OnModuleInit {
     }
   }
 
+  /**
+   * Asks a provider to drop the pin. An unregistered provider name is an error, not a
+   * success. When `unpin()` throws, the pin still counts as released if the provider
+   * reports it as absent (e.g. it was already removed out of band).
+   */
+  private async releasePin(cid: string, name: PinProviderName): Promise<void> {
+    const provider = this.providers.find(p => p.name === name);
+    if (!provider) throw new Error(`Provider ${name} is not registered`);
+
+    try {
+      await provider.unpin(cid);
+    } catch (unpinError) {
+      const stillPinned = await provider.verify(cid).catch(() => true);
+      if (stillPinned) throw unpinError;
+    }
+  }
+
   private upsertProviderEntry(record: PinRecord, name: PinProviderName): ProviderPinRecord {
     let entry = record.providers.find(p => p.provider === name);
     if (!entry) {
@@ -333,6 +383,11 @@ export class IpfsPinningService implements OnModuleInit {
 
   private finalizeStatus(record: PinRecord): void {
     const healthy = this.countHealthy(record);
+    // An in-progress unpin is only finished by a successful `unpin()`, never by health checks.
+    if (record.status === PinStatus.UNPINNING) {
+      record.updatedAt = new Date().toISOString();
+      return;
+    }
     if (healthy === 0) record.status = PinStatus.FAILED;
     else if (healthy < record.replicationFactor) record.status = PinStatus.DEGRADED;
     else record.status = PinStatus.HEALTHY;

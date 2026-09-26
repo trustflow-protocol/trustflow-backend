@@ -275,6 +275,8 @@ Provides visibility into Stellar RPC endpoint health and failover status. Requir
 | POST   | `/ipfs/pins/:cid/verify` | Re-verify durability and top up replication if degraded |
 | DELETE | `/ipfs/pins/:cid`    | Unpin from every provider currently holding the content      |
 
+A provider entry becomes `UNPINNED` only when that provider confirmed it released the pin (or reports it as already absent); an unregistered provider counts as a failure. If any provider fails, `DELETE` answers `502 Bad Gateway` with `failedProviders` and the per-provider results in `providers`, the record moves to status `UNPINNING` (the failed provider stays `PINNED` with `lastError`), the retained content is kept and `ipfs.pin.removed` is **not** sent. Repeat the `DELETE` to retry only the providers that still hold the pin; once all have released it the record becomes `UNPINNED` and the webhook fires. Failures are counted in `ipfs_unpin_failure_total{provider}`.
+
 ### Admin Analytics
 
 Restricted to wallet addresses listed in `ADMIN_ADDRESSES` (see [Environment Variables](#environment-variables)). All routes require a JWT (`Authorization: Bearer ...`) from an admin address and return `403 Forbidden` for anyone else.
@@ -416,7 +418,7 @@ When you register a webhook, you'll receive POST requests for these events:
 | `ipfs.pin.restored` | Replication restored after a loss             | CID, healthy provider count                |
 | `ipfs.pin.lost`      | A provider no longer holds a previously-pinned CID | CID, provider                        |
 | `ipfs.pin.failed`   | Every registered provider failed to pin a CID | CID                                        |
-| `ipfs.pin.removed`  | Content unpinned from all providers           | CID                                        |
+| `ipfs.pin.removed`  | Content released by **every** provider        | CID                                        |
 
 ### Webhook Payload Format
 

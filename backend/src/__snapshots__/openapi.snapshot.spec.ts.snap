@@ -603,6 +603,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
               "DEGRADED",
               "FAILED",
               "UNPINNED",
+              "UNPINNING",
             ],
             "type": "string",
           },
@@ -2886,6 +2887,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
     },
     "/ipfs/pins/{cid}": {
       "delete": {
+        "description": "The record only becomes \`UNPINNED\` (and \`ipfs.pin.removed\` only fires) once every provider has released the pin. If a provider fails, the record moves to \`UNPINNING\`, that provider stays \`PINNED\` with \`lastError\` set, and a 502 lists the per-provider results. Repeat the request to retry only the providers that still hold the pin.",
         "operationId": "IpfsPinningController_unpin",
         "parameters": [
           {
@@ -2911,6 +2913,9 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
           },
           "404": {
             "description": "Pin record not found",
+          },
+          "502": {
+            "description": "At least one provider failed to release the pin; the response body carries the per-provider results",
           },
         },
         "security": [

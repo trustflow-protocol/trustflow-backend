@@ -70,10 +70,22 @@ export class IpfsPinningController {
   }
 
   @Delete(':cid')
-  @ApiOperation({ summary: 'Unpin content from every provider currently holding it' })
+  @ApiOperation({
+    summary: 'Unpin content from every provider currently holding it',
+    description:
+      'The record only becomes `UNPINNED` (and `ipfs.pin.removed` only fires) once every provider ' +
+      'has released the pin. If a provider fails, the record moves to `UNPINNING`, that provider ' +
+      'stays `PINNED` with `lastError` set, and a 502 lists the per-provider results. Repeat the ' +
+      'request to retry only the providers that still hold the pin.',
+  })
   @ApiParam({ name: 'cid', example: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' })
   @ApiResponse({ status: 200, type: PinRecordResponseDto })
   @ApiResponse({ status: 404, description: 'Pin record not found' })
+  @ApiResponse({
+    status: 502,
+    description:
+      'At least one provider failed to release the pin; the response body carries the per-provider results',
+  })
   unpin(@Param('cid') cid: string) {
     return this.pinningService.unpin(cid);
   }

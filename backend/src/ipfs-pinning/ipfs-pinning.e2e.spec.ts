@@ -32,6 +32,7 @@ class FakePinProvider extends IpfsPinProvider {
   readonly pinned = new Map<string, Buffer>();
   failPin = false;
   failVerify = false;
+  failUnpin = false;
 
   constructor(name: PinProviderName) {
     super();
@@ -48,6 +49,7 @@ class FakePinProvider extends IpfsPinProvider {
   }
 
   async unpin(cid: string): Promise<void> {
+    if (this.failUnpin) throw new Error(`${this.name} refused the unpin`);
     this.pinned.delete(cid);
   }
 
@@ -60,6 +62,7 @@ class FakePinProvider extends IpfsPinProvider {
     this.pinned.clear();
     this.failPin = false;
     this.failVerify = false;
+    this.failUnpin = false;
   }
 }
 
@@ -258,6 +261,51 @@ describe('IPFS Pinning (API integration)', () => {
 
       expect(res.body.status).toBe('UNPINNED');
       expect(providerA.pinned.has(EXPECTED_CID)).toBe(false);
+      expect(providerB.pinned.has(EXPECTED_CID)).toBe(false);
+    });
+
+    it('answers 502 with per-provider results when a provider fails, and a retry completes the removal', async () => {
+      await request(app.getHttpServer())
+        .post('/ipfs/pins')
+        .set('Authorization', authHeader)
+        .send({ content: CONTENT_BASE64 })
+        .expect(201);
+      providerB.failUnpin = true;
+
+      const failed = await request(app.getHttpServer())
+        .delete(`/ipfs/pins/${EXPECTED_CID}`)
+        .set('Authorization', authHeader)
+        .expect(502);
+
+      expect(failed.body).toMatchObject({
+        statusCode: 502,
+        cid: EXPECTED_CID,
+        status: 'UNPINNING',
+        failedProviders: [PinProviderName.WEB3_STORAGE],
+        providers: [
+          expect.objectContaining({ provider: PinProviderName.PINATA, status: 'UNPINNED' }),
+          expect.objectContaining({
+            provider: PinProviderName.WEB3_STORAGE,
+            status: 'PINNED',
+            lastError: 'web3.storage refused the unpin',
+          }),
+        ],
+      });
+      expect(providerB.pinned.has(EXPECTED_CID)).toBe(true);
+
+      const record = await request(app.getHttpServer())
+        .get(`/ipfs/pins/${EXPECTED_CID}`)
+        .set('Authorization', authHeader)
+        .expect(200);
+      expect(record.body.status).toBe('UNPINNING');
+
+      providerB.failUnpin = false;
+      const retried = await request(app.getHttpServer())
+        .delete(`/ipfs/pins/${EXPECTED_CID}`)
+        .set('Authorization', authHeader)
+        .expect(200);
+
+      expect(retried.body.status).toBe('UNPINNED');
       expect(providerB.pinned.has(EXPECTED_CID)).toBe(false);
     });
 
