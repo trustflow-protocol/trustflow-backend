@@ -1,0 +1,4371 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`OpenAPI document matches the checked-in snapshot 1`] = `
+{
+  "components": {
+    "schemas": {
+      "AnalyticsOverviewDto": {
+        "properties": {
+          "disputes": {
+            "$ref": "#/components/schemas/DisputeAnalyticsDto",
+          },
+          "escrows": {
+            "$ref": "#/components/schemas/EscrowAnalyticsDto",
+          },
+          "generatedAt": {
+            "type": "string",
+          },
+          "gigs": {
+            "$ref": "#/components/schemas/GigAnalyticsDto",
+          },
+          "migrations": {
+            "$ref": "#/components/schemas/MigrationAnalyticsDto",
+          },
+          "reconciliation": {
+            "$ref": "#/components/schemas/ReconciliationAnalyticsDto",
+          },
+          "reputation": {
+            "$ref": "#/components/schemas/ReputationAnalyticsDto",
+          },
+        },
+        "required": [
+          "generatedAt",
+          "escrows",
+          "gigs",
+          "disputes",
+          "reputation",
+          "migrations",
+          "reconciliation",
+        ],
+        "type": "object",
+      },
+      "AssignJurorsDto": {
+        "properties": {
+          "jurors": {
+            "description": "3–7 juror Stellar addresses",
+            "items": {
+              "type": "string",
+            },
+            "maxItems": 7,
+            "minItems": 3,
+            "type": "array",
+          },
+        },
+        "required": [
+          "jurors",
+        ],
+        "type": "object",
+      },
+      "BackfillProgressDto": {
+        "properties": {
+          "batchSize": {
+            "type": "number",
+          },
+          "completedAt": {
+            "type": "string",
+          },
+          "cursor": {
+            "type": "string",
+          },
+          "failedRows": {
+            "type": "number",
+          },
+          "processedRows": {
+            "type": "number",
+          },
+          "startedAt": {
+            "type": "string",
+          },
+          "totalRows": {
+            "type": "number",
+          },
+          "updatedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "totalRows",
+          "processedRows",
+          "failedRows",
+          "batchSize",
+        ],
+        "type": "object",
+      },
+      "CastVoteDto": {
+        "properties": {
+          "jurorAddress": {
+            "description": "Stellar address of the voting juror",
+            "type": "string",
+          },
+          "vote": {
+            "enum": [
+              "depositor",
+              "beneficiary",
+              "split",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "jurorAddress",
+          "vote",
+        ],
+        "type": "object",
+      },
+      "ChallengeResponseDto": {
+        "properties": {
+          "challenge": {
+            "description": "Challenge message to sign with wallet",
+            "example": "Sign this message to authenticate with TrustFlow: a1b2c3d4e5f6...",
+            "type": "string",
+          },
+        },
+        "required": [
+          "challenge",
+        ],
+        "type": "object",
+      },
+      "DisputeAnalyticsDto": {
+        "properties": {
+          "byStep": {
+            "additionalProperties": {
+              "type": "number",
+            },
+            "example": {
+              "COMPLETED": 8,
+              "VOTING": 2,
+            },
+            "type": "object",
+          },
+          "byVerdict": {
+            "additionalProperties": {
+              "type": "number",
+            },
+            "description": "Only sagas that have reached a verdict are counted here",
+            "example": {
+              "BENEFICIARY_WINS": 4,
+              "DEPOSITOR_WINS": 3,
+              "SPLIT": 1,
+            },
+            "type": "object",
+          },
+          "total": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "total",
+          "byStep",
+          "byVerdict",
+        ],
+        "type": "object",
+      },
+      "DisputeSagaResponseDto": {
+        "properties": {
+          "assignedJurors": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "compensationReason": {
+            "type": "string",
+          },
+          "completedAt": {
+            "type": "string",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "currentStep": {
+            "enum": [
+              "PENDING",
+              "ESCALATION",
+              "JUROR_ASSIGNMENT",
+              "VOTING",
+              "PAYOUT",
+              "COMPLETED",
+              "COMPENSATING",
+              "FAILED",
+            ],
+            "type": "string",
+          },
+          "escalationTxHash": {
+            "type": "string",
+          },
+          "escrowId": {
+            "type": "string",
+          },
+          "failedAt": {
+            "type": "string",
+          },
+          "initiator": {
+            "type": "string",
+          },
+          "payoutTxHash": {
+            "type": "string",
+          },
+          "reason": {
+            "type": "string",
+          },
+          "sagaId": {
+            "type": "string",
+          },
+          "stepHistory": {
+            "items": {
+              "$ref": "#/components/schemas/SagaStepRecordDto",
+            },
+            "type": "array",
+          },
+          "updatedAt": {
+            "type": "string",
+          },
+          "verdict": {
+            "enum": [
+              "DEPOSITOR_WINS",
+              "BENEFICIARY_WINS",
+              "SPLIT",
+            ],
+            "type": "string",
+          },
+          "votes": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "sagaId",
+          "escrowId",
+          "initiator",
+          "reason",
+          "currentStep",
+          "stepHistory",
+          "createdAt",
+          "updatedAt",
+        ],
+        "type": "object",
+      },
+      "DriftRecordDto": {
+        "properties": {
+          "chainValue": {
+            "type": "object",
+          },
+          "contractEscrowId": {
+            "type": "string",
+          },
+          "dbValue": {
+            "type": "object",
+          },
+          "detectedAt": {
+            "type": "string",
+          },
+          "driftType": {
+            "enum": [
+              "status_mismatch",
+              "amount_mismatch",
+              "missing_in_db",
+              "missing_on_chain",
+            ],
+            "type": "string",
+          },
+          "repairError": {
+            "type": "string",
+          },
+          "repaired": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "contractEscrowId",
+          "driftType",
+          "repaired",
+          "detectedAt",
+        ],
+        "type": "object",
+      },
+      "EscalateDisputeDto": {
+        "properties": {
+          "initiator": {
+            "description": "Stellar address of the initiating party",
+            "example": "GXXX...",
+            "type": "string",
+          },
+          "reason": {
+            "description": "Reason for the dispute",
+            "maxLength": 500,
+            "minLength": 10,
+            "type": "string",
+          },
+        },
+        "required": [
+          "initiator",
+          "reason",
+        ],
+        "type": "object",
+      },
+      "EscrowAnalyticsDto": {
+        "properties": {
+          "byStatus": {
+            "additionalProperties": {
+              "type": "number",
+            },
+            "example": {
+              "active": 12,
+              "cancelled": 1,
+              "disputed": 2,
+              "pending": 3,
+              "released": 40,
+            },
+            "type": "object",
+          },
+          "total": {
+            "type": "number",
+          },
+          "totalValueXLM": {
+            "description": "Sum of amountXLM across every escrow, regardless of status",
+            "type": "number",
+          },
+        },
+        "required": [
+          "total",
+          "byStatus",
+          "totalValueXLM",
+        ],
+        "type": "object",
+      },
+      "ExecutePayoutDto": {
+        "properties": {
+          "splitPercentage": {
+            "description": "Depositor share percentage for a split verdict (0–100)",
+            "example": 50,
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "GigAnalyticsDto": {
+        "properties": {
+          "byStatus": {
+            "additionalProperties": {
+              "type": "number",
+            },
+            "example": {
+              "accepted": 20,
+              "cancelled": 1,
+              "expired": 3,
+              "open": 5,
+            },
+            "type": "object",
+          },
+          "total": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "total",
+          "byStatus",
+        ],
+        "type": "object",
+      },
+      "HandleReorgDto": {
+        "properties": {
+          "contractId": {
+            "description": "Contract ID affected by reorg",
+            "type": "string",
+          },
+          "fromLedger": {
+            "description": "Ledger sequence to reprocess from",
+            "type": "number",
+          },
+        },
+        "required": [
+          "contractId",
+          "fromLedger",
+        ],
+        "type": "object",
+      },
+      "IngestLedgerDto": {
+        "properties": {
+          "contractId": {
+            "description": "Contract ID to ingest events for",
+            "type": "string",
+          },
+          "ledger": {
+            "description": "Ledger sequence to ingest",
+            "type": "number",
+          },
+        },
+        "required": [
+          "contractId",
+          "ledger",
+        ],
+        "type": "object",
+      },
+      "MigrationAnalyticsDto": {
+        "properties": {
+          "byStatus": {
+            "additionalProperties": {
+              "type": "number",
+            },
+            "example": {
+              "COMPLETED": 4,
+              "FAILED": 1,
+            },
+            "type": "object",
+          },
+          "total": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "total",
+          "byStatus",
+        ],
+        "type": "object",
+      },
+      "MigrationDefinitionResponseDto": {
+        "properties": {
+          "description": {
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+          "targetTable": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "name",
+          "targetTable",
+          "description",
+        ],
+        "type": "object",
+      },
+      "MigrationRunResponseDto": {
+        "properties": {
+          "completedAt": {
+            "type": "string",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "currentPhase": {
+            "enum": [
+              "EXPAND",
+              "BACKFILL",
+              "CONTRACT",
+              "ROLLBACK",
+            ],
+            "type": "string",
+          },
+          "failedAt": {
+            "type": "string",
+          },
+          "migrationName": {
+            "type": "string",
+          },
+          "progress": {
+            "$ref": "#/components/schemas/BackfillProgressDto",
+          },
+          "rollbackReason": {
+            "type": "string",
+          },
+          "runId": {
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "EXPANDING",
+              "BACKFILLING",
+              "CONTRACTING",
+              "COMPLETED",
+              "ROLLING_BACK",
+              "ROLLED_BACK",
+              "FAILED",
+            ],
+            "type": "string",
+          },
+          "stepHistory": {
+            "items": {
+              "$ref": "#/components/schemas/MigrationStepRecordDto",
+            },
+            "type": "array",
+          },
+          "targetTable": {
+            "type": "string",
+          },
+          "updatedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "runId",
+          "migrationName",
+          "targetTable",
+          "status",
+          "progress",
+          "stepHistory",
+          "createdAt",
+          "updatedAt",
+        ],
+        "type": "object",
+      },
+      "MigrationStepRecordDto": {
+        "properties": {
+          "completedAt": {
+            "type": "string",
+          },
+          "error": {
+            "type": "string",
+          },
+          "failedAt": {
+            "type": "string",
+          },
+          "phase": {
+            "enum": [
+              "EXPAND",
+              "BACKFILL",
+              "CONTRACT",
+              "ROLLBACK",
+            ],
+            "type": "string",
+          },
+          "startedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "phase",
+          "startedAt",
+        ],
+        "type": "object",
+      },
+      "PinContentDto": {
+        "properties": {
+          "content": {
+            "description": "Base64-encoded bytes of the deliverable to pin. Maximum decoded size is 10 MB (base64 overhead adds ~33%, so the encoded string cap is ~13.6 MB, enforced here as 14,316,560 base64 characters).",
+            "example": "SGVsbG8sIFRydXN0RmxvdyE=",
+            "type": "string",
+          },
+          "expectedCid": {
+            "description": "CID the caller expects the content to hash to. If provided and it does not match the server-computed content hash, the pin request is rejected with 400 before any provider is contacted.",
+            "example": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+            "type": "string",
+          },
+          "filename": {
+            "description": "Original filename, stored for display purposes only",
+            "type": "string",
+          },
+          "replicationFactor": {
+            "default": 2,
+            "description": "Number of providers that must successfully hold the pin. Clamped to the number of registered providers.",
+            "maximum": 5,
+            "minimum": 1,
+            "type": "number",
+          },
+        },
+        "required": [
+          "content",
+        ],
+        "type": "object",
+      },
+      "PinRecordResponseDto": {
+        "properties": {
+          "cid": {
+            "description": "Content identifier (CIDv1, raw, sha2-256)",
+            "type": "string",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "filename": {
+            "type": "string",
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderPinRecordDto",
+            },
+            "type": "array",
+          },
+          "replicationFactor": {
+            "type": "number",
+          },
+          "size": {
+            "type": "number",
+          },
+          "status": {
+            "enum": [
+              "HEALTHY",
+              "DEGRADED",
+              "FAILED",
+              "UNPINNED",
+            ],
+            "type": "string",
+          },
+          "updatedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "cid",
+          "size",
+          "replicationFactor",
+          "status",
+          "providers",
+          "createdAt",
+          "updatedAt",
+        ],
+        "type": "object",
+      },
+      "ProviderPinRecordDto": {
+        "properties": {
+          "attempts": {
+            "type": "number",
+          },
+          "lastError": {
+            "type": "string",
+          },
+          "lastVerifiedAt": {
+            "type": "string",
+          },
+          "pinnedAt": {
+            "type": "string",
+          },
+          "provider": {
+            "enum": [
+              "pinata",
+              "web3.storage",
+              "infura",
+            ],
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "PINNED",
+              "FAILED",
+              "UNPINNED",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "provider",
+          "status",
+          "attempts",
+        ],
+        "type": "object",
+      },
+      "ReconciliationAnalyticsDto": {
+        "properties": {
+          "lastRunAt": {
+            "description": "completedAt of the most recent run, if any have run yet",
+            "type": "string",
+          },
+          "totalDriftsDetected": {
+            "type": "number",
+          },
+          "totalDriftsRepaired": {
+            "type": "number",
+          },
+          "totalRuns": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "totalRuns",
+          "totalDriftsDetected",
+          "totalDriftsRepaired",
+        ],
+        "type": "object",
+      },
+      "ReconciliationRunResponseDto": {
+        "properties": {
+          "checked": {
+            "type": "number",
+          },
+          "completedAt": {
+            "type": "string",
+          },
+          "driftCount": {
+            "type": "number",
+          },
+          "drifts": {
+            "items": {
+              "$ref": "#/components/schemas/DriftRecordDto",
+            },
+            "type": "array",
+          },
+          "repairedCount": {
+            "type": "number",
+          },
+          "runId": {
+            "type": "string",
+          },
+          "startedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "runId",
+          "startedAt",
+          "completedAt",
+          "checked",
+          "driftCount",
+          "repairedCount",
+          "drifts",
+        ],
+        "type": "object",
+      },
+      "ReputationAnalyticsDto": {
+        "properties": {
+          "topAddresses": {
+            "items": {
+              "$ref": "#/components/schemas/ReputationScoreResponseDto",
+            },
+            "type": "array",
+          },
+          "trackedAddresses": {
+            "description": "Distinct addresses with a materialized reputation score",
+            "type": "number",
+          },
+        },
+        "required": [
+          "trackedAddresses",
+          "topAddresses",
+        ],
+        "type": "object",
+      },
+      "ReputationEventLogEntryDto": {
+        "properties": {
+          "contribution": {
+            "description": "Signed contribution to the score from this single event",
+            "type": "number",
+          },
+          "counterparty": {
+            "type": "string",
+          },
+          "occurredAt": {
+            "type": "string",
+          },
+          "type": {
+            "enum": [
+              "escrow_completed",
+              "dispute_won",
+              "dispute_lost",
+              "dispute_split",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "type",
+          "counterparty",
+          "contribution",
+          "occurredAt",
+        ],
+        "type": "object",
+      },
+      "ReputationScoreResponseDto": {
+        "properties": {
+          "address": {
+            "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            "type": "string",
+          },
+          "distinctCounterparties": {
+            "description": "Number of distinct counterparties this address has interacted with",
+            "type": "number",
+          },
+          "eventCount": {
+            "description": "Total escrow/dispute events that have contributed to this score",
+            "type": "number",
+          },
+          "lastUpdatedAt": {
+            "type": "string",
+          },
+          "recentEvents": {
+            "items": {
+              "$ref": "#/components/schemas/ReputationEventLogEntryDto",
+            },
+            "type": "array",
+          },
+          "score": {
+            "description": "Time-decayed, Sybil-dampened trust score derived from escrow completion and dispute history",
+            "example": 42.5,
+            "type": "number",
+          },
+        },
+        "required": [
+          "address",
+          "score",
+          "eventCount",
+          "distinctCounterparties",
+          "recentEvents",
+          "lastUpdatedAt",
+        ],
+        "type": "object",
+      },
+      "RunMigrationDto": {
+        "properties": {
+          "batchDelayMs": {
+            "description": "Delay in milliseconds between backfill batches, to further reduce load on the target table",
+            "example": 0,
+            "maximum": 60000,
+            "minimum": 0,
+            "type": "number",
+          },
+          "batchSize": {
+            "description": "Number of rows to process per backfill batch",
+            "example": 100,
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "RunReconciliationDto": {
+        "properties": {
+          "contractEscrowIds": {
+            "description": "Contract escrow IDs to check for a missed creation event (present on-chain, absent from the DB). Not required for ordinary status/amount drift, which is checked automatically for every DB-linked escrow.",
+            "example": [
+              "esc-chain-0x1a2b",
+            ],
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+        },
+        "type": "object",
+      },
+      "SagaStepRecordDto": {
+        "properties": {
+          "compensatedAt": {
+            "type": "string",
+          },
+          "completedAt": {
+            "type": "string",
+          },
+          "error": {
+            "type": "string",
+          },
+          "failedAt": {
+            "type": "string",
+          },
+          "startedAt": {
+            "type": "string",
+          },
+          "step": {
+            "enum": [
+              "PENDING",
+              "ESCALATION",
+              "JUROR_ASSIGNMENT",
+              "VOTING",
+              "PAYOUT",
+              "COMPLETED",
+              "COMPENSATING",
+              "FAILED",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "step",
+          "startedAt",
+        ],
+        "type": "object",
+      },
+      "StartPollingDto": {
+        "properties": {
+          "contractId": {
+            "description": "Contract ID to monitor",
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "TokenResponseDto": {
+        "properties": {
+          "token": {
+            "description": "JWT token for API authentication",
+            "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+            "type": "string",
+          },
+        },
+        "required": [
+          "token",
+        ],
+        "type": "object",
+      },
+      "VerifyDto": {
+        "properties": {
+          "address": {
+            "description": "Stellar wallet address",
+            "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            "type": "string",
+          },
+          "signature": {
+            "description": "Base64-encoded signature of the challenge message",
+            "example": "SGVsbG8gV29ybGQh...",
+            "type": "string",
+          },
+        },
+        "required": [
+          "address",
+          "signature",
+        ],
+        "type": "object",
+      },
+    },
+    "securitySchemes": {
+      "JWT-auth": {
+        "bearerFormat": "JWT",
+        "description": "Enter JWT token obtained from /auth/login endpoint",
+        "scheme": "bearer",
+        "type": "http",
+      },
+    },
+  },
+  "info": {
+    "contact": {
+      "email": "support@trustflow.xyz",
+      "name": "TrustFlow Protocol",
+      "url": "https://trustflow.xyz",
+    },
+    "description": "The TrustFlow Backend API provides off-chain services for the TrustFlow gig economy platform. It handles authentication, escrow management, webhook dispatch, and Stellar blockchain integration.
+
+**Wallet-Signature Authentication:** Challenge-response auth using Stellar wallet signatures. Challenges use single-use nonces with 60-second TTLs and are stored in a distributed Redis nonce store that blocks replay attacks across all API nodes. Note: several endpoints (e.g. Escrow, Webhooks) are currently unauthenticated and rely on IP-scoped rate limiting only — per-wallet limits do not apply to them. See individual endpoint docs for the applicable security model.
+
+**Error Monitoring:** All 5xx errors and unhandled exceptions are automatically captured by Sentry for real-time alerting and triage. Set the \`SENTRY_DSN\` environment variable to enable.
+
+**Rate Limiting:** Authenticated endpoints benefit from coordinated per-IP and per-wallet distributed token-bucket limits across API nodes. The wallet identity used for the per-wallet bucket is always derived from a cryptographically verified JWT (never from request body/query/param values, which a client fully controls) — a request with a missing or invalid bearer token falls back to IP-scoped limiting only. Repeated limit violations are tracked in a sliding abuse window and can trigger temporary lockouts. When a request is rejected, the API returns \`429 Too Many Requests\` with \`retryAfter\` and \`scope\` fields. Health check (\`/health\`) and metrics (\`/metrics\`) endpoints are exempt from rate limiting. Requires \`REDIS_URL\` to be configured.
+
+**Transactional Outbox:** Gig state changes and their domain events are committed in the same Redis MULTI/EXEC transaction. A background relay delivers each event at least once to the WebSocket gateway channel, worker queue, and registered webhooks. Consumers must deduplicate by \`dedupKey\`.",
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT",
+    },
+    "title": "TrustFlow API",
+    "version": "1.0.0",
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/admin/analytics/disputes": {
+      "get": {
+        "operationId": "AdminController_getDisputeAnalytics",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeAnalyticsDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "401": {
+            "description": "Missing or invalid JWT",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Dispute saga analytics: totals, step, and verdict breakdown",
+        "tags": [
+          "Admin",
+        ],
+      },
+    },
+    "/admin/analytics/escrows": {
+      "get": {
+        "operationId": "AdminController_getEscrowAnalytics",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EscrowAnalyticsDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "401": {
+            "description": "Missing or invalid JWT",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Escrow analytics: totals and status breakdown",
+        "tags": [
+          "Admin",
+        ],
+      },
+    },
+    "/admin/analytics/gigs": {
+      "get": {
+        "operationId": "AdminController_getGigAnalytics",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GigAnalyticsDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "401": {
+            "description": "Missing or invalid JWT",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Gig solicitation analytics: totals and status breakdown",
+        "tags": [
+          "Admin",
+        ],
+      },
+    },
+    "/admin/analytics/overview": {
+      "get": {
+        "description": "Aggregates escrow, gig, dispute, reputation, migration, and reconciliation state into a single dashboard payload. Every figure is computed on demand from the owning service — nothing is cached, so this always reflects current state. Restricted to addresses listed in \`ADMIN_ADDRESSES\`.",
+        "operationId": "AdminController_getOverview",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsOverviewDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "401": {
+            "description": "Missing or invalid JWT",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "System-wide analytics snapshot for protocol admins",
+        "tags": [
+          "Admin",
+        ],
+      },
+    },
+    "/auth/challenge": {
+      "get": {
+        "description": "Generates a single-use, time-limited challenge message for wallet signature. The challenge nonce is stored server-side with a 60-second TTL and is enforceably single-use. In multi-node deployments, nonces are stored in Redis for distributed replay protection.",
+        "operationId": "AuthController_getChallenge",
+        "parameters": [
+          {
+            "description": "Stellar wallet address (G... public key)",
+            "in": "query",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeResponseDto",
+                },
+              },
+            },
+            "description": "Challenge generated successfully (valid for 60 seconds)",
+          },
+          "400": {
+            "description": "Invalid Stellar address format",
+          },
+        },
+        "summary": "Get authentication challenge",
+        "tags": [
+          "Authentication",
+        ],
+      },
+    },
+    "/auth/verify": {
+      "post": {
+        "description": "Verifies the Stellar wallet-signed challenge and returns a JWT token. The challenge nonce is consumed atomically (single-use) and replay attempts are blocked. Each nonce is only valid for 60 seconds after generation.",
+        "operationId": "AuthController_verify",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyDto",
+              },
+            },
+          },
+          "description": "Signature verification details",
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponseDto",
+                },
+              },
+            },
+            "description": "Signature verified, JWT token generated",
+          },
+          "401": {
+            "description": "Invalid signature, expired challenge, or replay attempt blocked",
+          },
+        },
+        "summary": "Verify wallet signature",
+        "tags": [
+          "Authentication",
+        ],
+      },
+    },
+    "/deliverables": {
+      "post": {
+        "operationId": "DeliverableController_upload",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "description": "Base64-encoded file content",
+                    "type": "string",
+                  },
+                  "filename": {
+                    "example": "audit-report.pdf",
+                    "type": "string",
+                  },
+                  "freelancer": {
+                    "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                    "type": "string",
+                  },
+                  "gigId": {
+                    "example": "gig-1234567890-ab12cd",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "gigId",
+                  "freelancer",
+                  "content",
+                  "filename",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "description": "Deliverable uploaded and pinned",
+          },
+          "503": {
+            "description": "IPFS pinning failed",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Upload a deliverable and pin to IPFS",
+        "tags": [
+          "Deliverables",
+        ],
+      },
+    },
+    "/deliverables/gig/{gigId}": {
+      "get": {
+        "operationId": "DeliverableController_findByGig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gigId",
+            "required": true,
+            "schema": {
+              "example": "gig-1234567890-ab12cd",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "List of deliverables",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "List deliverables for a gig",
+        "tags": [
+          "Deliverables",
+        ],
+      },
+    },
+    "/deliverables/{id}": {
+      "get": {
+        "operationId": "DeliverableController_findOne",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "del-1234567890-ab12cd",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Deliverable details",
+          },
+          "404": {
+            "description": "Deliverable not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Get a deliverable by ID",
+        "tags": [
+          "Deliverables",
+        ],
+      },
+    },
+    "/dispute": {
+      "get": {
+        "operationId": "DisputeSagaController_findAll",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DisputeSagaResponseDto",
+                  },
+                  "type": "array",
+                },
+              },
+            },
+            "description": "",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "List all dispute sagas",
+        "tags": [
+          "Dispute Resolution",
+        ],
+      },
+    },
+    "/dispute/escrow/{escrowId}": {
+      "get": {
+        "operationId": "DisputeSagaController_findByEscrow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "escrowId",
+            "required": true,
+            "schema": {
+              "example": "esc-1234567890",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeSagaResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "404": {
+            "description": "No active dispute saga for this escrow",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Get the active dispute saga for an escrow",
+        "tags": [
+          "Dispute Resolution",
+        ],
+      },
+    },
+    "/dispute/escrow/{escrowId}/escalate": {
+      "post": {
+        "description": "Opens a new dispute saga for the escrow. Freezes the escrow and notifies juror pool via Discord. Compensating action: restores escrow status to active if this step fails.",
+        "operationId": "DisputeSagaController_escalate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "escrowId",
+            "required": true,
+            "schema": {
+              "example": "esc-1234567890",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EscalateDisputeDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeSagaResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "400": {
+            "description": "Escrow already released",
+          },
+          "404": {
+            "description": "Escrow not found",
+          },
+          "409": {
+            "description": "Active saga already exists for this escrow",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Step 1 — Escalate dispute",
+        "tags": [
+          "Dispute Resolution",
+        ],
+      },
+    },
+    "/dispute/{sagaId}": {
+      "get": {
+        "operationId": "DisputeSagaController_findOne",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sagaId",
+            "required": true,
+            "schema": {
+              "example": "saga-1234567890-abc",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeSagaResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "404": {
+            "description": "Saga not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Get a dispute saga by ID",
+        "tags": [
+          "Dispute Resolution",
+        ],
+      },
+    },
+    "/dispute/{sagaId}/assign-jurors": {
+      "post": {
+        "description": "Assigns 3–7 jurors to the dispute. Compensating action: clears the juror list and reverts the saga to the assignment step.",
+        "operationId": "DisputeSagaController_assignJurors",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sagaId",
+            "required": true,
+            "schema": {
+              "example": "saga-1234567890-abc",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignJurorsDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeSagaResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "400": {
+            "description": "Saga not at JUROR_ASSIGNMENT step",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Step 2 — Assign jurors",
+        "tags": [
+          "Dispute Resolution",
+        ],
+      },
+    },
+    "/dispute/{sagaId}/payout": {
+      "post": {
+        "description": "Releases funds based on the recorded verdict. For SPLIT verdicts, an optional splitPercentage (0–100, depositor share) can be provided; defaults to 50. Compensating action: re-flags the escrow as disputed and marks it for manual admin review.",
+        "operationId": "DisputeSagaController_executePayout",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sagaId",
+            "required": true,
+            "schema": {
+              "example": "saga-1234567890-abc",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutePayoutDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeSagaResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "400": {
+            "description": "No verdict or saga not at PAYOUT step",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Step 4 — Execute payout",
+        "tags": [
+          "Dispute Resolution",
+        ],
+      },
+    },
+    "/dispute/{sagaId}/vote": {
+      "post": {
+        "description": "Records a vote from an assigned juror. When all jurors have voted, the verdict is computed automatically via majority rule and the saga advances to the PAYOUT step. Compensating action: removes the vote if an error occurs mid-recording.",
+        "operationId": "DisputeSagaController_castVote",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sagaId",
+            "required": true,
+            "schema": {
+              "example": "saga-1234567890-abc",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CastVoteDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeSagaResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "400": {
+            "description": "Juror not assigned or saga not at VOTING step",
+          },
+          "409": {
+            "description": "Juror has already voted",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Step 3 — Cast a juror vote",
+        "tags": [
+          "Dispute Resolution",
+        ],
+      },
+    },
+    "/escrow-reconciliation/run": {
+      "post": {
+        "description": "Checks every DB escrow linked to a contract ID against its on-chain state, repairing status/amount drift by trusting chain as the source of truth. Optionally also checks the supplied contractEscrowIds for a missed creation event (present on-chain, absent from the DB).",
+        "operationId": "EscrowReconciliationController_run",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunReconciliationDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationRunResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Diff on-chain escrow state against the DB and repair any drift found",
+        "tags": [
+          "Escrow Reconciliation",
+        ],
+      },
+    },
+    "/escrow-reconciliation/runs": {
+      "get": {
+        "operationId": "EscrowReconciliationController_listRuns",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReconciliationRunResponseDto",
+                  },
+                  "type": "array",
+                },
+              },
+            },
+            "description": "",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "List all reconciliation runs, most recent first",
+        "tags": [
+          "Escrow Reconciliation",
+        ],
+      },
+    },
+    "/escrow-reconciliation/runs/{runId}": {
+      "get": {
+        "operationId": "EscrowReconciliationController_getRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "example": "recon-1234567890-abcd1234",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationRunResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "404": {
+            "description": "Run not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Get a reconciliation run by ID, including its drift report",
+        "tags": [
+          "Escrow Reconciliation",
+        ],
+      },
+    },
+    "/escrows": {
+      "post": {
+        "description": "Creates a new escrow vault with depositor, beneficiary, and amount.",
+        "operationId": "EscrowController_create",
+        "parameters": [
+          {
+            "description": "A unique key (e.g. UUID) to ensure this request is idempotent. Retries with the same key and body return the original response without creating a duplicate. Reusing the key with a different body returns 422.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "amountXLM": {
+                    "description": "Amount in XLM",
+                    "example": "100",
+                    "type": "string",
+                  },
+                  "beneficiary": {
+                    "description": "Stellar address of the beneficiary",
+                    "example": "GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+                    "type": "string",
+                  },
+                  "depositor": {
+                    "description": "Stellar address of the depositor",
+                    "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "depositor",
+                  "beneficiary",
+                  "amountXLM",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "description": "Escrow creation details",
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "amountXLM": {
+                      "type": "string",
+                    },
+                    "beneficiary": {
+                      "type": "string",
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "depositor": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "example": "esc-1234567890",
+                      "type": "string",
+                    },
+                    "status": {
+                      "enum": [
+                        "pending",
+                        "active",
+                        "released",
+                        "disputed",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Escrow created successfully",
+          },
+        },
+        "summary": "Create new escrow",
+        "tags": [
+          "Escrow",
+        ],
+      },
+    },
+    "/escrows/depositor/{address}": {
+      "get": {
+        "description": "Retrieves escrows created by a specific depositor address with pagination.",
+        "operationId": "EscrowController_findByDepositor",
+        "parameters": [
+          {
+            "description": "Stellar address of the depositor",
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              "type": "string",
+            },
+          },
+          {
+            "description": "Number of items to skip. Defaults to 0.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Maximum number of items to return (max 100). Defaults to 20.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "properties": {
+                          "amountXLM": {
+                            "type": "string",
+                          },
+                          "beneficiary": {
+                            "type": "string",
+                          },
+                          "createdAt": {
+                            "format": "date-time",
+                            "type": "string",
+                          },
+                          "depositor": {
+                            "type": "string",
+                          },
+                          "id": {
+                            "type": "string",
+                          },
+                          "status": {
+                            "type": "string",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                    "total": {
+                      "type": "number",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Paginated list of escrows",
+          },
+        },
+        "summary": "Get escrows by depositor",
+        "tags": [
+          "Escrow",
+        ],
+      },
+    },
+    "/escrows/{id}": {
+      "get": {
+        "description": "Retrieves escrow details including status and milestone information.",
+        "operationId": "EscrowController_findOne",
+        "parameters": [
+          {
+            "description": "Escrow ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "esc-1234567890",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "amountXLM": {
+                      "type": "string",
+                    },
+                    "beneficiary": {
+                      "type": "string",
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "depositor": {
+                      "type": "string",
+                    },
+                    "disputeReason": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "disputedAt": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "id": {
+                      "type": "string",
+                    },
+                    "status": {
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Escrow details",
+          },
+          "404": {
+            "description": "Escrow not found",
+          },
+        },
+        "summary": "Get escrow by ID",
+        "tags": [
+          "Escrow",
+        ],
+      },
+    },
+    "/escrows/{id}/dispute": {
+      "post": {
+        "description": "Raises a dispute for an escrow. Triggers webhook events and Discord notifications to alert jurors.",
+        "operationId": "EscrowController_raiseDispute",
+        "parameters": [
+          {
+            "description": "Escrow ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "esc-1234567890",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "reason": {
+                    "description": "Reason for the dispute",
+                    "example": "Work not delivered as specified",
+                    "type": "string",
+                  },
+                },
+                "type": "object",
+              },
+            },
+          },
+          "description": "Dispute details",
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "disputeReason": {
+                      "type": "string",
+                    },
+                    "disputedAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "id": {
+                      "type": "string",
+                    },
+                    "status": {
+                      "example": "disputed",
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Dispute raised successfully. Discord notification sent if configured.",
+          },
+          "400": {
+            "description": "Escrow already disputed or released",
+          },
+          "404": {
+            "description": "Escrow not found",
+          },
+        },
+        "summary": "Raise a dispute",
+        "tags": [
+          "Escrow",
+        ],
+      },
+    },
+    "/escrows/{id}/release": {
+      "post": {
+        "description": "Approves a milestone tranche and releases funds to the beneficiary.",
+        "operationId": "EscrowController_release",
+        "parameters": [
+          {
+            "description": "Escrow ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "esc-1234567890",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Escrow released successfully",
+          },
+          "404": {
+            "description": "Escrow not found",
+          },
+        },
+        "summary": "Release escrow funds",
+        "tags": [
+          "Escrow",
+        ],
+      },
+    },
+    "/escrows/{id}/release/transaction": {
+      "get": {
+        "description": "Builds and simulates a Soroban \`release\` invocation for a chain-linked escrow. The backend never holds a signing key for this — see the #180 write-path spike write-up. Client flow: (1) call this endpoint to get unsigned XDR, (2) sign it locally with the sourceAccount wallet, (3) submit the signed envelope directly to Soroban RPC — the resulting chain event flows back into this API through the existing event-ingestion pipeline. Requires TRUSTFLOW_CONTRACT_ID to be configured and the escrow to be linked to an on-chain ID.",
+        "operationId": "EscrowController_buildReleaseTransaction",
+        "parameters": [
+          {
+            "description": "Escrow ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "esc-1234567890",
+              "type": "string",
+            },
+          },
+          {
+            "description": "Stellar address that will sign and submit the transaction",
+            "in": "query",
+            "name": "sourceAccount",
+            "required": true,
+            "schema": {
+              "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "contractId": {
+                      "example": "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                      "type": "string",
+                    },
+                    "network": {
+                      "example": "TESTNET",
+                      "type": "string",
+                    },
+                    "networkPassphrase": {
+                      "example": "Test SDF Network ; September 2015",
+                      "type": "string",
+                    },
+                    "sourceAccount": {
+                      "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                      "type": "string",
+                    },
+                    "xdr": {
+                      "example": "AAAAAgAAAAA...",
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Unsigned release transaction XDR, ready for the caller to sign and submit",
+          },
+          "400": {
+            "description": "Invalid or missing sourceAccount",
+          },
+          "404": {
+            "description": "Escrow not found or not linked to an on-chain escrow",
+          },
+          "503": {
+            "description": "TRUSTFLOW_CONTRACT_ID is not configured",
+          },
+        },
+        "summary": "Build an unsigned on-chain release transaction (prototype, spike #180)",
+        "tags": [
+          "Escrow",
+        ],
+      },
+    },
+    "/event-ingestion/ingest": {
+      "post": {
+        "operationId": "EventIngestionController_ingestLedger",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestLedgerDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "description": "Events ingested successfully",
+          },
+        },
+        "summary": "Ingest events from a specific ledger",
+        "tags": [
+          "Event Ingestion",
+        ],
+      },
+    },
+    "/event-ingestion/reorg": {
+      "post": {
+        "operationId": "EventIngestionController_handleReorg",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandleReorgDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "description": "Reorg handled successfully",
+          },
+        },
+        "summary": "Handle chain reorg by reprocessing from a ledger",
+        "tags": [
+          "Event Ingestion",
+        ],
+      },
+    },
+    "/event-ingestion/retry-failed": {
+      "post": {
+        "operationId": "EventIngestionController_retryFailedEvents",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Failed events retried",
+          },
+        },
+        "summary": "Retry all failed events",
+        "tags": [
+          "Event Ingestion",
+        ],
+      },
+    },
+    "/event-ingestion/start": {
+      "post": {
+        "operationId": "EventIngestionController_startPolling",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartPollingDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "description": "Polling started successfully",
+          },
+        },
+        "summary": "Start polling for Soroban events",
+        "tags": [
+          "Event Ingestion",
+        ],
+      },
+    },
+    "/event-ingestion/status": {
+      "get": {
+        "operationId": "EventIngestionController_getStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Status retrieved successfully",
+          },
+        },
+        "summary": "Get event ingestion status",
+        "tags": [
+          "Event Ingestion",
+        ],
+      },
+    },
+    "/event-ingestion/stop": {
+      "post": {
+        "operationId": "EventIngestionController_stopPolling",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Polling stopped successfully",
+          },
+        },
+        "summary": "Stop polling for Soroban events",
+        "tags": [
+          "Event Ingestion",
+        ],
+      },
+    },
+    "/events/soroban": {
+      "get": {
+        "operationId": "SorobanEventIndexerController_getEvents",
+        "parameters": [
+          {
+            "description": "Max events to return (default 50)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "List of indexed events",
+          },
+        },
+        "summary": "List indexed Soroban contract events",
+        "tags": [
+          "Soroban Events",
+        ],
+      },
+    },
+    "/gigs": {
+      "get": {
+        "description": "Paginated search over gig solicitations, defaulting to open (unaccepted) gigs sorted newest first. Results are cached in Redis for GIG_SEARCH_CACHE_TTL_SECONDS (default 30s) to reduce load on repeated queries; any gig mutation invalidates the cache immediately.",
+        "operationId": "GigController_search",
+        "parameters": [
+          {
+            "description": "Maximum budget in XLM.",
+            "in": "query",
+            "name": "maxBudgetXLM",
+            "required": false,
+            "schema": {
+              "type": "string",
+            },
+          },
+          {
+            "description": "Minimum budget in XLM.",
+            "in": "query",
+            "name": "minBudgetXLM",
+            "required": false,
+            "schema": {
+              "type": "string",
+            },
+          },
+          {
+            "description": "Results per page, up to 100. Defaults to 20.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Page number (1-indexed). Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Filter by gig status. Defaults to "open".",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "open",
+                "accepted",
+                "expired",
+                "cancelled",
+              ],
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                    "limit": {
+                      "type": "number",
+                    },
+                    "page": {
+                      "type": "number",
+                    },
+                    "total": {
+                      "type": "number",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Paginated gig solicitations",
+          },
+        },
+        "summary": "Search gig solicitations",
+        "tags": [
+          "Gigs",
+        ],
+      },
+      "post": {
+        "description": "Creates an open gig solicitation. If nobody accepts it within the response window (default 72h), the background expiry sweep automatically marks it as expired.",
+        "operationId": "GigController_create",
+        "parameters": [
+          {
+            "description": "A unique key (e.g. UUID) to ensure this request is idempotent. Retries with the same key and body return the original response without creating a duplicate. Reusing the key with a different body returns 422.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "budgetXLM": {
+                    "description": "Budget in XLM",
+                    "example": "250",
+                    "type": "string",
+                  },
+                  "creator": {
+                    "description": "Stellar address of the gig creator",
+                    "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                    "type": "string",
+                  },
+                  "responseWindowHours": {
+                    "description": "Hours to wait for a response before expiring. Defaults to 72.",
+                    "example": 72,
+                    "type": "number",
+                  },
+                  "title": {
+                    "example": "Build a Soroban escrow audit report",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "creator",
+                  "title",
+                  "budgetXLM",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "description": "Gig solicitation details",
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "budgetXLM": {
+                      "type": "string",
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "creator": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "example": "gig-1234567890-ab12cd",
+                      "type": "string",
+                    },
+                    "respondBy": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "status": {
+                      "enum": [
+                        "open",
+                        "accepted",
+                        "expired",
+                        "cancelled",
+                      ],
+                      "type": "string",
+                    },
+                    "title": {
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Gig solicitation created",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Post a gig solicitation",
+        "tags": [
+          "Gigs",
+        ],
+      },
+    },
+    "/gigs/creator/{address}": {
+      "get": {
+        "description": "Retrieves gig solicitations by a creator with optional filtering and pagination.",
+        "operationId": "GigController_findByCreator",
+        "parameters": [
+          {
+            "description": "Stellar address of the gig creator",
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              "type": "string",
+            },
+          },
+          {
+            "description": "Filter by gig status.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "open",
+                "accepted",
+                "expired",
+                "cancelled",
+              ],
+              "type": "string",
+            },
+          },
+          {
+            "description": "Minimum budget in XLM.",
+            "in": "query",
+            "name": "minBudgetXLM",
+            "required": false,
+            "schema": {
+              "type": "string",
+            },
+          },
+          {
+            "description": "Maximum budget in XLM.",
+            "in": "query",
+            "name": "maxBudgetXLM",
+            "required": false,
+            "schema": {
+              "type": "string",
+            },
+          },
+          {
+            "description": "Number of items to skip. Defaults to 0.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Maximum number of items to return (max 100). Defaults to 20.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                    "total": {
+                      "type": "number",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Paginated list of gig solicitations",
+          },
+        },
+        "summary": "List gig solicitations posted by a creator",
+        "tags": [
+          "Gigs",
+        ],
+      },
+    },
+    "/gigs/{id}": {
+      "delete": {
+        "operationId": "GigController_remove",
+        "parameters": [
+          {
+            "description": "Gig ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "gig-1234567890-ab12cd",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "204": {
+            "description": "Gig deleted successfully",
+          },
+          "400": {
+            "description": "Cannot delete accepted gig",
+          },
+          "404": {
+            "description": "Gig not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Delete a gig solicitation",
+        "tags": [
+          "Gigs",
+        ],
+      },
+      "get": {
+        "description": "Retrieves gig details including status and response deadline.",
+        "operationId": "GigController_findOne",
+        "parameters": [
+          {
+            "description": "Gig ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "gig-1234567890-ab12cd",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Gig solicitation details",
+          },
+          "404": {
+            "description": "Gig not found",
+          },
+        },
+        "summary": "Get a gig solicitation by ID",
+        "tags": [
+          "Gigs",
+        ],
+      },
+      "put": {
+        "description": "Updating \`responseWindowHours\` resets the response deadline to \`now + responseWindowHours\`, replacing (not extending) the current \`respondBy\`. Only applies while the gig is \`open\`; omit the field to leave the deadline unchanged.",
+        "operationId": "GigController_update",
+        "parameters": [
+          {
+            "description": "Gig ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "gig-1234567890-ab12cd",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Gig updated successfully",
+          },
+          "400": {
+            "description": "Gig is not open",
+          },
+          "404": {
+            "description": "Gig not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Update an open gig solicitation",
+        "tags": [
+          "Gigs",
+        ],
+      },
+    },
+    "/gigs/{id}/accept": {
+      "post": {
+        "description": "Marks an open gig as accepted, removing it from the expiry sweep.",
+        "operationId": "GigController_accept",
+        "parameters": [
+          {
+            "description": "Gig ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "gig-1234567890-ab12cd",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "responder": {
+                    "description": "Stellar address of the responder",
+                    "example": "GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "responder",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "description": "Acceptance details",
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "description": "Gig accepted successfully",
+          },
+          "400": {
+            "description": "Gig is not open",
+          },
+          "404": {
+            "description": "Gig not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Accept a gig solicitation",
+        "tags": [
+          "Gigs",
+        ],
+      },
+    },
+    "/gigs/{id}/cancel": {
+      "post": {
+        "description": "Withdraws an open gig solicitation, removing it from the expiry sweep.",
+        "operationId": "GigController_cancel",
+        "parameters": [
+          {
+            "description": "Gig ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "gig-1234567890-ab12cd",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Gig cancelled successfully",
+          },
+          "400": {
+            "description": "Gig is not open",
+          },
+          "404": {
+            "description": "Gig not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Cancel a gig solicitation",
+        "tags": [
+          "Gigs",
+        ],
+      },
+    },
+    "/health": {
+      "get": {
+        "description": "Returns the health status of the API. Used for liveness and readiness probes.",
+        "operationId": "HealthController_getHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": {
+                      "example": "ok",
+                      "type": "string",
+                    },
+                    "timestamp": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "uptime": {
+                      "example": 12345,
+                      "type": "number",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Service is healthy",
+          },
+          "503": {
+            "description": "Service is unhealthy",
+          },
+        },
+        "summary": "Health check",
+        "tags": [
+          "Monitoring",
+        ],
+      },
+    },
+    "/ipfs/pins": {
+      "get": {
+        "operationId": "IpfsPinningController_findAll",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PinRecordResponseDto",
+                  },
+                  "type": "array",
+                },
+              },
+            },
+            "description": "",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "List all pin records",
+        "tags": [
+          "IPFS Pinning",
+        ],
+      },
+      "post": {
+        "description": "Computes the CIDv1 content hash of the supplied bytes and pins them to providers in priority order until \`replicationFactor\` providers succeed, automatically failing over to the next provider whenever one fails to pin or fails post-pin verification.",
+        "operationId": "IpfsPinningController_pin",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinContentDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PinRecordResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "400": {
+            "description": "expectedCid does not match the computed content hash",
+          },
+          "503": {
+            "description": "Every registered provider failed to pin the content",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Pin a deliverable across multiple IPFS providers",
+        "tags": [
+          "IPFS Pinning",
+        ],
+      },
+    },
+    "/ipfs/pins/{cid}": {
+      "delete": {
+        "operationId": "IpfsPinningController_unpin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cid",
+            "required": true,
+            "schema": {
+              "example": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PinRecordResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "404": {
+            "description": "Pin record not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Unpin content from every provider currently holding it",
+        "tags": [
+          "IPFS Pinning",
+        ],
+      },
+      "get": {
+        "operationId": "IpfsPinningController_findOne",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cid",
+            "required": true,
+            "schema": {
+              "example": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PinRecordResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "404": {
+            "description": "Pin record not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Get a pin record by CID",
+        "tags": [
+          "IPFS Pinning",
+        ],
+      },
+    },
+    "/ipfs/pins/{cid}/verify": {
+      "post": {
+        "description": "Re-checks every provider believed to hold the pin and, if replication has dropped below the configured factor, attempts to restore it via any remaining providers. The re-pin worker calls this same logic automatically on a schedule; this endpoint triggers it on demand.",
+        "operationId": "IpfsPinningController_verify",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cid",
+            "required": true,
+            "schema": {
+              "example": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PinRecordResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "404": {
+            "description": "Pin record not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Re-verify pin durability and top up replication if degraded",
+        "tags": [
+          "IPFS Pinning",
+        ],
+      },
+    },
+    "/migrations": {
+      "get": {
+        "operationId": "MigrationController_listDefinitions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MigrationDefinitionResponseDto",
+                  },
+                  "type": "array",
+                },
+              },
+            },
+            "description": "",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "List registered schema migrations",
+        "tags": [
+          "Schema Migrations",
+        ],
+      },
+    },
+    "/migrations/runs": {
+      "get": {
+        "operationId": "MigrationController_listRuns",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MigrationRunResponseDto",
+                  },
+                  "type": "array",
+                },
+              },
+            },
+            "description": "",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "List all migration runs",
+        "tags": [
+          "Schema Migrations",
+        ],
+      },
+    },
+    "/migrations/runs/{runId}": {
+      "get": {
+        "operationId": "MigrationController_getRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "example": "mig-1234567890-abcd1234",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+          "404": {
+            "description": "Run not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Get a migration run by ID, including live backfill progress",
+        "tags": [
+          "Schema Migrations",
+        ],
+      },
+    },
+    "/migrations/runs/{runId}/rollback": {
+      "post": {
+        "description": "Invokes the rollbackContract/rollbackExpand compensating actions on demand.",
+        "operationId": "MigrationController_rollback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "example": "mig-1234567890-abcd1234",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "400": {
+            "description": "Run already rolled back",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+          "409": {
+            "description": "Run still in progress",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Manually roll back a completed or failed migration run",
+        "tags": [
+          "Schema Migrations",
+        ],
+      },
+    },
+    "/migrations/{name}/run": {
+      "post": {
+        "description": "Runs the named migration end to end in small batches so the target table is never locked. If any phase fails, compensating actions automatically roll back the expand/contract changes.",
+        "operationId": "MigrationController_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "example": "gigs-add-priority-column",
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunMigrationDto",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+          "403": {
+            "description": "Caller is authenticated but not an admin address",
+          },
+          "404": {
+            "description": "Migration not registered",
+          },
+          "409": {
+            "description": "Migration already has an active run",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Execute an expand → backfill → contract migration",
+        "tags": [
+          "Schema Migrations",
+        ],
+      },
+    },
+    "/outbox/relay": {
+      "post": {
+        "description": "Operational endpoint for draining due events without waiting for the scheduled relay.",
+        "operationId": "OutboxController_relayNow",
+        "parameters": [],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "example": {
+                    "processed": 3,
+                  },
+                },
+              },
+            },
+            "description": "Relay batch processed",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Run one outbox relay batch",
+        "tags": [
+          "Outbox",
+        ],
+      },
+    },
+    "/outbox/{id}": {
+      "get": {
+        "description": "Returns event delivery state, including its consumer-facing deduplication key.",
+        "operationId": "OutboxController_findOne",
+        "parameters": [
+          {
+            "description": "Outbox event UUID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Outbox event found",
+          },
+          "404": {
+            "description": "Outbox event not found",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Inspect a durable domain event",
+        "tags": [
+          "Outbox",
+        ],
+      },
+    },
+    "/profiles": {
+      "get": {
+        "description": "Retrieves all user profiles with optional filtering and pagination.",
+        "operationId": "UserProfileController_findAll",
+        "parameters": [
+          {
+            "description": "Filter by user type",
+            "in": "query",
+            "name": "userType",
+            "required": false,
+            "schema": {
+              "enum": [
+                "freelancer",
+                "client",
+                "both",
+              ],
+              "type": "string",
+            },
+          },
+          {
+            "description": "Filter by status",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "active",
+                "inactive",
+                "suspended",
+              ],
+              "type": "string",
+            },
+          },
+          {
+            "description": "Minimum rating filter",
+            "in": "query",
+            "name": "minRating",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Number of items to skip. Defaults to 0.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Maximum number of items to return (max 100). Defaults to 20.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "properties": {
+                          "completedJobs": {
+                            "type": "number",
+                          },
+                          "id": {
+                            "type": "string",
+                          },
+                          "isVerified": {
+                            "type": "boolean",
+                          },
+                          "name": {
+                            "type": "string",
+                          },
+                          "rating": {
+                            "type": "number",
+                          },
+                          "userType": {
+                            "type": "string",
+                          },
+                          "walletAddress": {
+                            "type": "string",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                    "total": {
+                      "type": "number",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Paginated list of user profiles",
+          },
+        },
+        "summary": "Get all user profiles",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+      "post": {
+        "description": "Creates a new user profile for a freelancer or client. Requires authentication; \`walletAddress\` must match the wallet address on the authenticated JWT — you can only create a profile for the wallet you signed in with, not on behalf of another address.",
+        "operationId": "UserProfileController_create",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "avatarUrl": {
+                    "description": "Profile image URL",
+                    "example": "https://example.com/avatar.jpg",
+                    "type": "string",
+                  },
+                  "bio": {
+                    "description": "User biography",
+                    "example": "Experienced blockchain developer with 5+ years in Web3",
+                    "maxLength": 500,
+                    "type": "string",
+                  },
+                  "email": {
+                    "description": "Email address (optional)",
+                    "example": "john@example.com",
+                    "type": "string",
+                  },
+                  "name": {
+                    "description": "User display name",
+                    "example": "John Doe",
+                    "maxLength": 100,
+                    "minLength": 2,
+                    "type": "string",
+                  },
+                  "skills": {
+                    "description": "List of skills (for freelancers)",
+                    "example": [
+                      "Solidity",
+                      "Rust",
+                      "TypeScript",
+                      "Smart Contracts",
+                    ],
+                    "items": {
+                      "type": "string",
+                    },
+                    "maxItems": 20,
+                    "type": "array",
+                  },
+                  "socialLinks": {
+                    "properties": {
+                      "github": {
+                        "example": "https://github.com/johndoe",
+                        "type": "string",
+                      },
+                      "linkedin": {
+                        "example": "https://linkedin.com/in/johndoe",
+                        "type": "string",
+                      },
+                      "twitter": {
+                        "example": "https://twitter.com/johndoe",
+                        "type": "string",
+                      },
+                      "website": {
+                        "example": "https://johndoe.dev",
+                        "type": "string",
+                      },
+                    },
+                    "type": "object",
+                  },
+                  "userType": {
+                    "description": "Type of user account",
+                    "enum": [
+                      "freelancer",
+                      "client",
+                      "both",
+                    ],
+                    "example": "freelancer",
+                    "type": "string",
+                  },
+                  "walletAddress": {
+                    "description": "Stellar wallet address (G-prefixed, 56 characters)",
+                    "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "walletAddress",
+                  "name",
+                  "userType",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "description": "User profile creation details",
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "avatarUrl": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "bio": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "completedJobs": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "email": {
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string",
+                    },
+                    "isVerified": {
+                      "example": false,
+                      "type": "boolean",
+                    },
+                    "lastActiveAt": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "rating": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "ratingCount": {
+                      "example": 0,
+                      "type": "number",
+                    },
+                    "skills": {
+                      "items": {
+                        "type": "string",
+                      },
+                      "nullable": true,
+                      "type": "array",
+                    },
+                    "socialLinks": {
+                      "nullable": true,
+                      "type": "object",
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "inactive",
+                        "suspended",
+                      ],
+                      "type": "string",
+                    },
+                    "totalEarned": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "totalSpent": {
+                      "example": "0",
+                      "type": "string",
+                    },
+                    "updatedAt": {
+                      "format": "date-time",
+                      "type": "string",
+                    },
+                    "userType": {
+                      "enum": [
+                        "freelancer",
+                        "client",
+                        "both",
+                      ],
+                      "type": "string",
+                    },
+                    "walletAddress": {
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Profile created successfully",
+          },
+          "400": {
+            "description": "Invalid input data",
+          },
+          "401": {
+            "description": "Unauthorized",
+          },
+          "403": {
+            "description": "walletAddress does not match the authenticated wallet",
+          },
+          "409": {
+            "description": "Profile with this wallet address already exists",
+          },
+        },
+        "security": [
+          {
+            "bearer": [],
+          },
+        ],
+        "summary": "Create a new user profile",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
+    "/profiles/search": {
+      "get": {
+        "description": "Search profiles by name, bio, or skills. Results are ranked by relevance.",
+        "operationId": "UserProfileController_search",
+        "parameters": [
+          {
+            "description": "Number of items to skip. Defaults to 0.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Maximum number of items to return (max 100). Defaults to 20.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "number",
+            },
+          },
+          {
+            "description": "Search query (2-100 characters)",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "example": "blockchain developer",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated search results ranked by relevance",
+          },
+          "400": {
+            "description": "q is missing, blank, or out of range",
+          },
+        },
+        "summary": "Search user profiles",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
+    "/profiles/wallet/{address}": {
+      "get": {
+        "description": "Retrieves a user profile by their Stellar wallet address.",
+        "operationId": "UserProfileController_findByWalletAddress",
+        "parameters": [
+          {
+            "description": "Stellar wallet address",
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile details",
+          },
+          "404": {
+            "description": "Profile not found",
+          },
+        },
+        "summary": "Get profile by wallet address",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
+    "/profiles/{id}": {
+      "delete": {
+        "description": "Deletes a user profile. Requires authentication.",
+        "operationId": "UserProfileController_delete",
+        "parameters": [
+          {
+            "description": "Profile ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "204": {
+            "description": "Profile deleted successfully",
+          },
+          "401": {
+            "description": "Unauthorized",
+          },
+          "404": {
+            "description": "Profile not found",
+          },
+        },
+        "security": [
+          {
+            "bearer": [],
+          },
+        ],
+        "summary": "Delete user profile",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+      "get": {
+        "description": "Retrieves a user profile by its unique ID.",
+        "operationId": "UserProfileController_findById",
+        "parameters": [
+          {
+            "description": "Profile ID (UUID)",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "123e4567-e89b-12d3-a456-426614174000",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile details",
+          },
+          "404": {
+            "description": "Profile not found",
+          },
+        },
+        "summary": "Get profile by ID",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+      "put": {
+        "description": "Updates an existing user profile. Requires authentication.",
+        "operationId": "UserProfileController_update",
+        "parameters": [
+          {
+            "description": "Profile ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "avatarUrl": {
+                    "type": "string",
+                  },
+                  "bio": {
+                    "maxLength": 500,
+                    "type": "string",
+                  },
+                  "email": {
+                    "type": "string",
+                  },
+                  "name": {
+                    "maxLength": 100,
+                    "minLength": 2,
+                    "type": "string",
+                  },
+                  "skills": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "socialLinks": {
+                    "type": "object",
+                  },
+                  "status": {
+                    "enum": [
+                      "active",
+                      "inactive",
+                      "suspended",
+                    ],
+                    "type": "string",
+                  },
+                  "userType": {
+                    "enum": [
+                      "freelancer",
+                      "client",
+                      "both",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "type": "object",
+              },
+            },
+          },
+          "description": "Profile update fields",
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "description": "Profile updated successfully",
+          },
+          "401": {
+            "description": "Unauthorized",
+          },
+          "404": {
+            "description": "Profile not found",
+          },
+        },
+        "security": [
+          {
+            "bearer": [],
+          },
+        ],
+        "summary": "Update user profile",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
+    "/profiles/{id}/avatar": {
+      "post": {
+        "description": "Uploads a profile picture to S3-compatible storage and updates the user profile. Accepts JPEG, PNG, or WebP images up to 5MB.",
+        "operationId": "UserProfileController_uploadAvatar",
+        "parameters": [
+          {
+            "description": "Profile ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "description": "Avatar image file (JPEG, PNG, or WebP, max 5MB)",
+                    "format": "binary",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "file",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "description": "Avatar uploaded successfully",
+          },
+          "400": {
+            "description": "Invalid file type or size",
+          },
+          "401": {
+            "description": "Unauthorized",
+          },
+          "404": {
+            "description": "Profile not found",
+          },
+        },
+        "security": [
+          {
+            "bearer": [],
+          },
+        ],
+        "summary": "Upload avatar image",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
+    "/profiles/{id}/rate": {
+      "post": {
+        "description": "Submit a rating for a user profile. Requires authentication.",
+        "operationId": "UserProfileController_rateUser",
+        "parameters": [
+          {
+            "description": "Profile ID to rate",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "rating": {
+                    "description": "Rating value (1-5)",
+                    "example": 5,
+                    "maximum": 5,
+                    "minimum": 1,
+                    "type": "number",
+                  },
+                  "review": {
+                    "description": "Optional review text",
+                    "example": "Excellent work, delivered on time!",
+                    "maxLength": 1000,
+                    "type": "string",
+                  },
+                  "walletAddress": {
+                    "description": "Wallet address of the rater",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "walletAddress",
+                  "rating",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "description": "Rating details",
+          "required": true,
+        },
+        "responses": {
+          "200": {
+            "description": "Rating submitted successfully",
+          },
+          "401": {
+            "description": "Unauthorized",
+          },
+          "404": {
+            "description": "Profile not found",
+          },
+        },
+        "security": [
+          {
+            "bearer": [],
+          },
+        ],
+        "summary": "Rate a user",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
+    "/profiles/{id}/verify": {
+      "post": {
+        "description": "Marks a user profile as verified. Admin only.",
+        "operationId": "UserProfileController_verifyUser",
+        "parameters": [
+          {
+            "description": "Profile ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile verified successfully",
+          },
+          "401": {
+            "description": "Unauthorized",
+          },
+          "404": {
+            "description": "Profile not found",
+          },
+        },
+        "security": [
+          {
+            "bearer": [],
+          },
+        ],
+        "summary": "Verify a user profile",
+        "tags": [
+          "User Profiles",
+        ],
+      },
+    },
+    "/reputation/leaderboard": {
+      "get": {
+        "description": "Sorted by score descending; ties are broken by eventCount descending, then address ascending, so the ordering is fully deterministic and stable across requests. \`limit\` caps the number of entries returned (top-N only — there is no offset/cursor, since this is a ranking view rather than a paged listing). Unauthenticated: like the escrow read endpoints, this reflects publicly derivable on-chain/dispute history rather than private data, and cannot be written to directly.",
+        "operationId": "ReputationController_getLeaderboard",
+        "parameters": [
+          {
+            "description": "Maximum number of top-ranked entries to return. Falls back to 50 if omitted or not a positive number.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "example": 50,
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReputationScoreResponseDto",
+                  },
+                  "type": "array",
+                },
+              },
+            },
+            "description": "",
+          },
+        },
+        "summary": "List addresses ranked by trust score, highest first",
+        "tags": [
+          "Reputation",
+        ],
+      },
+    },
+    "/reputation/{address}": {
+      "get": {
+        "description": "Score is derived from escrow completion and dispute-resolution history. Repeated interactions with the same counterparty are dampened with diminishing returns to resist wash-trading and self-dealing, and the score exponentially decays toward zero without new activity. Unauthenticated by design: the score is derived data a caller cannot set directly, not a private value, so it is safe and intended to be publicly checkable like the escrow read endpoints.",
+        "operationId": "ReputationController_getScore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReputationScoreResponseDto",
+                },
+              },
+            },
+            "description": "",
+          },
+        },
+        "summary": "Get the time-decayed, Sybil-dampened trust score for an address",
+        "tags": [
+          "Reputation",
+        ],
+      },
+    },
+    "/rpc-status": {
+      "get": {
+        "description": "Returns the health status of all configured Horizon and Soroban RPC endpoints, including which endpoint is currently active.",
+        "operationId": "RpcStatusController_getStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "example": {
+                    "currentHorizonEndpoint": "https://horizon-testnet.stellar.org",
+                    "currentSorobanEndpoint": "https://soroban-testnet.stellar.org",
+                    "horizonEndpoints": [
+                      {
+                        "failureCount": 0,
+                        "healthy": true,
+                        "lastChecked": "2024-01-01T00:00:00.000Z",
+                        "url": "https://horizon-testnet.stellar.org",
+                      },
+                    ],
+                    "sorobanEndpoints": [
+                      {
+                        "failureCount": 0,
+                        "healthy": true,
+                        "lastChecked": "2024-01-01T00:00:00.000Z",
+                        "url": "https://soroban-testnet.stellar.org",
+                      },
+                    ],
+                    "timestamp": "2024-01-01T00:00:00.000Z",
+                  },
+                },
+              },
+            },
+            "description": "RPC endpoint status information",
+          },
+          "401": {
+            "description": "Missing or invalid JWT",
+          },
+        },
+        "security": [
+          {
+            "JWT-auth": [],
+          },
+        ],
+        "summary": "Get current RPC endpoint status and health information",
+        "tags": [
+          "RPC Status",
+        ],
+      },
+    },
+    "/stellar/balance/{address}": {
+      "get": {
+        "operationId": "StellarController_getBalance",
+        "parameters": [
+          {
+            "description": "Stellar account public key (G… strkey)",
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "example": "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "example": {
+                    "address": "GA7Q…",
+                    "balance": "99.5000000",
+                  },
+                },
+              },
+            },
+            "description": "",
+          },
+          "400": {
+            "description": "Malformed Stellar address",
+          },
+          "404": {
+            "description": "Account not found on the network (unfunded or nonexistent)",
+          },
+        },
+        "summary": "Native XLM balance for a Stellar account",
+        "tags": [
+          "Stellar",
+        ],
+      },
+    },
+    "/stellar/ledger": {
+      "get": {
+        "operationId": "StellarController_getLatestLedger",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "example": {
+                    "sequence": 52000000,
+                  },
+                },
+              },
+            },
+            "description": "",
+          },
+        },
+        "summary": "Latest closed ledger sequence",
+        "tags": [
+          "Stellar",
+        ],
+      },
+    },
+    "/webhooks": {
+      "post": {
+        "description": "Register a webhook endpoint to receive event notifications. Supported events: escrow.created, escrow.released, dispute.raised, dispute.resolved.",
+        "operationId": "WebhookController_register",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "events": {
+                    "description": "List of events to subscribe to (defaults to ["*"])",
+                    "example": [
+                      "escrow.created",
+                      "escrow.released",
+                    ],
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "id": {
+                    "description": "Unique identifier for this webhook",
+                    "example": "my-webhook-1",
+                    "type": "string",
+                  },
+                  "secret": {
+                    "description": "Optional HMAC secret (min 16 characters) used to sign outgoing webhook payloads via the X-TrustFlow-Signature header",
+                    "example": "your-16-plus-character-secret",
+                    "minLength": 16,
+                    "type": "string",
+                  },
+                  "url": {
+                    "description": "HTTPS endpoint to receive webhook POST requests",
+                    "example": "https://example.com/webhooks/trustflow",
+                    "format": "uri",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "url",
+                ],
+                "type": "object",
+              },
+            },
+          },
+          "description": "Webhook registration details",
+          "required": true,
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "example": "my-webhook-1",
+                      "type": "string",
+                    },
+                    "registered": {
+                      "example": true,
+                      "type": "boolean",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Webhook registered successfully",
+          },
+          "400": {
+            "description": "Invalid webhook URL, ID, or secret",
+          },
+        },
+        "summary": "Register webhook",
+        "tags": [
+          "Webhooks",
+        ],
+      },
+    },
+    "/webhooks/{id}": {
+      "delete": {
+        "description": "Remove a previously registered webhook by its ID.",
+        "operationId": "WebhookController_unregister",
+        "parameters": [
+          {
+            "description": "Webhook ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "my-webhook-1",
+              "type": "string",
+            },
+          },
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "unregistered": {
+                      "example": true,
+                      "type": "boolean",
+                    },
+                  },
+                  "type": "object",
+                },
+              },
+            },
+            "description": "Webhook unregistered successfully",
+          },
+          "404": {
+            "description": "Webhook not found",
+          },
+        },
+        "summary": "Unregister webhook",
+        "tags": [
+          "Webhooks",
+        ],
+      },
+    },
+  },
+  "servers": [
+    {
+      "description": "Development",
+      "url": "http://localhost:3001",
+      "variables": undefined,
+    },
+    {
+      "description": "Production",
+      "url": "https://api.trustflow.xyz",
+      "variables": undefined,
+    },
+  ],
+  "tags": [
+    {
+      "description": "Wallet-based JWT authentication endpoints",
+      "name": "Authentication",
+    },
+    {
+      "description": "Escrow vault management and dispute resolution. Note: these endpoints are currently unauthenticated — rate limiting is IP-scoped only.",
+      "name": "Escrow",
+    },
+    {
+      "description": "Webhook registration and management. Note: register/unregister endpoints are currently unauthenticated — rate limiting is IP-scoped only.",
+      "name": "Webhooks",
+    },
+    {
+      "description": "Durable at-least-once domain event delivery and relay operations",
+      "name": "Outbox",
+    },
+    {
+      "description": "Health checks and metrics",
+      "name": "Monitoring",
+    },
+    {
+      "description": "Multi-provider IPFS pinning with content-hash verification, automatic failover, and a background re-pin worker that restores replication when a provider silently drops a pin.",
+      "name": "IPFS Pinning",
+    },
+    {
+      "description": "Gig solicitation postings with a background sweep that automatically expires solicitations left unanswered past their response deadline.",
+      "name": "Gigs",
+    },
+    {
+      "description": "Read-only system analytics for protocol admins — escrow, gig, dispute, reputation, migration, and reconciliation state aggregated into a dashboard view. Restricted to wallet addresses listed in \`ADMIN_ADDRESSES\`.",
+      "name": "Admin",
+    },
+  ],
+}
+`;

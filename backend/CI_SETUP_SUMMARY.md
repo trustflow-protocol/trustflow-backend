@@ -26,18 +26,21 @@ Implemented a comprehensive GitHub Actions CI pipeline that automatically runs b
 - ✅ Triggers on PRs affecting `backend/` directory
 - ✅ Runs on push to `main` and `develop` branches
 - ✅ Single Node.js version, read from the repo-root `.nvmrc` (currently 20.x) — no matrix
-- ✅ 5-minute job timeout, plus a `cancel-in-progress` concurrency group
+- ✅ 7-minute job timeout, plus a `cancel-in-progress` concurrency group
 - ✅ One job, `ci` (displayed as "Lint · TypeCheck · Test · Build"), backed by a
-  `redis:7-alpine` service container for the Redis-integration tests
+  `redis:7-alpine` service container for the Redis-integration tests and a `postgres:16-alpine`
+  service container for the Postgres-integration tests
 
 **The `ci` job, in step order**:
 
 - Lint (ESLint)
 - Format check (Prettier)
 - TypeScript check (`tsc --noEmit`) — separate from the build step, blocks the PR on type errors
-- Wait for Redis, then unit tests with coverage (`npm run test:ci`)
+- Wait for Redis, then wait for Postgres, then unit tests with coverage (`npm run test:ci`)
 - Build (`tsc`)
-- Dependency vulnerability scan (`npm audit --audit-level=high`)
+- Dependency vulnerability scan — production dependencies only, blocking
+  (`npm audit --omit=dev --audit-level=high`), plus a separate non-blocking scan that includes
+  dev dependencies. See `DEPENDENCY_AUDIT_POLICY.md` for the policy and the current allow-list.
 - Upload coverage to Codecov (best-effort — `fail_ci_if_error: false`)
 
 ### 2. Package Configuration
@@ -161,8 +164,8 @@ PR Created/Updated
    Path Filter Check
    (backend/* or the workflow file modified?)
          ↓
-   ci job (single job, Node from .nvmrc, redis:7-alpine service)
-   Lint → Format check → TypeScript check → Unit tests → Build → npm audit → Upload coverage
+   ci job (single job, Node from .nvmrc, redis:7-alpine + postgres:16-alpine services)
+   Lint → Format check → TypeScript check → Unit tests → Build → npm audit (prod, dev) → Upload coverage
          ↓
     ✅ Pass / ❌ Fail
 ```
@@ -325,8 +328,9 @@ Coverage will appear as PR comments.
 ## Future Enhancements
 
 - [ ] E2E integration tests
-- [ ] Database tests with PostgreSQL service
-- [x] Security scanning — `npm audit --audit-level=high` gates the build (Snyk/Dependabot
+- [x] Database tests with PostgreSQL service — `postgres:16-alpine`, see #479
+- [x] Security scanning — `npm audit --omit=dev --audit-level=high` gates the build on
+      production dependencies; dev dependencies are scanned non-blocking (Snyk/Dependabot
       integration is still open)
 - [ ] Dependency update automation (Dependabot)
 - [ ] Performance benchmarking

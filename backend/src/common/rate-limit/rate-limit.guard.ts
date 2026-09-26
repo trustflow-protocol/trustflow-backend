@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
-import { Redis } from 'ioredis';
+import { Redis, Result } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { SKIP_RATE_LIMIT, RATE_LIMIT_POINTS, RATE_LIMIT_DURATION } from './rate-limit.decorator';
@@ -29,14 +29,50 @@ interface RateLimitRequest {
   user?: { address?: string; sub?: string };
 }
 
-const TOKEN_BUCKET_SCRIPT = `
-local key = KEYS[1]
+/**
+ * Combines the lockout check, token-bucket consume, and (on rejection) abuse recording for
+ * a single identity into one atomic round trip — previously three separate Redis commands
+ * (`TTL`, `EVAL`, and a second `EVAL` on rejection) run sequentially. Also closes two
+ * correctness gaps that came from splitting those steps: the lockout check could no longer
+ * race against a lockout applied by another node between the `TTL` read and the bucket
+ * consume, and the clock is now `redis.call('TIME')` — the single authoritative clock for
+ * every API node — instead of each node's own `Date.now()`, so skewed node clocks no longer
+ * produce inconsistent refill/abuse-window math.
+ *
+ * KEYS[1] = bucket key, KEYS[2] = lockout key, KEYS[3] = abuse key (all three share a
+ * `{...}` hash tag over the identity+route so they land on the same Redis Cluster slot —
+ * required for this script to run at all once Redis is clustered).
+ *
+ * ARGV[1] = capacity, ARGV[2] = refill window (ms), ARGV[3] = bucket key TTL (ms),
+ * ARGV[4] = abuse window (ms), ARGV[5] = abuse window (seconds, for EXPIRE),
+ * ARGV[6] = abuse threshold, ARGV[7] = lockout duration (seconds),
+ * ARGV[8] = unique member for this attempt's abuse-window ZSET entry.
+ *
+ * Returns { allowed: 0 | 1, retryAfter: seconds }.
+ */
+const RATE_LIMIT_SCRIPT = `
+local bucket_key = KEYS[1]
+local lockout_key = KEYS[2]
+local abuse_key = KEYS[3]
+
 local capacity = tonumber(ARGV[1])
 local refill_ms = tonumber(ARGV[2])
-local now = tonumber(ARGV[3])
-local ttl_ms = tonumber(ARGV[4])
+local bucket_ttl_ms = tonumber(ARGV[3])
+local abuse_window_ms = tonumber(ARGV[4])
+local abuse_window_seconds = tonumber(ARGV[5])
+local abuse_threshold = tonumber(ARGV[6])
+local lockout_seconds = tonumber(ARGV[7])
+local member = ARGV[8]
 
-local bucket = redis.call('HMGET', key, 'tokens', 'updatedAt')
+local time = redis.call('TIME')
+local now = (tonumber(time[1]) * 1000) + math.floor(tonumber(time[2]) / 1000)
+
+local lockout_pttl = redis.call('PTTL', lockout_key)
+if lockout_pttl and lockout_pttl > 0 then
+  return {0, math.ceil(lockout_pttl / 1000)}
+end
+
+local bucket = redis.call('HMGET', bucket_key, 'tokens', 'updatedAt')
 local tokens = tonumber(bucket[1])
 local updated_at = tonumber(bucket[2])
 
@@ -48,50 +84,52 @@ end
 local elapsed = math.max(0, now - updated_at)
 tokens = math.min(capacity, tokens + (elapsed * capacity / refill_ms))
 
-if tokens < 1 then
-  redis.call('HMSET', key, 'tokens', tokens, 'updatedAt', now)
-  redis.call('PEXPIRE', key, ttl_ms)
-  return {0, tokens, math.ceil((1 - tokens) * refill_ms / capacity / 1000)}
+if tokens >= 1 then
+  tokens = tokens - 1
+  redis.call('HSET', bucket_key, 'tokens', tokens, 'updatedAt', now)
+  redis.call('PEXPIRE', bucket_key, bucket_ttl_ms)
+  return {1, 0}
 end
 
-tokens = tokens - 1
-redis.call('HMSET', key, 'tokens', tokens, 'updatedAt', now)
-redis.call('PEXPIRE', key, ttl_ms)
-return {1, tokens, 0}
-`;
+redis.call('HSET', bucket_key, 'tokens', tokens, 'updatedAt', now)
+redis.call('PEXPIRE', bucket_key, bucket_ttl_ms)
 
-const ABUSE_LOCKOUT_SCRIPT = `
-local abuse_key = KEYS[1]
-local lockout_key = KEYS[2]
-local now = tonumber(ARGV[1])
-local window_ms = tonumber(ARGV[2])
-local window_seconds = tonumber(ARGV[3])
-local threshold = tonumber(ARGV[4])
-local lockout_seconds = tonumber(ARGV[5])
-local member = ARGV[6]
+local retry_after = math.ceil((1 - tokens) * refill_ms / capacity / 1000)
 
-redis.call('ZREMRANGEBYSCORE', abuse_key, 0, now - window_ms)
+redis.call('ZREMRANGEBYSCORE', abuse_key, 0, now - abuse_window_ms)
 redis.call('ZADD', abuse_key, now, member)
-redis.call('EXPIRE', abuse_key, window_seconds)
+redis.call('EXPIRE', abuse_key, abuse_window_seconds)
 
 local abuse_count = redis.call('ZCARD', abuse_key)
-if abuse_count >= threshold then
+if abuse_count >= abuse_threshold then
   redis.call('SET', lockout_key, '1', 'EX', lockout_seconds)
-  return lockout_seconds
+  return {0, lockout_seconds}
 end
 
-return 0
+return {0, retry_after}
 `;
+
+declare module 'ioredis' {
+  interface RedisCommander<Context> {
+    rateLimitCheck(
+      bucketKey: string,
+      lockoutKey: string,
+      abuseKey: string,
+      capacity: number,
+      refillMs: number,
+      bucketTtlMs: number,
+      abuseWindowMs: number,
+      abuseWindowSeconds: number,
+      abuseThreshold: number,
+      lockoutSeconds: number,
+      member: string,
+    ): Result<[number, number], Context>;
+  }
+}
 
 type RateLimitIdentity = {
   scope: 'ip' | 'wallet';
   value: string;
-};
-
-type RateLimitDecision = {
-  allowed: boolean;
-  retryAfter: number;
-  scope: string;
 };
 
 @Injectable()
@@ -105,7 +143,14 @@ export class RateLimitGuard implements CanActivate {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly reflector: Reflector,
-  ) {}
+  ) {
+    // Registers redis.rateLimitCheck() (and pipeline.rateLimitCheck()) backed by EVALSHA,
+    // with ioredis handling the SCRIPT LOAD + NOSCRIPT-triggered re-send transparently — the
+    // Lua source is sent to Redis at most once per connection instead of on every request.
+    if (this.redis && typeof this.redis.rateLimitCheck !== 'function') {
+      this.redis.defineCommand('rateLimitCheck', { numberOfKeys: 3, lua: RATE_LIMIT_SCRIPT });
+    }
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const skip = this.reflector.getAllAndOverride<boolean>(SKIP_RATE_LIMIT, [
@@ -135,16 +180,45 @@ export class RateLimitGuard implements CanActivate {
     const route = this.getRoute(request);
     const identities = this.getIdentities(request);
 
-    for (const identity of identities) {
-      const decision = await this.checkIdentity(identity, route, points, duration);
+    const abuseWindow = config.RATE_LIMIT_ABUSE_WINDOW_SECONDS;
+    const abuseThreshold = config.RATE_LIMIT_ABUSE_THRESHOLD;
+    const lockoutDuration = config.RATE_LIMIT_LOCKOUT_SECONDS;
 
-      if (!decision.allowed) {
+    // One pipeline for every identity on this request (at most two: ip, wallet) — one
+    // network round trip instead of a sequential TTL+EVAL(+EVAL) per identity.
+    const pipeline = this.redis.pipeline();
+    for (const identity of identities) {
+      const keys = this.buildKeys(identity.scope, identity.value, route);
+      pipeline.rateLimitCheck(
+        keys.bucket,
+        keys.lockout,
+        keys.abuse,
+        points,
+        duration * 1000,
+        duration * 2 * 1000,
+        abuseWindow * 1000,
+        abuseWindow,
+        abuseThreshold,
+        lockoutDuration,
+        randomUUID(),
+      );
+    }
+
+    const results = (await pipeline.exec()) ?? [];
+
+    for (let i = 0; i < identities.length; i++) {
+      const [error, raw] = results[i] ?? [];
+      if (error) throw error;
+
+      const [allowed, retryAfter] = raw as [number, number];
+      if (Number(allowed) !== 1) {
+        const identity = identities[i];
         throw new HttpException(
           {
             statusCode: HttpStatus.TOO_MANY_REQUESTS,
             message: 'Too many requests - rate limit exceeded',
-            retryAfter: decision.retryAfter,
-            scope: decision.scope,
+            retryAfter: Number(retryAfter),
+            scope: `${identity.scope}:${identity.value}`,
           },
           HttpStatus.TOO_MANY_REQUESTS,
         );
@@ -152,68 +226,6 @@ export class RateLimitGuard implements CanActivate {
     }
 
     return true;
-  }
-
-  private async checkIdentity(
-    identity: RateLimitIdentity,
-    route: string,
-    points: number,
-    duration: number,
-  ): Promise<RateLimitDecision> {
-    const scope = `${identity.scope}:${identity.value}`;
-    const lockoutKey = this.buildKey('lockout', identity.scope, identity.value, route);
-    const lockoutTtl = await this.redis!.ttl(lockoutKey);
-
-    if (lockoutTtl > 0) {
-      return { allowed: false, retryAfter: lockoutTtl, scope };
-    }
-
-    const bucketKey = this.buildKey('bucket', identity.scope, identity.value, route);
-    const now = Date.now();
-    const ttlMs = duration * 2 * 1000;
-    const result = (await this.redis!.eval(
-      TOKEN_BUCKET_SCRIPT,
-      1,
-      bucketKey,
-      points,
-      duration * 1000,
-      now,
-      ttlMs,
-    )) as [number, number, number];
-
-    if (Number(result[0]) === 1) {
-      return { allowed: true, retryAfter: 0, scope };
-    }
-
-    const retryAfter = await this.recordAbuse(identity, route, Number(result[2]) || duration);
-    return { allowed: false, retryAfter, scope };
-  }
-
-  private async recordAbuse(
-    identity: RateLimitIdentity,
-    route: string,
-    retryAfter: number,
-  ): Promise<number> {
-    const abuseWindow = config.RATE_LIMIT_ABUSE_WINDOW_SECONDS;
-    const abuseThreshold = config.RATE_LIMIT_ABUSE_THRESHOLD;
-    const lockoutDuration = config.RATE_LIMIT_LOCKOUT_SECONDS;
-    const now = Date.now();
-    const abuseKey = this.buildKey('abuse', identity.scope, identity.value, route);
-    const lockoutKey = this.buildKey('lockout', identity.scope, identity.value, route);
-    const lockoutApplied = await this.redis!.eval(
-      ABUSE_LOCKOUT_SCRIPT,
-      2,
-      abuseKey,
-      lockoutKey,
-      now,
-      abuseWindow * 1000,
-      abuseWindow,
-      abuseThreshold,
-      lockoutDuration,
-      `${now}:${randomUUID()}`,
-    );
-
-    return Number(lockoutApplied) > 0 ? Number(lockoutApplied) : retryAfter;
   }
 
   private getIdentities(request: RateLimitRequest): RateLimitIdentity[] {
@@ -277,8 +289,22 @@ export class RateLimitGuard implements CanActivate {
     return this.normalizeIdentity(`${method}:${route}`);
   }
 
-  private buildKey(prefix: string, scope: string, identity: string, route: string): string {
-    return `ratelimit:${prefix}:${scope}:${identity}:${route}`;
+  /**
+   * All three keys for one identity share a `{...}` hash tag over scope+identity+route, so
+   * Redis Cluster maps them to the same slot — required for the combined Lua script (which
+   * touches all three) to run at all once Redis is clustered.
+   */
+  private buildKeys(
+    scope: string,
+    identity: string,
+    route: string,
+  ): { bucket: string; lockout: string; abuse: string } {
+    const tag = `${scope}:${identity}:${route}`;
+    return {
+      bucket: `ratelimit:{${tag}}:bucket`,
+      lockout: `ratelimit:{${tag}}:lockout`,
+      abuse: `ratelimit:{${tag}}:abuse`,
+    };
   }
 
   private normalizeIdentity(value: string): string {

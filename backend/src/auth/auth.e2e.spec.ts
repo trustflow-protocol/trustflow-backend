@@ -1,10 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Keypair } from '@stellar/stellar-sdk';
 import { AuthModule } from './auth.module';
 import { AuthService } from './auth.service';
 import { RedisModule } from '../common/redis/redis.module';
+import { SentryModule } from '../sentry/sentry.module';
+import { LoggingModule } from '../common/logging/logging.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
+import { configureApp } from '../app.setup';
 import { validateEnv } from '../config/env.config';
 
 // AuthModule's JwtModule.registerAsync() reads config.JWT_SECRET at instantiation, which
@@ -29,13 +33,11 @@ describe('Auth (E2E)', () => {
       // provides as a @Global() binding in the real app (imported once at the root). This
       // standalone test needs it imported explicitly since AuthModule alone doesn't pull
       // it in. No REDIS_URL is set here, so it resolves to `null` — the in-memory fallback.
-      imports: [AuthModule, RedisModule],
+      imports: [AuthModule, RedisModule, SentryModule, LoggingModule, MonitoringModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
-    );
+    configureApp(app, { skipSentryInit: true, skipIndexerStart: true });
     await app.init();
 
     authService = moduleFixture.get<AuthService>(AuthService);
