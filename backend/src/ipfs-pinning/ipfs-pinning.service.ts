@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { CircuitBreakerService } from '../common/circuit-breaker';
 import { MetricsService } from '../monitoring/metrics.service';
 import { computeCidV1Raw } from './cid.util';
 import { PinContentDto } from './ipfs-pinning.dto';
@@ -62,6 +63,7 @@ export class IpfsPinningService implements OnModuleInit {
   constructor(
     @Inject(PIN_PROVIDERS) private readonly providers: IpfsPinProvider[],
     private readonly webhookService: WebhookService,
+    private readonly circuitBreakerService: CircuitBreakerService,
     @Optional() @Inject(REDIS_CLIENT) private readonly redis: Redis | null = null,
     @Optional() private readonly metrics?: MetricsService,
   ) {
@@ -333,8 +335,28 @@ export class IpfsPinningService implements OnModuleInit {
     entry.attempts += 1;
 
     try {
-      await provider.pin(record.cid, content);
-      const verified = await provider.verify(record.cid);
+      await this.circuitBreakerService.execute(
+        `ipfs-pin-${provider.name}`,
+        async () => provider.pin(record.cid, content),
+        {
+          name: `ipfs-pin-${provider.name}`,
+          timeout: 60000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      );
+
+      const verified = await this.circuitBreakerService.execute(
+        `ipfs-verify-${provider.name}`,
+        async () => provider.verify(record.cid),
+        {
+          name: `ipfs-verify-${provider.name}`,
+          timeout: 30000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      );
+
       if (!verified) throw new Error('Provider did not confirm the pin after upload');
 
       entry.status = ProviderPinStatus.PINNED;
@@ -360,9 +382,28 @@ export class IpfsPinningService implements OnModuleInit {
     if (!provider) throw new Error(`Provider ${name} is not registered`);
 
     try {
-      await provider.unpin(cid);
+      await this.circuitBreakerService.execute(
+        `ipfs-unpin-${name}`,
+        async () => provider.unpin(cid),
+        {
+          name: `ipfs-unpin-${name}`,
+          timeout: 60000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      );
     } catch (unpinError) {
-      const stillPinned = await provider.verify(cid).catch(() => true);
+      const stillPinned = await this.circuitBreakerService.execute(
+        `ipfs-verify-${name}`,
+        async () => provider.verify(cid),
+        {
+          name: `ipfs-verify-${name}`,
+          timeout: 30000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      ).catch(() => true);
+
       if (stillPinned) throw unpinError;
     }
   }
