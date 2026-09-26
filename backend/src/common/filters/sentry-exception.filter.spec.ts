@@ -77,6 +77,37 @@ describe('SentryExceptionFilter', () => {
     });
   });
 
+  describe('non-HttpException errors that still carry a real HTTP status', () => {
+    it('preserves the status from an Express/body-parser-style error (e.g. PayloadTooLargeError) instead of forcing 500', () => {
+      const host = buildHost();
+      // Mirrors body-parser's PayloadTooLargeError: a plain Error with .status/.statusCode
+      // set, not a NestJS HttpException, thrown by middleware ahead of any Nest exception
+      // filter.
+      const exception = Object.assign(new Error('request entity too large'), {
+        status: 413,
+        statusCode: 413,
+      });
+      filter.catch(exception, host);
+
+      const { response } = host as unknown as { response: { status: jest.Mock; json: jest.Mock } };
+      expect(response.status).toHaveBeenCalledWith(413);
+      expect(response.json).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 413, message: 'request entity too large' }),
+      );
+      expect(sentryService.captureException).not.toHaveBeenCalled();
+    });
+
+    it('still captures to Sentry when the carried status is 5xx', () => {
+      const host = buildHost();
+      const exception = Object.assign(new Error('upstream exploded'), { status: 502 });
+      filter.catch(exception, host);
+
+      const { response } = host as unknown as { response: { status: jest.Mock; json: jest.Mock } };
+      expect(response.status).toHaveBeenCalledWith(502);
+      expect(sentryService.captureException).toHaveBeenCalled();
+    });
+  });
+
   describe('Unknown / non-HTTP exceptions', () => {
     it('should respond with 500 and capture to Sentry for plain Error', () => {
       const host = buildHost('/api/escrow', 'POST');

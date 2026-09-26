@@ -96,6 +96,27 @@ npm run test:cov
 npm run test:ci
 ```
 
+### Running the integration specs (Redis + PostgreSQL)
+
+A handful of specs — named `*-integration.spec.ts` (`rate-limit.redis-integration`,
+`nonce-store.redis-integration`, `gig.service.redis-integration`,
+`database.postgres-integration`, `health.postgres-integration`) — exercise a real Redis
+and/or PostgreSQL server instead of a mocked client. Each one checks `REDIS_URL`/`DATABASE_URL`
+itself and skips cleanly when unset, so plain `npm test` still works with no local Redis or
+Postgres. To actually run them locally:
+
+```bash
+# From the repo root: starts Redis and Postgres via docker compose
+docker compose up -d
+
+# From backend/: starts them (if not already running) and runs only the *-integration specs
+npm run test:integration
+```
+
+CI backs the same specs with its own `redis`/`postgres` service containers (see
+`.github/workflows/backend-ci.yml`) — `docker-compose.yml` at the repo root is for local
+development only.
+
 ### Pre-commit hook
 
 `npm install` (in `backend/`) wires up a Husky `pre-commit` hook via the
@@ -281,4 +302,5 @@ This catches issues before they reach CI, saving time and CI minutes.
 
 - [Discord Integration Setup](src/webhook/DISCORD_INTEGRATION.md)
 - [CI/CD Documentation](../.github/workflows/README.md)
+- [Dependency Audit Policy](DEPENDENCY_AUDIT_POLICY.md)
 - [Main README](../README.md)

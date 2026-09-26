@@ -1,8 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, Controller, Get } from '@nestjs/common';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import helmet from 'helmet';
 import request from 'supertest';
+import { configureApp } from './app.setup';
+import { SentryModule } from './sentry/sentry.module';
+import { LoggingModule } from './common/logging/logging.module';
+import { MonitoringModule } from './monitoring/monitoring.module';
+import { validateEnv } from './config/env.config';
+
+// configureApp() reads config.BODY_LIMIT_MB/CORS_ORIGIN/NODE_ENV, which requires
+// validateEnv() to have run first — normally done once in main.ts.
+validateEnv();
 
 @Controller('health')
 class HealthController {
@@ -17,30 +24,18 @@ describe('Security Headers (Helmet)', () => {
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
+      // SentryModule/LoggingModule/MonitoringModule provide the SentryService,
+      // CorrelationIdStore and MetricsHttpInterceptor that configureApp() wires up —
+      // the same stack a real request goes through, rather than a hand-rolled subset.
+      imports: [SentryModule, LoggingModule, MonitoringModule],
       controllers: [HealthController],
     }).compile();
 
     app = moduleFixture.createNestApplication();
 
-    // Mirror bootstrap() Helmet configuration from src/main.ts
-    app.use(
-      helmet({
-        contentSecurityPolicy: {
-          directives: {
-            defaultSrc: [`'self'`],
-            styleSrc: [`'self'`, `'unsafe-inline'`],
-            imgSrc: [`'self'`, 'data:', 'https:'],
-            scriptSrc: [`'self'`, `'unsafe-inline'`],
-          },
-        },
-        crossOriginEmbedderPolicy: false,
-      }),
-    );
-
-    // Setup Swagger docs to verify CSP compatibility
-    const config = new DocumentBuilder().setTitle('Test API').setVersion('1.0.0').build();
-    const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('api/docs', app, document);
+    // Exercise the real Helmet config and Swagger UI mounting from configureApp(),
+    // not a hand-copied subset — this is the regression #420-style drift guards against.
+    configureApp(app, { skipSentryInit: true, skipIndexerStart: true });
 
     await app.init();
   });
