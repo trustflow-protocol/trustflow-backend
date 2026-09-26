@@ -18,7 +18,9 @@ After claiming an event, the relay publishes the serialized event to:
 - Redis list `trustflow:events:queue` for queue workers
 - registered webhook endpoints
 
-The row is marked `delivered` only after every relay target succeeds. Any failure reschedules the row with exponential backoff (capped at 30 seconds). A destination can receive a duplicate after a partial failure or crash, by design; consumers must persist and compare `dedupKey`.
+The row is marked `delivered` only after every relay target succeeds. Delivered event bodies are retained for `OUTBOX_DELIVERED_TTL_SECONDS` (default seven days) so `GET` by event id remains available for short-term inspection, then expire automatically. The worker queue is capped at `OUTBOX_QUEUE_MAX_LENGTH` (default 1,000) using Redis list trimming; the pub/sub delivery path remains unchanged.
+
+Any failure reschedules the row with exponential backoff (capped at 30 seconds) until `OUTBOX_MAX_ATTEMPTS` failures (default five). At that limit the row is marked `failed`, removed from retry indexes, retained without a TTL for investigation, and counted by `outbox_delivery_total{result="failed"}`. A destination can receive a duplicate after a partial failure or crash, by design; consumers must persist and compare `dedupKey`.
 
 ## PostgreSQL migration path
 

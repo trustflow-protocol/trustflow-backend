@@ -10,6 +10,8 @@ const PENDING_KEY = 'outbox:pending';
 const PROCESSING_KEY = 'outbox:processing';
 const WEBHOOK_PENDING_KEY = 'outbox:webhook:pending';
 const WEBHOOK_PROCESSING_KEY = 'outbox:webhook:processing';
+export const DEFAULT_OUTBOX_DELIVERED_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const DEFAULT_OUTBOX_MAX_ATTEMPTS = 5;
 const CLAIM_DUE_SCRIPT = `
   local ids = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[3])
   local claimed = {}
@@ -106,7 +108,12 @@ export class OutboxService implements OnModuleInit {
     else this.pending.add(event.id);
   }
 
-  sendWebhook(transaction: OutboxTransaction | null, eventName: string, payload: unknown, dedupKey?: string): void {
+  sendWebhook(
+    transaction: OutboxTransaction | null,
+    eventName: string,
+    payload: unknown,
+    dedupKey?: string,
+  ): void {
     const event = this.create(eventName, 'webhook', 'dispatch', payload);
     if (dedupKey) event.dedupKey = dedupKey;
     if (transaction) {
@@ -127,7 +134,12 @@ export class OutboxService implements OnModuleInit {
   }
 
   /** Atomically claims due events and places a lease on each one. */
-  async claimDue(now: number, leaseMs: number, limit: number, isWebhook = false): Promise<OutboxEvent[]> {
+  async claimDue(
+    now: number,
+    leaseMs: number,
+    limit: number,
+    isWebhook = false,
+  ): Promise<OutboxEvent[]> {
     const pendingKey = isWebhook ? WEBHOOK_PENDING_KEY : PENDING_KEY;
     const processingKey = isWebhook ? WEBHOOK_PROCESSING_KEY : PROCESSING_KEY;
     if (this.redis) {
@@ -199,6 +211,10 @@ export class OutboxService implements OnModuleInit {
       const results = await this.redis
         .multi()
         .set(this.eventKey(event.id), JSON.stringify(event))
+        .expire(
+          this.eventKey(event.id),
+          this.numberEnv('OUTBOX_DELIVERED_TTL_SECONDS', DEFAULT_OUTBOX_DELIVERED_TTL_SECONDS),
+        )
         .zrem(processingKey, event.id)
         .exec();
       this.assertTransactionOk(results);
@@ -214,19 +230,27 @@ export class OutboxService implements OnModuleInit {
     const pendingKey = isWebhook ? WEBHOOK_PENDING_KEY : PENDING_KEY;
     const processingKey = isWebhook ? WEBHOOK_PROCESSING_KEY : PROCESSING_KEY;
     event.attempts += 1;
-    event.status = 'pending';
     event.lastError = error instanceof Error ? error.message : String(error);
-    event.nextAttemptAt =
-      Date.now() + Math.min(1000 * 2 ** Math.min(event.attempts - 1, 5), 30_000);
+    const failed =
+      event.attempts >= this.numberEnv('OUTBOX_MAX_ATTEMPTS', DEFAULT_OUTBOX_MAX_ATTEMPTS);
+    event.status = failed ? 'failed' : 'pending';
+    if (!failed) {
+      event.nextAttemptAt =
+        Date.now() + Math.min(1000 * 2 ** Math.min(event.attempts - 1, 5), 30_000);
+    }
 
     if (this.redis) {
-      const results = await this.redis
+      const transaction = this.redis
         .multi()
         .set(this.eventKey(event.id), JSON.stringify(event))
-        .zrem(processingKey, event.id)
-        .zadd(pendingKey, event.nextAttemptAt, event.id)
-        .exec();
+        .zrem(processingKey, event.id);
+      if (!failed) transaction.zadd(pendingKey, event.nextAttemptAt, event.id);
+      const results = await transaction.exec();
       this.assertTransactionOk(results);
+      if (failed)
+        this.logger.error(
+          `Outbox event ${event.id} failed after ${event.attempts} attempts: ${event.lastError}`,
+        );
       return;
     }
 
@@ -234,7 +258,13 @@ export class OutboxService implements OnModuleInit {
     const processingMap = isWebhook ? this.webhookProcessing : this.processing;
     const pendingSet = isWebhook ? this.webhookPending : this.pending;
     processingMap.delete(event.id);
-    pendingSet.add(event.id);
+    if (failed) {
+      this.logger.error(
+        `Outbox event ${event.id} failed after ${event.attempts} attempts: ${event.lastError}`,
+      );
+    } else {
+      pendingSet.add(event.id);
+    }
   }
 
   private eventKey(id: string): string {
@@ -252,5 +282,10 @@ export class OutboxService implements OnModuleInit {
     this.logger.warn(
       `Redis unavailable for outbox.${operation}; using non-durable in-memory fallback`,
     );
+  }
+
+  private numberEnv(name: string, fallback: number): number {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
   }
 }

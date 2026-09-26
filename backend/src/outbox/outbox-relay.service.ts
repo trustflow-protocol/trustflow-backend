@@ -54,7 +54,10 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
         this.metrics.increment('outbox_delivery_total', { result: 'delivered', type: event.type });
       } catch (error) {
         await this.outbox.retry(event, error);
-        this.metrics.increment('outbox_delivery_total', { result: 'retry', type: event.type });
+        this.metrics.increment('outbox_delivery_total', {
+          result: event.status === 'failed' ? 'failed' : 'retry',
+          type: event.type,
+        });
       }
     }
 
