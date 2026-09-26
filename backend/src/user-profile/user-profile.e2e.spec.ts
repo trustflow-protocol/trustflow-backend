@@ -1,11 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AuthModule } from '../auth/auth.module';
 import { AuthService } from '../auth/auth.service';
 import { RedisModule } from '../common/redis/redis.module';
+import { SentryModule } from '../sentry/sentry.module';
+import { LoggingModule } from '../common/logging/logging.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
+import { configureApp } from '../app.setup';
+import { validateEnv } from '../config/env.config';
 import { UserProfileModule } from './user-profile.module';
 import { UserType } from './user-profile.entity';
+
+// configureApp() reads config.* — requires validateEnv() to have run first.
+validateEnv();
 
 // Covers #205: POST /profiles previously had no auth guard at all, so
 // anyone could create a profile for any wallet address without proving
@@ -28,13 +36,18 @@ describe('UserProfile (E2E) — POST /profiles auth', () => {
       // AppModule), but a standalone TestingModule needs it imported
       // explicitly — AuthModule's NonceStoreService depends on its
       // REDIS_CLIENT token even though nothing in this spec touches nonces.
-      imports: [RedisModule, AuthModule, UserProfileModule],
+      imports: [
+        RedisModule,
+        AuthModule,
+        UserProfileModule,
+        SentryModule,
+        LoggingModule,
+        MonitoringModule,
+      ],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
-    );
+    configureApp(app, { skipSentryInit: true, skipIndexerStart: true });
     await app.init();
 
     authService = moduleFixture.get<AuthService>(AuthService);
