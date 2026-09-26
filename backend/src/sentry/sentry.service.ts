@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as Sentry from '@sentry/node';
+import { config } from '../config/env.config';
 
 @Injectable()
 export class SentryService {
@@ -7,8 +8,8 @@ export class SentryService {
   private initialized = false;
 
   init(): void {
-    const dsn = process.env.SENTRY_DSN;
-    const isProduction = process.env.NODE_ENV === 'production';
+    const dsn = config.SENTRY_DSN;
+    const isProduction = config.NODE_ENV === 'production';
 
     if (!dsn) {
       this.logger.warn('SENTRY_DSN not set — Sentry error reporting disabled.');
@@ -17,14 +18,14 @@ export class SentryService {
 
     Sentry.init({
       dsn,
-      environment: process.env.NODE_ENV ?? 'development',
-      release: process.env.npm_package_version,
+      environment: config.NODE_ENV,
+      release: config.APP_RELEASE,
       tracesSampleRate: isProduction ? 0.2 : 1.0,
       enabled: !!dsn,
     });
 
     this.initialized = true;
-    this.logger.log(`Sentry initialized (env: ${process.env.NODE_ENV ?? 'development'})`);
+    this.logger.log(`Sentry initialized (env: ${config.NODE_ENV})`);
   }
 
   captureException(exception: unknown, context?: string): string {

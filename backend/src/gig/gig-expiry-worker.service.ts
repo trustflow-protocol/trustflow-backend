@@ -3,10 +3,9 @@ import { GigService } from './gig.service';
 import { DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS } from './gig.entity';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
 import { mapWithConcurrency, countRejected } from '../common/concurrency';
+import { config } from '../config/env.config';
 
 const LOCK_KEY = 'lock:gig-expiry-sweep';
-/** How many gigs to expire in parallel within one sweep (#236). */
-const SWEEP_CONCURRENCY = Number(process.env.GIG_EXPIRY_SWEEP_CONCURRENCY) || 8;
 
 /**
  * Periodically sweeps the DB for open gig solicitations whose response deadline has
@@ -91,7 +90,7 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
     // so a fully sequential loop over a big batch serialised all of that
     // latency and could outrun the sweep interval (#236). A failed `expire`
     // no longer aborts the rest of the sweep — it is counted and logged.
-    const results = await mapWithConcurrency(expirable, SWEEP_CONCURRENCY, gig =>
+    const results = await mapWithConcurrency(expirable, config.GIG_EXPIRY_SWEEP_CONCURRENCY, gig =>
       this.gigService.expire(gig.id),
     );
     const failed = countRejected(results);
@@ -101,9 +100,6 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getIntervalMs(): number {
-    const raw = Number(process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS);
-    return Number.isFinite(raw) && process.env.GIG_EXPIRY_SWEEP_INTERVAL_MS !== undefined
-      ? raw
-      : DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS;
+    return config.GIG_EXPIRY_SWEEP_INTERVAL_MS ?? DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS;
   }
 }

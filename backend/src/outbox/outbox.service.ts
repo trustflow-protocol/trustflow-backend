@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { OutboxEvent, OutboxTransaction } from './outbox.types';
+import { config } from '../config/env.config';
 
 const EVENT_KEY_PREFIX = 'outbox:event:';
 const PENDING_KEY = 'outbox:pending';
@@ -59,7 +60,7 @@ export class OutboxService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'OutboxService requires REDIS_URL in production so domain state and outbox events share a durable transaction',
       );
@@ -213,7 +214,7 @@ export class OutboxService implements OnModuleInit {
         .set(this.eventKey(event.id), JSON.stringify(event))
         .expire(
           this.eventKey(event.id),
-          this.numberEnv('OUTBOX_DELIVERED_TTL_SECONDS', DEFAULT_OUTBOX_DELIVERED_TTL_SECONDS),
+          config.OUTBOX_DELIVERED_TTL_SECONDS,
         )
         .zrem(processingKey, event.id)
         .exec();
@@ -232,7 +233,7 @@ export class OutboxService implements OnModuleInit {
     event.attempts += 1;
     event.lastError = error instanceof Error ? error.message : String(error);
     const failed =
-      event.attempts >= this.numberEnv('OUTBOX_MAX_ATTEMPTS', DEFAULT_OUTBOX_MAX_ATTEMPTS);
+      event.attempts >= config.OUTBOX_MAX_ATTEMPTS;
     event.status = failed ? 'failed' : 'pending';
     if (!failed) {
       event.nextAttemptAt =
@@ -282,10 +283,5 @@ export class OutboxService implements OnModuleInit {
     this.logger.warn(
       `Redis unavailable for outbox.${operation}; using non-durable in-memory fallback`,
     );
-  }
-
-  private numberEnv(name: string, fallback: number): number {
-    const value = Number(process.env[name]);
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
   }
 }

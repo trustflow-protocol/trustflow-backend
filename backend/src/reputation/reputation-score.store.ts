@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { ReputationScoreRecord } from './reputation.types';
+import { config } from '../config/env.config';
 
 const SCORE_KEY_PREFIX = 'reputation:score:';
 const SCORES_INDEX_KEY = 'reputation:scores:index';
@@ -31,7 +32,7 @@ export class ReputationScoreStore implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'ReputationScoreStore requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',

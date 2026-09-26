@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
 import { EscrowReconciliationService } from './escrow-reconciliation.service';
 import { DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS } from './escrow-reconciliation.types';
+import { config } from '../config/env.config';
 
 const LOCK_KEY = 'lock:escrow-reconciliation-sweep';
 
@@ -80,9 +81,9 @@ export class EscrowReconciliationWorkerService implements OnModuleInit, OnModule
   }
 
   private getIntervalMs(): number {
-    const raw = Number(process.env.ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS);
-    return Number.isFinite(raw) && process.env.ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS !== undefined
-      ? raw
-      : DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS;
+    return (
+      config.ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS ??
+      DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS
+    );
   }
 }

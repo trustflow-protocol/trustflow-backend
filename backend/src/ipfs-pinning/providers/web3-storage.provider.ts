@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as https from 'https';
 import { BaseHttpPinProvider } from './base-http-pin.provider';
 import { PinProviderName } from './ipfs-provider.interface';
+import { config } from '../../config/env.config';
 
 const WEB3_STORAGE_API_HOST = 'api.web3.storage';
 
@@ -16,7 +17,7 @@ export class Web3StorageProvider extends BaseHttpPinProvider {
   readonly name = PinProviderName.WEB3_STORAGE;
 
   protected get credential(): string | undefined {
-    return process.env.WEB3_STORAGE_TOKEN || undefined;
+    return config.WEB3_STORAGE_TOKEN || undefined;
   }
 
   protected async sendPin(cid: string, content: Buffer, token: string): Promise<void> {

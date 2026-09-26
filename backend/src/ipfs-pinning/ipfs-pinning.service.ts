@@ -12,6 +12,7 @@ import {
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
+import { config } from '../config/env.config';
 import { computeCidV1Raw } from './cid.util';
 import { PinContentDto } from './ipfs-pinning.dto';
 import {
@@ -78,7 +79,7 @@ export class IpfsPinningService implements OnModuleInit {
   }
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'IpfsPinningService requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',

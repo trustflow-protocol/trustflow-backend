@@ -3,6 +3,7 @@ import * as https from 'https';
 import { BaseHttpPinProvider } from './base-http-pin.provider';
 import { PinProviderName } from './ipfs-provider.interface';
 import { buildSingleFileMultipart } from './multipart.util';
+import { config } from '../../config/env.config';
 
 const PINATA_API_HOST = 'api.pinata.cloud';
 
@@ -16,7 +17,7 @@ export class PinataProvider extends BaseHttpPinProvider {
   readonly name = PinProviderName.PINATA;
 
   protected get credential(): string | undefined {
-    return process.env.PINATA_JWT || undefined;
+    return config.PINATA_JWT || undefined;
   }
 
   protected async sendPin(cid: string, content: Buffer, jwt: string): Promise<void> {

@@ -2,7 +2,8 @@ import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/comm
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
-import { EscrowService } from '../escrow/escrow.service';
+import { EscrowService, Escrow } from '../escrow/escrow.service';
+import { config } from '../config/env.config';
 
 export interface SorobanEvent {
   id: string;
@@ -57,7 +58,7 @@ export class EventProcessorService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'EventProcessorService requires REDIS_URL to be configured in production — refusing ' +
           'to start with per-instance in-memory storage, which would silently diverge across instances.',
@@ -129,27 +130,58 @@ export class EventProcessorService implements OnModuleInit {
       beneficiary: string;
       amount: string;
     };
-    await this.escrowService.create(depositor, beneficiary, amount);
-    this.logger.log(`Escrow created: ${event.id}`);
+    const contractEscrowId = this.getContractEscrowId(event);
+    const existing = await this.escrowService.findByContractEscrowId(contractEscrowId);
+    if (existing) {
+      this.logger.warn(`Escrow ${contractEscrowId} already linked to DB row ${existing.id}`);
+      return;
+    }
+
+    await this.escrowService.createFromChainState({
+      contractEscrowId,
+      depositor,
+      beneficiary,
+      amountXLM: amount,
+      status: 'pending',
+    });
+    this.logger.log(`Escrow created: ${contractEscrowId}`);
   }
 
   private async handleEscrowFunded(event: SorobanEvent): Promise<void> {
-    const escrowId = event.topic[1];
-    await this.escrowService.fund(escrowId);
-    this.logger.log(`Escrow funded: ${escrowId}`);
+    const escrow = await this.resolveEscrowByContractId(event);
+    await this.escrowService.fund(escrow.id);
+    this.logger.log(`Escrow funded: ${escrow.contractEscrowId}`);
   }
 
   private async handleEscrowReleased(event: SorobanEvent): Promise<void> {
-    const escrowId = event.topic[1];
-    await this.escrowService.release(escrowId);
-    this.logger.log(`Escrow released: ${escrowId}`);
+    const escrow = await this.resolveEscrowByContractId(event);
+    await this.escrowService.release(escrow.id);
+    this.logger.log(`Escrow released: ${escrow.contractEscrowId}`);
   }
 
   private async handleEscrowDisputed(event: SorobanEvent): Promise<void> {
-    const escrowId = event.topic[1];
+    const escrow = await this.resolveEscrowByContractId(event);
     const reason = event.value.reason as string | undefined;
-    await this.escrowService.raiseDispute(escrowId, reason);
-    this.logger.log(`Escrow disputed: ${escrowId}`);
+    await this.escrowService.raiseDispute(escrow.id, reason);
+    this.logger.log(`Escrow disputed: ${escrow.contractEscrowId}`);
+  }
+
+  private async resolveEscrowByContractId(event: SorobanEvent): Promise<Escrow> {
+    const contractEscrowId = this.getContractEscrowId(event);
+    const escrow = await this.escrowService.findByContractEscrowId(contractEscrowId);
+    if (!escrow) {
+      throw new Error(`No DB escrow linked to contract escrow id ${contractEscrowId}`);
+    }
+    return escrow;
+  }
+
+  private getContractEscrowId(event: SorobanEvent): string {
+    const value = event.value as Record<string, unknown>;
+    const candidate = value.contractEscrowId ?? value.escrowId ?? event.topic[1] ?? event.id;
+    if (typeof candidate !== 'string' || candidate.trim() === '') {
+      throw new Error(`Missing contract escrow id for ${event.eventType} event ${event.id}`);
+    }
+    return candidate;
   }
 
   async isEventProcessed(eventId: string): Promise<boolean> {

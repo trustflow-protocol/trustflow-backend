@@ -3,10 +3,9 @@ import { IpfsPinningService } from './ipfs-pinning.service';
 import { DEFAULT_REPIN_INTERVAL_MS, PinStatus } from './ipfs-pinning.types';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
 import { mapWithConcurrency } from '../common/concurrency';
+import { config } from '../config/env.config';
 
 const LOCK_KEY = 'lock:repin-sweep';
-/** How many CIDs to reconcile in parallel within one sweep (#237). */
-const SWEEP_CONCURRENCY = Number(process.env.IPFS_REPIN_SWEEP_CONCURRENCY) || 8;
 
 /**
  * Periodically sweeps every pin record that isn't fully healthy and re-reconciles it,
@@ -90,7 +89,7 @@ export class RepinWorkerService implements OnModuleInit, OnModuleDestroy {
     // degraded pins scaled linearly with pin count x provider latency (#237).
     // The per-CID try/catch is kept inside the worker so one bad CID is
     // isolated and logged, exactly as before.
-    await mapWithConcurrency(targets, SWEEP_CONCURRENCY, async record => {
+    await mapWithConcurrency(targets, config.IPFS_REPIN_SWEEP_CONCURRENCY, async record => {
       try {
         await this.pinningService.reconcile(record.cid);
       } catch (error) {
@@ -104,9 +103,6 @@ export class RepinWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getIntervalMs(): number {
-    const raw = Number(process.env.IPFS_REPIN_INTERVAL_MS);
-    return Number.isFinite(raw) && process.env.IPFS_REPIN_INTERVAL_MS !== undefined
-      ? raw
-      : DEFAULT_REPIN_INTERVAL_MS;
+    return config.IPFS_REPIN_INTERVAL_MS ?? DEFAULT_REPIN_INTERVAL_MS;
   }
 }
