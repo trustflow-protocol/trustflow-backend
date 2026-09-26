@@ -5,16 +5,16 @@ import {
   SOROBAN_RPC_SERVER,
   ESCROW_WRITE_STELLAR_CONFIG,
 } from './escrow-release-transaction-builder.service';
-import { STELLAR_CONFIG } from '../stellar/stellar.config';
+import { getStellarConfig } from '../stellar/stellar.config';
 
 @Module({
   providers: [
     EscrowReleaseTransactionBuilderService,
     {
       provide: SOROBAN_RPC_SERVER,
-      useFactory: () => new SorobanRpc.Server(STELLAR_CONFIG.sorobanRpcUrl),
+      useFactory: () => new SorobanRpc.Server(getStellarConfig().sorobanRpcUrl),
     },
-    { provide: ESCROW_WRITE_STELLAR_CONFIG, useValue: STELLAR_CONFIG },
+    { provide: ESCROW_WRITE_STELLAR_CONFIG, useFactory: () => getStellarConfig() },
   ],
   exports: [EscrowReleaseTransactionBuilderService],
 })

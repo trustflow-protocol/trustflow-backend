@@ -123,30 +123,22 @@ describe('UserProfileController', () => {
 
     it('throws (Zod) when name is too short', async () => {
       const shortName = { ...VALID_CREATE_DTO, name: 'A' }; // min 2 chars
-      await expect(
-        controller.create(shortName as any, makeReq() as any),
-      ).rejects.toThrow();
+      await expect(controller.create(shortName as any, makeReq() as any)).rejects.toThrow();
     });
 
     it('throws (Zod) when name exceeds 100 characters', async () => {
       const longName = { ...VALID_CREATE_DTO, name: 'A'.repeat(101) };
-      await expect(
-        controller.create(longName as any, makeReq() as any),
-      ).rejects.toThrow();
+      await expect(controller.create(longName as any, makeReq() as any)).rejects.toThrow();
     });
 
     it('throws (Zod) when bio exceeds 500 characters', async () => {
       const longBio = { ...VALID_CREATE_DTO, bio: 'B'.repeat(501) };
-      await expect(
-        controller.create(longBio as any, makeReq() as any),
-      ).rejects.toThrow();
+      await expect(controller.create(longBio as any, makeReq() as any)).rejects.toThrow();
     });
 
     it('throws (Zod) when userType is not a valid enum value', async () => {
       const badType = { ...VALID_CREATE_DTO, userType: 'admin' };
-      await expect(
-        controller.create(badType as any, makeReq() as any),
-      ).rejects.toThrow();
+      await expect(controller.create(badType as any, makeReq() as any)).rejects.toThrow();
     });
   });
 
@@ -218,13 +210,47 @@ describe('UserProfileController', () => {
   // ─── GET /search ──────────────────────────────────────────────────────────
 
   describe('search()', () => {
-    it('forwards the query string to UserProfileService.search()', async () => {
+    it('forwards the trimmed query string and default pagination to UserProfileService.search()', async () => {
       mockProfileService.search.mockResolvedValue([FAKE_PROFILE]);
 
       const result = await controller.search('blockchain');
 
-      expect(mockProfileService.search).toHaveBeenCalledWith('blockchain');
+      expect(mockProfileService.search).toHaveBeenCalledWith('blockchain', {
+        offset: 0,
+        limit: 20,
+      });
       expect(result).toEqual([FAKE_PROFILE]);
+    });
+
+    it('throws BadRequestException when q is missing', async () => {
+      const { BadRequestException } = jest.requireActual('@nestjs/common');
+
+      await expect(controller.search(undefined)).rejects.toThrow(BadRequestException);
+      expect(mockProfileService.search).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when q is blank', async () => {
+      const { BadRequestException } = jest.requireActual('@nestjs/common');
+
+      await expect(controller.search('  ')).rejects.toThrow(BadRequestException);
+      expect(mockProfileService.search).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when q is a single character', async () => {
+      const { BadRequestException } = jest.requireActual('@nestjs/common');
+
+      await expect(controller.search('a')).rejects.toThrow(BadRequestException);
+    });
+
+    it('trims surrounding whitespace before delegating to the service', async () => {
+      mockProfileService.search.mockResolvedValue([FAKE_PROFILE]);
+
+      await controller.search('  blockchain  ');
+
+      expect(mockProfileService.search).toHaveBeenCalledWith('blockchain', {
+        offset: 0,
+        limit: 20,
+      });
     });
   });
 
@@ -280,9 +306,7 @@ describe('UserProfileController', () => {
     });
 
     it('throws (Zod) when name is too short', async () => {
-      await expect(
-        controller.update(PROFILE_ID, { name: 'X' } as any),
-      ).rejects.toThrow();
+      await expect(controller.update(PROFILE_ID, { name: 'X' } as any)).rejects.toThrow();
     });
 
     it('throws (Zod) when bio exceeds 500 characters', async () => {
@@ -323,9 +347,7 @@ describe('UserProfileController', () => {
 
     it('propagates NotFoundException when the profile does not exist', async () => {
       const { NotFoundException } = jest.requireActual('@nestjs/common');
-      mockProfileService.delete.mockRejectedValue(
-        new NotFoundException('User profile not found'),
-      );
+      mockProfileService.delete.mockRejectedValue(new NotFoundException('User profile not found'));
 
       await expect(controller.delete('ghost-id')).rejects.toThrow(NotFoundException);
     });
@@ -430,9 +452,9 @@ describe('UserProfileController', () => {
     });
 
     it('throws BadRequestException when no file is provided', async () => {
-      await expect(
-        controller.uploadAvatar(PROFILE_ID, undefined as any),
-      ).rejects.toThrow(BadRequestException);
+      await expect(controller.uploadAvatar(PROFILE_ID, undefined as any)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('throws BadRequestException for a disallowed MIME type', async () => {
@@ -443,7 +465,10 @@ describe('UserProfileController', () => {
     });
 
     it('accepts image/png and image/webp as valid MIME types', async () => {
-      mockS3Service.uploadAvatar.mockResolvedValue({ url: 'https://cdn.example.com/a.png', key: 'k' });
+      mockS3Service.uploadAvatar.mockResolvedValue({
+        url: 'https://cdn.example.com/a.png',
+        key: 'k',
+      });
       mockProfileService.update.mockResolvedValue(FAKE_PROFILE);
 
       await expect(
@@ -463,7 +488,10 @@ describe('UserProfileController', () => {
     });
 
     it('accepts a file exactly at the 5 MB boundary', async () => {
-      mockS3Service.uploadAvatar.mockResolvedValue({ url: 'https://cdn.example.com/a.jpg', key: 'k' });
+      mockS3Service.uploadAvatar.mockResolvedValue({
+        url: 'https://cdn.example.com/a.jpg',
+        key: 'k',
+      });
       mockProfileService.update.mockResolvedValue(FAKE_PROFILE);
 
       const atLimit = { ...MOCK_FILE, size: 5 * 1024 * 1024 };

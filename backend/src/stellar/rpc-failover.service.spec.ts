@@ -1,6 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
 import { RpcFailoverService } from './rpc-failover.service';
+import { validateEnv } from '../config/env.config';
+
+// RpcFailoverService falls back to getStellarConfig() when STELLAR_HORIZON_ENDPOINTS /
+// SOROBAN_RPC_ENDPOINTS are unset (see "single endpoint configuration" below), which
+// requires validateEnv() to have already run — normally done once in main.ts.
+validateEnv();
 
 // Mock environment variables before importing the service
 const mockHorizonEndpoints = 'https://horizon-testnet.stellar.org,https://testnet.stellar.org';
@@ -135,6 +141,34 @@ describe('RpcFailoverService', () => {
       expect(endpoint.healthy).toBe(false);
       expect(endpoint.failureCount).toBe(1);
       expect(endpoint.lastError).toBe('Network error');
+    });
+
+    it('should mark Soroban endpoint as healthy on successful JSON-RPC health check', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ result: { status: 'healthy' } }),
+      });
+
+      const endpoint = service.getAllSorobanEndpoints()[0];
+      await (service as any).checkSorobanEndpoint(endpoint);
+
+      expect(endpoint.healthy).toBe(true);
+      expect(endpoint.failureCount).toBe(0);
+      expect(endpoint.lastError).toBeUndefined();
+    });
+
+    it('should mark Soroban endpoint as unhealthy on unsuccessful JSON-RPC health check', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ error: { message: 'Node not synced' } }),
+      });
+
+      const endpoint = service.getAllSorobanEndpoints()[0];
+      await (service as any).checkSorobanEndpoint(endpoint);
+
+      expect(endpoint.healthy).toBe(false);
+      expect(endpoint.failureCount).toBe(1);
+      expect(endpoint.lastError).toContain('Unhealthy status');
     });
   });
 

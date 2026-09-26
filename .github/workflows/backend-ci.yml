@@ -1,3 +1,5 @@
+# Keep this workflow and .github/workflows/README.md in sync — update both in the same PR
+# whenever a step, job name, Node version, or service container changes here.
 name: Backend CI
 
 on:
@@ -12,6 +14,15 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+
+# Cancel a superseded run when new commits land on the same PR/branch, instead of letting
+# both runs burn CI minutes to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
@@ -42,10 +53,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20.x"
+          node-version-file: ".nvmrc"
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
@@ -64,6 +75,12 @@ jobs:
       - name: TypeScript check — blocks PR on type errors
         working-directory: ./backend
         run: npx tsc --noEmit
+
+      # Catches a token/service import cycle (e.g. #429) before it ships: Nest silently
+      # resolves the cycled DI token to `undefined` at runtime instead of failing to compile.
+      - name: Circular dependency check
+        working-directory: ./backend
+        run: npm run check:cycles
 
       # Belt-and-suspenders alongside the service's own --health-cmd/--health-retries above
       # (which gates job startup, not necessarily readiness by the time this step runs):

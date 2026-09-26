@@ -451,5 +451,17 @@ describe('UserProfileService', () => {
       expect(result.data).toHaveLength(1);
       expect(result.total).toBe(2);
     });
+
+    // UserProfileController.search() validates `q` with SearchQuerySchema
+    // before this method is ever reached (#435) — these document that
+    // contract: the service itself still assumes a non-empty string.
+    it('treats a valid query as case-insensitive', async () => {
+      const result = await service.search('BLOCKCHAIN');
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('throws when called with an undefined query (relies on the controller boundary)', async () => {
+      await expect(service.search(undefined as unknown as string)).rejects.toThrow(TypeError);
+    });
   });
 });

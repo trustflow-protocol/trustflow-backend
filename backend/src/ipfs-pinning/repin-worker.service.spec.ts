@@ -37,7 +37,7 @@ describe('RepinWorkerService', () => {
 
   beforeEach(() => {
     pinningService = {
-      findAll: jest.fn().mockReturnValue([]),
+      findAll: jest.fn().mockResolvedValue([]),
       reconcile: jest.fn().mockResolvedValue(undefined),
     };
     worker = new RepinWorkerService(
@@ -55,7 +55,7 @@ describe('RepinWorkerService', () => {
 
   describe('runOnce', () => {
     it('reconciles only DEGRADED and FAILED records', async () => {
-      pinningService.findAll.mockReturnValue([
+      pinningService.findAll.mockResolvedValue([
         makeRecord('cid-healthy', PinStatus.HEALTHY),
         makeRecord('cid-degraded', PinStatus.DEGRADED),
         makeRecord('cid-failed', PinStatus.FAILED),
@@ -70,7 +70,7 @@ describe('RepinWorkerService', () => {
     });
 
     it('continues sweeping remaining records when one reconcile call throws', async () => {
-      pinningService.findAll.mockReturnValue([
+      pinningService.findAll.mockResolvedValue([
         makeRecord('cid-a', PinStatus.DEGRADED),
         makeRecord('cid-b', PinStatus.DEGRADED),
       ]);
@@ -86,7 +86,7 @@ describe('RepinWorkerService', () => {
     it('schedules periodic sweeps at the default interval', () => {
       jest.useFakeTimers();
       delete process.env.IPFS_REPIN_INTERVAL_MS;
-      pinningService.findAll.mockReturnValue([makeRecord('cid-a', PinStatus.DEGRADED)]);
+      pinningService.findAll.mockResolvedValue([makeRecord('cid-a', PinStatus.DEGRADED)]);
 
       worker.onModuleInit();
       expect(pinningService.reconcile).not.toHaveBeenCalled();
@@ -100,7 +100,7 @@ describe('RepinWorkerService', () => {
     it('honors a custom IPFS_REPIN_INTERVAL_MS', () => {
       jest.useFakeTimers();
       process.env.IPFS_REPIN_INTERVAL_MS = '1000';
-      pinningService.findAll.mockReturnValue([makeRecord('cid-a', PinStatus.DEGRADED)]);
+      pinningService.findAll.mockResolvedValue([makeRecord('cid-a', PinStatus.DEGRADED)]);
 
       worker.onModuleInit();
       jest.advanceTimersByTime(999);
@@ -125,7 +125,7 @@ describe('RepinWorkerService', () => {
     it('stops sweeping once destroyed', () => {
       jest.useFakeTimers();
       process.env.IPFS_REPIN_INTERVAL_MS = '1000';
-      pinningService.findAll.mockReturnValue([makeRecord('cid-a', PinStatus.DEGRADED)]);
+      pinningService.findAll.mockResolvedValue([makeRecord('cid-a', PinStatus.DEGRADED)]);
 
       worker.onModuleInit();
       worker.onModuleDestroy();
@@ -140,12 +140,14 @@ describe('RepinWorkerService — concurrency & isolation (#237)', () => {
   it('reconciles degraded pins concurrently and keeps per-CID error isolation', async () => {
     const records = Array.from({ length: 8 }, (_, i) => makeRecord(`cid-${i}`, PinStatus.DEGRADED));
     const pinningService: jest.Mocked<Pick<IpfsPinningService, 'findAll' | 'reconcile'>> = {
-      findAll: jest.fn().mockReturnValue(records),
-      reconcile: jest.fn().mockImplementation((cid: string) =>
-        cid === 'cid-3'
-          ? Promise.reject(new Error('provider down'))
-          : new Promise(r => setTimeout(r, 20)),
-      ),
+      findAll: jest.fn().mockResolvedValue(records),
+      reconcile: jest
+        .fn()
+        .mockImplementation((cid: string) =>
+          cid === 'cid-3'
+            ? Promise.reject(new Error('provider down'))
+            : new Promise(r => setTimeout(r, 20)),
+        ),
     };
     const worker = new RepinWorkerService(
       pinningService as unknown as IpfsPinningService,

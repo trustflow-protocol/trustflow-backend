@@ -26,6 +26,10 @@ Copy the example environment file and configure it:
 cp ../.env.example .env
 ```
 
+`npm run dev` and `npm start` load `backend/.env` automatically on startup (a missing file is
+fine — it's optional). Any variable already set in the real environment (your shell, a
+container, CI) takes precedence over the same variable in `.env`.
+
 Edit `.env` and set your values:
 
 ```env
@@ -42,7 +46,7 @@ INFURA_IPFS_PROJECT_ID=your_infura_project_id  # Optional
 INFURA_IPFS_PROJECT_SECRET=your_infura_project_secret  # Optional
 IPFS_REPIN_INTERVAL_MS=300000  # Optional — re-pin worker sweep interval, set to 0 to disable
 GIG_EXPIRY_SWEEP_INTERVAL_MS=300000  # Optional — gig expiry sweep interval, set to 0 to disable
-ADMIN_ADDRESSES=GADMIN1...,GADMIN2...  # Required for /admin/* — comma-separated Stellar addresses allowed to access admin analytics
+ADMIN_ADDRESSES=GADMIN1...,GADMIN2...  # Required for /admin/* and /migrations/* — comma-separated Stellar addresses allowed to access admin analytics and run/roll back schema migrations over HTTP (the startup auto-run via RUN_MIGRATIONS_ON_STARTUP is unaffected)
 DATABASE_URL=  # Optional — Core DB (PostgreSQL) connection string. Alternative: DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD
 DB_SSL=false  # Optional — set "true" to connect with ssl: { rejectUnauthorized: false }
 DB_POOL_MAX=10  # Optional — max PostgreSQL pool connections
@@ -139,12 +143,31 @@ npm start
 ```
 backend/
 ├── src/
-│   ├── auth/              # JWT authentication
-│   ├── escrow/            # Escrow management
-│   ├── stellar/           # Stellar blockchain integration
-│   ├── webhook/           # Webhook system & Discord
-│   ├── monitoring/        # Health checks & metrics
-│   └── index.ts           # App entry point
+│   ├── admin/                  # Read-only protocol analytics dashboard (admin-only)
+│   ├── auth/                   # Wallet-signature JWT auth — challenge/verify, nonce store, guard
+│   ├── common/                 # Cross-cutting: rate limiting, Redis client, idempotency, pagination, logging, DB, filters
+│   ├── config/                 # Zod-validated env config, .env loading
+│   ├── deliverable/            # Gig deliverable submission and review
+│   ├── dispute/                # Dispute resolution saga (juror voting, resolution)
+│   ├── escrow/                 # Escrow vault CRUD, milestone release, disputes
+│   ├── escrow-reconciliation/  # Reconciles off-chain escrow state against on-chain Soroban state
+│   ├── escrow-write/           # Builds unsigned Soroban release transactions for client signing
+│   ├── event-ingestion/        # Polls Soroban RPC for contract events, feeds the outbox
+│   ├── gig/                    # Gig solicitation postings — accept/cancel, auto-expiry sweep
+│   ├── ipfs-pinning/           # Multi-provider IPFS pinning (Pinata/Web3.Storage/Infura) with failover
+│   ├── migration/              # Schema migration registry/runner (admin-triggered run/rollback)
+│   ├── milestone-notifications/# WebSocket gateway for milestone/escrow event notifications
+│   ├── monitoring/             # Health checks (`/health`) and Prometheus metrics (`/metrics`)
+│   ├── notification/           # Shared notification dispatch types/service
+│   ├── outbox/                 # Transactional outbox relay to WebSocket/webhooks/workers
+│   ├── reputation/             # Wallet reputation scoring with time decay
+│   ├── sentry/                 # Sentry error-monitoring integration
+│   ├── soroban-event-indexer/  # Indexes raw Soroban events into Redis for `/events/soroban`
+│   ├── stellar/                # Horizon/Soroban RPC clients, failover, network config
+│   ├── testing/                # Shared test doubles (fake Redis client)
+│   ├── user-profile/           # Wallet-linked user profiles — search, ratings, verification
+│   ├── webhook/                # Webhook registration/dispatch, HMAC signing, Discord notifications
+│   └── main.ts                 # App entry point
 ├── scripts/
 │   └── ci-check.sh        # Local CI verification
 ├── dist/                  # Build output (generated)
@@ -178,7 +201,7 @@ backend/
 
 1. Clear npm cache: `npm cache clean --force`
 2. Delete `node_modules` and `package-lock.json`, then retry
-3. Check Node.js version: `node -v` (should be 18.x or 20.x)
+3. Check Node.js version: `node -v` (should be >= 20, matching the repo-root `.nvmrc`)
 4. Try using `npm install --legacy-peer-deps`
 
 ### Issue: Port 3001 already in use
@@ -257,5 +280,5 @@ This catches issues before they reach CI, saving time and CI minutes.
 ## Additional Resources
 
 - [Discord Integration Setup](src/webhook/DISCORD_INTEGRATION.md)
-- [CI/CD Documentation](.github/workflows/README.md)
+- [CI/CD Documentation](../.github/workflows/README.md)
 - [Main README](../README.md)

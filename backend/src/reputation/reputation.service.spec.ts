@@ -31,34 +31,34 @@ describe('ReputationService', () => {
     it('gives both depositor and beneficiary a positive score', async () => {
       await service.recordEscrowCompleted(makeEscrow());
 
-      expect(service.getScore('GDEPOSITOR').score).toBeGreaterThan(0);
-      expect(service.getScore('GBENEFICIARY').score).toBeGreaterThan(0);
+      expect((await service.getScore('GDEPOSITOR')).score).toBeGreaterThan(0);
+      expect((await service.getScore('GBENEFICIARY')).score).toBeGreaterThan(0);
     });
 
     it('counts one event and one distinct counterparty for a first-time interaction', async () => {
       await service.recordEscrowCompleted(makeEscrow());
 
-      const view = service.getScore('GDEPOSITOR');
+      const view = await service.getScore('GDEPOSITOR');
       expect(view.eventCount).toBe(1);
       expect(view.distinctCounterparties).toBe(1);
     });
 
     it('gives an escrow with zero/invalid amount no contribution', async () => {
       await service.recordEscrowCompleted(makeEscrow({ amountXLM: '0' }));
-      expect(service.getScore('GDEPOSITOR').score).toBe(0);
+      expect((await service.getScore('GDEPOSITOR')).score).toBe(0);
 
       await service.recordEscrowCompleted(makeEscrow({ amountXLM: 'not-a-number' }));
-      expect(service.getScore('GDEPOSITOR').score).toBe(0);
+      expect((await service.getScore('GDEPOSITOR')).score).toBe(0);
     });
 
     it('scales the contribution with amount, up to the configured cap', async () => {
       await service.recordEscrowCompleted(makeEscrow({ amountXLM: '4' }));
-      const small = service.getScore('GDEPOSITOR').score;
+      const small = (await service.getScore('GDEPOSITOR')).score;
 
       const bigStore = new ReputationScoreStore();
       const bigService = new ReputationService(bigStore);
       await bigService.recordEscrowCompleted(makeEscrow({ amountXLM: '10000' }));
-      const big = bigService.getScore('GDEPOSITOR').score;
+      const big = (await bigService.getScore('GDEPOSITOR')).score;
 
       expect(big).toBeGreaterThan(small);
     });
@@ -68,28 +68,29 @@ describe('ReputationService', () => {
 
       const expected =
         REPUTATION_WEIGHTS[ReputationEventType.ESCROW_COMPLETED] * REPUTATION_MAX_AMOUNT_WEIGHT;
-      expect(service.getScore('GDEPOSITOR').score).toBeCloseTo(expected, 5);
-      expect(Number.isFinite(service.getScore('GDEPOSITOR').score)).toBe(true);
+      const view = await service.getScore('GDEPOSITOR');
+      expect(view.score).toBeCloseTo(expected, 5);
+      expect(Number.isFinite(view.score)).toBe(true);
     });
 
     it('gives a negative amount no contribution', async () => {
       await service.recordEscrowCompleted(makeEscrow({ amountXLM: '-50' }));
-      expect(service.getScore('GDEPOSITOR').score).toBe(0);
+      expect((await service.getScore('GDEPOSITOR')).score).toBe(0);
     });
 
     it('gives a non-finite amount (Infinity) no contribution', async () => {
       await service.recordEscrowCompleted(makeEscrow({ amountXLM: 'Infinity' }));
-      expect(service.getScore('GDEPOSITOR').score).toBe(0);
+      expect((await service.getScore('GDEPOSITOR')).score).toBe(0);
     });
   });
 
   describe('Sybil dampening via repeated counterparties', () => {
     it('gives diminishing returns for repeated escrows with the same counterparty', async () => {
       await service.recordEscrowCompleted(makeEscrow());
-      const afterFirst = service.getScore('GDEPOSITOR').score;
+      const afterFirst = (await service.getScore('GDEPOSITOR')).score;
 
       await service.recordEscrowCompleted(makeEscrow());
-      const afterSecond = service.getScore('GDEPOSITOR').score;
+      const afterSecond = (await service.getScore('GDEPOSITOR')).score;
 
       const firstContribution = afterFirst;
       const secondContribution = afterSecond - afterFirst;
@@ -103,29 +104,23 @@ describe('ReputationService', () => {
 
     it('does not dampen interactions with distinct, one-off counterparties', async () => {
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'GDEP', beneficiary: 'GBEN1' }));
-      const afterFirst = service.getScore('GDEP').score;
+      const afterFirst = (await service.getScore('GDEP')).score;
 
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'GDEP', beneficiary: 'GBEN2' }));
-      const afterSecond = service.getScore('GDEP').score;
+      const afterSecond = (await service.getScore('GDEP')).score;
 
       const secondContribution = afterSecond - afterFirst;
       // A brand-new counterparty gets full, undampened weight.
       expect(secondContribution).toBeCloseTo(afterFirst, 5);
     });
 
-    it('naturally dampens self-dealing without special-casing', async () => {
-      // depositor === beneficiary: a single escrow paid to oneself. Both "sides" of the
-      // contribution land on the same address, and the second one is a repeat interaction
-      // with itself, so it gets dampened — the address doesn't get full credit twice.
+    it('never grants reputation for a self-dealing escrow (depositor === beneficiary) (#437)', async () => {
+      // The dampening formula alone does NOT neutralise self-dealing — see the class
+      // comment above. recordEscrowCompleted() explicitly no-ops in this case instead.
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'GSELF', beneficiary: 'GSELF' }));
-      const selfScore = service.getScore('GSELF').score;
+      const selfScore = (await service.getScore('GSELF')).score;
 
-      const undampedTotal =
-        2 * REPUTATION_WEIGHTS[ReputationEventType.ESCROW_COMPLETED] * Math.sqrt(100);
-
-      // Undamped it would be full weight twice (1 + 1); dampened it's 1 + 1/2 — 75% of that total.
-      expect(selfScore).toBeLessThan(undampedTotal);
-      expect(selfScore).toBeCloseTo(undampedTotal * 0.75, 5);
+      expect(selfScore).toBe(0);
     });
   });
 
@@ -133,8 +128,8 @@ describe('ReputationService', () => {
     it('rewards the winner and penalizes the loser', async () => {
       await service.recordDisputeResolved(makeEscrow(), 'won', 'lost');
 
-      expect(service.getScore('GDEPOSITOR').score).toBeGreaterThan(0);
-      expect(service.getScore('GBENEFICIARY').score).toBeLessThan(0);
+      expect((await service.getScore('GDEPOSITOR')).score).toBeGreaterThan(0);
+      expect((await service.getScore('GBENEFICIARY')).score).toBeLessThan(0);
     });
 
     it('penalizes losing more heavily than it rewards winning', async () => {
@@ -142,16 +137,26 @@ describe('ReputationService', () => {
       const winService = new ReputationService(winStore);
       await winService.recordDisputeResolved(makeEscrow(), 'won', 'lost');
 
-      expect(Math.abs(winService.getScore('GBENEFICIARY').score)).toBeGreaterThan(
-        winService.getScore('GDEPOSITOR').score,
-      );
+      const beneficiaryScore = (await winService.getScore('GBENEFICIARY')).score;
+      const depositorScore = (await winService.getScore('GDEPOSITOR')).score;
+      expect(Math.abs(beneficiaryScore)).toBeGreaterThan(depositorScore);
     });
 
     it('applies a mild negative to both parties on a split verdict', async () => {
       await service.recordDisputeResolved(makeEscrow(), 'split', 'split');
 
-      expect(service.getScore('GDEPOSITOR').score).toBeLessThan(0);
-      expect(service.getScore('GBENEFICIARY').score).toBeLessThan(0);
+      expect((await service.getScore('GDEPOSITOR')).score).toBeLessThan(0);
+      expect((await service.getScore('GBENEFICIARY')).score).toBeLessThan(0);
+    });
+
+    it('never changes reputation for a self-dealing escrow (depositor === beneficiary) (#437)', async () => {
+      await service.recordDisputeResolved(
+        makeEscrow({ depositor: 'GSELF', beneficiary: 'GSELF' }),
+        'won',
+        'lost',
+      );
+
+      expect((await service.getScore('GSELF')).score).toBe(0);
     });
   });
 
@@ -169,21 +174,21 @@ describe('ReputationService', () => {
 
     it('halves the score after one full half-life with no new activity', async () => {
       await service.recordEscrowCompleted(makeEscrow());
-      const initialScore = service.getScore('GDEPOSITOR').score;
+      const initialScore = (await service.getScore('GDEPOSITOR')).score;
 
       jest.setSystemTime(start + REPUTATION_DECAY_HALF_LIFE_MS);
-      const decayedScore = service.getScore('GDEPOSITOR').score;
+      const decayedScore = (await service.getScore('GDEPOSITOR')).score;
 
       expect(decayedScore).toBeCloseTo(initialScore / 2, 1);
     });
 
     it('applies decay before adding a new contribution', async () => {
       await service.recordEscrowCompleted(makeEscrow());
-      const initialScore = service.getScore('GDEPOSITOR').score;
+      const initialScore = (await service.getScore('GDEPOSITOR')).score;
 
       jest.setSystemTime(start + REPUTATION_DECAY_HALF_LIFE_MS);
       await service.recordEscrowCompleted(makeEscrow());
-      const scoreAfterDecayAndSecondEvent = service.getScore('GDEPOSITOR').score;
+      const scoreAfterDecayAndSecondEvent = (await service.getScore('GDEPOSITOR')).score;
 
       // Decayed first contribution (half) + a dampened (halved, 2nd interaction) second contribution
       // should be noticeably less than simply adding two undamped, undecayed contributions.
@@ -192,27 +197,27 @@ describe('ReputationService', () => {
 
     it('does not change score or timestamp when read again immediately', async () => {
       await service.recordEscrowCompleted(makeEscrow());
-      const first = service.getScore('GDEPOSITOR');
-      const second = service.getScore('GDEPOSITOR');
+      const first = await service.getScore('GDEPOSITOR');
+      const second = await service.getScore('GDEPOSITOR');
 
       expect(second.score).toBe(first.score);
     });
   });
 
   describe('getScore for an unknown address', () => {
-    it('returns a zero-value view without persisting a record', () => {
-      const view = service.getScore('GUNKNOWN');
+    it('returns a zero-value view without persisting a record', async () => {
+      const view = await service.getScore('GUNKNOWN');
 
       expect(view.score).toBe(0);
       expect(view.eventCount).toBe(0);
       expect(view.distinctCounterparties).toBe(0);
-      expect(store.get('GUNKNOWN')).toBeUndefined();
+      expect(await store.get('GUNKNOWN')).toBeUndefined();
     });
   });
 
   describe('getTrackedAddressCount', () => {
-    it('returns 0 when no address has a materialized record yet', () => {
-      expect(service.getTrackedAddressCount()).toBe(0);
+    it('returns 0 when no address has a materialized record yet', async () => {
+      expect(await service.getTrackedAddressCount()).toBe(0);
     });
 
     it('counts each distinct address with a materialized score once', async () => {
@@ -220,7 +225,7 @@ describe('ReputationService', () => {
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'G1', beneficiary: 'GB2' }));
 
       // G1 contributed to twice, GB1 and GB2 once each -> 3 distinct addresses tracked.
-      expect(service.getTrackedAddressCount()).toBe(3);
+      expect(await service.getTrackedAddressCount()).toBe(3);
     });
   });
 
@@ -229,7 +234,7 @@ describe('ReputationService', () => {
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'GHIGH', amountXLM: '10000' }));
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'GLOW', amountXLM: '1' }));
 
-      const leaderboard = service.getLeaderboard();
+      const leaderboard = await service.getLeaderboard();
       const addresses = leaderboard.map(v => v.address);
 
       expect(addresses.indexOf('GHIGH')).toBeLessThan(addresses.indexOf('GLOW'));
@@ -240,7 +245,7 @@ describe('ReputationService', () => {
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'G2', beneficiary: 'GB2' }));
       await service.recordEscrowCompleted(makeEscrow({ depositor: 'G3', beneficiary: 'GB3' }));
 
-      expect(service.getLeaderboard(2)).toHaveLength(2);
+      expect(await service.getLeaderboard(2)).toHaveLength(2);
     });
 
     describe('deterministic tie-breaking', () => {
@@ -259,15 +264,13 @@ describe('ReputationService', () => {
           makeEscrow({ depositor: 'GTWO', beneficiary: 'GBENY', amountXLM: '16' }),
         );
 
-        const gOne = service.getScore('GONE');
-        const gTwo = service.getScore('GTWO');
+        const gOne = await service.getScore('GONE');
+        const gTwo = await service.getScore('GTWO');
         expect(gOne.score).toBeCloseTo(gTwo.score, 5);
         expect(gTwo.eventCount).toBeGreaterThan(gOne.eventCount);
 
-        const addresses = service
-          .getLeaderboard()
-          .map(v => v.address)
-          .filter(a => a === 'GONE' || a === 'GTWO');
+        const leaderboard = await service.getLeaderboard();
+        const addresses = leaderboard.map(v => v.address).filter(a => a === 'GONE' || a === 'GTWO');
         expect(addresses).toEqual(['GTWO', 'GONE']);
       });
 
@@ -277,8 +280,8 @@ describe('ReputationService', () => {
           makeEscrow({ depositor: 'GAARDVARK', beneficiary: 'GY' }),
         );
 
-        const addresses = service
-          .getLeaderboard()
+        const leaderboard = await service.getLeaderboard();
+        const addresses = leaderboard
           .map(v => v.address)
           .filter(a => a === 'GZEBRA' || a === 'GAARDVARK');
         expect(addresses).toEqual(['GAARDVARK', 'GZEBRA']);
@@ -297,7 +300,7 @@ describe('ReputationService', () => {
         ),
       );
 
-      const view = service.getScore('GDEP');
+      const view = await service.getScore('GDEP');
       expect(view.eventCount).toBe(counterparties.length);
       expect(view.distinctCounterparties).toBe(counterparties.length);
 
@@ -313,7 +316,7 @@ describe('ReputationService', () => {
         Array.from({ length: 5 }, () => service.recordEscrowCompleted(makeEscrow())),
       );
 
-      const view = service.getScore('GDEPOSITOR');
+      const view = await service.getScore('GDEPOSITOR');
       expect(view.eventCount).toBe(5);
 
       const perEventWeight = REPUTATION_WEIGHTS[ReputationEventType.ESCROW_COMPLETED] * 10;
@@ -326,7 +329,7 @@ describe('ReputationService', () => {
   describe('recentEvents', () => {
     it('records event type, counterparty, and contribution, capped at the configured limit', async () => {
       await service.recordEscrowCompleted(makeEscrow());
-      const view = service.getScore('GDEPOSITOR');
+      const view = await service.getScore('GDEPOSITOR');
 
       expect(view.recentEvents).toHaveLength(1);
       expect(view.recentEvents[0]).toMatchObject({
@@ -340,7 +343,7 @@ describe('ReputationService', () => {
       await service.recordEscrowCompleted(makeEscrow({ beneficiary: 'GBEN1' }));
       await service.recordEscrowCompleted(makeEscrow({ beneficiary: 'GBEN2' }));
 
-      const view = service.getScore('GDEPOSITOR');
+      const view = await service.getScore('GDEPOSITOR');
       expect(view.recentEvents[0].counterparty).toBe('GBEN2');
       expect(view.recentEvents[1].counterparty).toBe('GBEN1');
     });
@@ -351,7 +354,7 @@ describe('ReputationService', () => {
         await service.recordEscrowCompleted(makeEscrow({ beneficiary: `GBEN${i}` }));
       }
 
-      const view = service.getScore('GDEPOSITOR');
+      const view = await service.getScore('GDEPOSITOR');
       // The log is capped, but the materialized score/eventCount still reflect every event.
       expect(view.recentEvents).toHaveLength(REPUTATION_RECENT_EVENTS_LIMIT);
       expect(view.eventCount).toBe(totalEvents);

@@ -7,9 +7,10 @@ import { PIN_PROVIDERS } from './providers/ipfs-provider.interface';
 import { PinataProvider } from './providers/pinata.provider';
 import { Web3StorageProvider } from './providers/web3-storage.provider';
 import { InfuraProvider } from './providers/infura.provider';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 
 @Module({
-  imports: [WebhookModule],
+  imports: [WebhookModule, MonitoringModule],
   controllers: [IpfsPinningController],
   providers: [
     IpfsPinningService,

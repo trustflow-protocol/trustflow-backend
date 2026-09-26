@@ -5,9 +5,10 @@ import { EscrowModule } from '../escrow/escrow.module';
 import { WebhookModule } from '../webhook/webhook.module';
 import { ReputationModule } from '../reputation/reputation.module';
 import { NotificationModule } from '../notification/notification.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 
 @Module({
-  imports: [EscrowModule, WebhookModule, ReputationModule, NotificationModule],
+  imports: [EscrowModule, WebhookModule, ReputationModule, NotificationModule, MonitoringModule],
   controllers: [DisputeSagaController],
   providers: [DisputeSagaService],
   exports: [DisputeSagaService],

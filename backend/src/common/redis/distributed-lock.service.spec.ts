@@ -4,7 +4,13 @@ import { DistributedLockService } from './distributed-lock.service';
 class FakeRedis {
   private store = new Map<string, { value: string; expiresAt: number }>();
 
-  async set(key: string, value: string, mode: 'PX', ttlMs: number, flag: 'NX'): Promise<'OK' | null> {
+  async set(
+    key: string,
+    value: string,
+    mode: 'PX',
+    ttlMs: number,
+    flag: 'NX',
+  ): Promise<'OK' | null> {
     void mode;
     void flag;
     const existing = this.store.get(key);

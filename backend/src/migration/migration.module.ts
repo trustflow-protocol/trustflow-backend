@@ -8,6 +8,7 @@ import {
   GigsPriorityBackfillMigration,
   GigRow,
 } from './migrations/gigs-priority-backfill.migration';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 
 const GIGS_SEED_ROWS: GigRow[] = [
   { id: 'gig-001', title: 'Smart contract security audit', budgetXLM: '500', urgent: true },
@@ -16,6 +17,7 @@ const GIGS_SEED_ROWS: GigRow[] = [
 ];
 
 @Module({
+  imports: [MonitoringModule],
   controllers: [MigrationController],
   providers: [
     MigrationRunnerService,

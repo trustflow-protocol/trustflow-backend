@@ -34,16 +34,23 @@ export class AdminService {
   ) {}
 
   async getOverview(): Promise<AnalyticsOverview> {
-    const [escrows, gigs] = await Promise.all([this.getEscrowAnalytics(), this.getGigAnalytics()]);
+    const [escrows, gigs, disputes, reputation, migrations, reconciliation] = await Promise.all([
+      this.getEscrowAnalytics(),
+      this.getGigAnalytics(),
+      this.getDisputeAnalytics(),
+      this.getReputationAnalytics(),
+      this.getMigrationAnalytics(),
+      this.getReconciliationAnalytics(),
+    ]);
 
     return {
       generatedAt: new Date().toISOString(),
       escrows,
       gigs,
-      disputes: this.getDisputeAnalytics(),
-      reputation: this.getReputationAnalytics(),
-      migrations: this.getMigrationAnalytics(),
-      reconciliation: this.getReconciliationAnalytics(),
+      disputes,
+      reputation,
+      migrations,
+      reconciliation,
     };
   }
 
@@ -62,8 +69,8 @@ export class AdminService {
     return { total: gigs.length, byStatus: this.tally(gigs.map(gig => gig.status)) };
   }
 
-  getDisputeAnalytics(): DisputeAnalytics {
-    const sagas = this.disputeSagaService.findAll();
+  async getDisputeAnalytics(): Promise<DisputeAnalytics> {
+    const sagas = await this.disputeSagaService.findAll();
     return {
       total: sagas.length,
       byStep: this.tally(sagas.map(saga => saga.currentStep)),
@@ -73,20 +80,21 @@ export class AdminService {
     };
   }
 
-  getReputationAnalytics(): ReputationAnalytics {
-    return {
-      trackedAddresses: this.reputationService.getTrackedAddressCount(),
-      topAddresses: this.reputationService.getLeaderboard(ADMIN_OVERVIEW_REPUTATION_TOP_N),
-    };
+  async getReputationAnalytics(): Promise<ReputationAnalytics> {
+    const [trackedAddresses, topAddresses] = await Promise.all([
+      this.reputationService.getTrackedAddressCount(),
+      this.reputationService.getLeaderboard(ADMIN_OVERVIEW_REPUTATION_TOP_N),
+    ]);
+    return { trackedAddresses, topAddresses };
   }
 
-  getMigrationAnalytics(): MigrationAnalytics {
-    const runs = this.migrationRunnerService.findAll();
+  async getMigrationAnalytics(): Promise<MigrationAnalytics> {
+    const runs = await this.migrationRunnerService.findAll();
     return { total: runs.length, byStatus: this.tally(runs.map(run => run.status)) };
   }
 
-  getReconciliationAnalytics(): ReconciliationAnalytics {
-    const runs = this.reconciliationService.findAll();
+  async getReconciliationAnalytics(): Promise<ReconciliationAnalytics> {
+    const runs = await this.reconciliationService.findAll();
     const lastRunAt = runs.reduce<string | undefined>(
       (latest, run) => (!latest || run.completedAt > latest ? run.completedAt : latest),
       undefined,

@@ -5,9 +5,10 @@ import { EventProcessorService } from './event-processor.service';
 import { EventIngestionController } from './event-ingestion.controller';
 import { StellarModule } from '../stellar/stellar.module';
 import { EscrowModule } from '../escrow/escrow.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 
 @Module({
-  imports: [StellarModule, EscrowModule],
+  imports: [StellarModule, EscrowModule, MonitoringModule],
   controllers: [EventIngestionController],
   providers: [EventIngestionService, LedgerCursorService, EventProcessorService],
   exports: [EventIngestionService],

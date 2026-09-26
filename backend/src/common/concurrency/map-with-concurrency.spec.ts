@@ -14,12 +14,16 @@ describe('mapWithConcurrency', () => {
   it('never runs more than `concurrency` workers at once', async () => {
     let inFlight = 0;
     let peak = 0;
-    await mapWithConcurrency(Array.from({ length: 20 }, (_, i) => i), 3, async () => {
-      inFlight += 1;
-      peak = Math.max(peak, inFlight);
-      await sleep(5);
-      inFlight -= 1;
-    });
+    await mapWithConcurrency(
+      Array.from({ length: 20 }, (_, i) => i),
+      3,
+      async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await sleep(5);
+        inFlight -= 1;
+      },
+    );
     expect(peak).toBe(3);
   });
 

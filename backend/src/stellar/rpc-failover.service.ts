@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Horizon } from '@stellar/stellar-sdk';
-import { STELLAR_CONFIG } from './stellar.config';
+import { getStellarConfig } from './stellar.config';
 
 interface EndpointStatus {
   url: string;
@@ -28,10 +28,10 @@ export class RpcFailoverService {
   }
 
   private initializeEndpoints() {
-    const horizonUrls = (process.env.STELLAR_HORIZON_ENDPOINTS || STELLAR_CONFIG.horizonUrl)
+    const horizonUrls = (process.env.STELLAR_HORIZON_ENDPOINTS || getStellarConfig().horizonUrl)
       .split(',')
       .map(url => url.trim());
-    const sorobanUrls = (process.env.SOROBAN_RPC_ENDPOINTS || STELLAR_CONFIG.sorobanRpcUrl)
+    const sorobanUrls = (process.env.SOROBAN_RPC_ENDPOINTS || getStellarConfig().sorobanRpcUrl)
       .split(',')
       .map(url => url.trim());
 
@@ -52,8 +52,8 @@ export class RpcFailoverService {
     }));
 
     // Set current endpoints to first in list (primary)
-    this.currentHorizonEndpoint = this.horizonEndpoints[0]?.url || STELLAR_CONFIG.horizonUrl;
-    this.currentSorobanEndpoint = this.sorobanEndpoints[0]?.url || STELLAR_CONFIG.sorobanRpcUrl;
+    this.currentHorizonEndpoint = this.horizonEndpoints[0]?.url || getStellarConfig().horizonUrl;
+    this.currentSorobanEndpoint = this.sorobanEndpoints[0]?.url || getStellarConfig().sorobanRpcUrl;
 
     this.logger.log(`Initialized ${this.horizonEndpoints.length} Horizon endpoints`);
     this.logger.log(`Initialized ${this.sorobanEndpoints.length} Soroban RPC endpoints`);
@@ -116,16 +116,30 @@ export class RpcFailoverService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.HEALTH_CHECK_TIMEOUT_MS);
 
-      const response = await fetch(`${endpoint.url}/health`, {
+      const response = await fetch(endpoint.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getHealth',
+        }),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
       if (response.ok) {
-        endpoint.healthy = true;
-        endpoint.failureCount = 0;
-        endpoint.lastError = undefined;
+        const data = (await response.json()) as any;
+        if (data?.result?.status === 'healthy') {
+          endpoint.healthy = true;
+          endpoint.failureCount = 0;
+          endpoint.lastError = undefined;
+        } else {
+          endpoint.healthy = false;
+          endpoint.failureCount++;
+          endpoint.lastError = `Unhealthy status: ${JSON.stringify(data)}`;
+        }
       } else {
         endpoint.healthy = false;
         endpoint.failureCount++;
@@ -197,7 +211,7 @@ export class RpcFailoverService {
         `Failed to create Horizon server for ${this.currentHorizonEndpoint}: ${error}`,
       );
       // Fall back to primary endpoint from config
-      return new Horizon.Server(STELLAR_CONFIG.horizonUrl);
+      return new Horizon.Server(getStellarConfig().horizonUrl);
     }
   }
 

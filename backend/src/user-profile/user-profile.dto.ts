@@ -83,6 +83,22 @@ export const RateUserSchema = z.object({
 export type RateUserDto = z.infer<typeof RateUserSchema>;
 
 /**
+ * Schema for GET /profiles/search — `q` is required (trimmed) so a
+ * missing or blank query 400s instead of reaching
+ * `UserProfileService.search()`, which calls `query.toLowerCase()`
+ * unconditionally (see #435).
+ */
+export const SearchQuerySchema = z.object({
+  q: z
+    .string({ required_error: 'q is required' })
+    .trim()
+    .min(2, 'q must be at least 2 characters')
+    .max(100, 'q must not exceed 100 characters'),
+});
+
+export type SearchQueryDto = z.infer<typeof SearchQuerySchema>;
+
+/**
  * Response DTO for user profile
  * Excludes sensitive internal fields
  */

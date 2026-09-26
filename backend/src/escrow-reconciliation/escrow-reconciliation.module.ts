@@ -7,9 +7,10 @@ import { EscrowReconciliationWorkerService } from './escrow-reconciliation-worke
 import { EscrowReconciliationStateStore } from './escrow-reconciliation-state.store';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { SorobanEscrowChainStateClient } from './soroban-escrow-chain-state.client';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 
 @Module({
-  imports: [EscrowModule, WebhookModule],
+  imports: [EscrowModule, WebhookModule, MonitoringModule],
   controllers: [EscrowReconciliationController],
   providers: [
     EscrowReconciliationService,

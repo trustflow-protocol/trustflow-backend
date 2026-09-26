@@ -16,6 +16,12 @@ describe('SorobanEscrowChainStateClient', () => {
     beforeEach(() => {
       delete process.env.TRUSTFLOW_CONTRACT_ID;
       jest.resetModules();
+      // The client reads getStellarConfig() in its constructor, which requires
+      // validateEnv() to have run first — normally done once in main.ts. jest.resetModules()
+      // above wipes env.config.ts's cached validation, so it must be re-run against this
+      // fresh module registry before requiring the client.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      require('../config/env.config').validateEnv();
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const mod = require('./soroban-escrow-chain-state.client');
       client = new mod.SorobanEscrowChainStateClient();
@@ -48,8 +54,11 @@ describe('SorobanEscrowChainStateClient', () => {
     let client: any;
 
     beforeEach(() => {
-      process.env.TRUSTFLOW_CONTRACT_ID = 'CTESTCONTRACTXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+      process.env.TRUSTFLOW_CONTRACT_ID =
+        'CTESTXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
       jest.resetModules();
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      require('../config/env.config').validateEnv();
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const mod = require('./soroban-escrow-chain-state.client');
       client = new mod.SorobanEscrowChainStateClient();

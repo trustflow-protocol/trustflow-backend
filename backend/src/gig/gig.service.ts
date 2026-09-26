@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -7,6 +8,7 @@ import {
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
@@ -84,6 +86,7 @@ export class GigService implements OnModuleInit {
       status: GigStatus.OPEN,
       createdAt: now.toISOString(),
       respondBy: new Date(now.getTime() + windowHours * 60 * 60 * 1000).toISOString(),
+      version: 1,
     };
 
     const event = this.outbox?.create(GIG_EVENTS.GIG_CREATED, 'gig', id, gig);
@@ -133,7 +136,13 @@ export class GigService implements OnModuleInit {
 
   async findByCreator(
     address: string,
-    options?: { status?: GigStatus; minBudgetXLM?: string; maxBudgetXLM?: string; offset?: number; limit?: number },
+    options?: {
+      status?: GigStatus;
+      minBudgetXLM?: string;
+      maxBudgetXLM?: string;
+      offset?: number;
+      limit?: number;
+    },
   ): Promise<{ data: Gig[]; total: number }> {
     let gigs: Gig[];
     if (this.redis) {
@@ -193,7 +202,13 @@ export class GigService implements OnModuleInit {
     const status = query.status ?? GigStatus.OPEN;
     const page = query.page ?? DEFAULT_GIG_SEARCH_PAGE;
     const limit = query.limit ?? DEFAULT_GIG_SEARCH_LIMIT;
-    const cacheKey = this.searchCacheKey(status, page, limit);
+    const cacheKey = this.searchCacheKey(
+      status,
+      page,
+      limit,
+      query.minBudgetXLM,
+      query.maxBudgetXLM,
+    );
 
     const cached = await this.readSearchCache(cacheKey);
     if (cached) return cached;
@@ -225,62 +240,124 @@ export class GigService implements OnModuleInit {
     return result;
   }
 
-  async accept(id: string, responder: string): Promise<Gig> {
-    const gig = await this.findById(id);
-    if (gig.status !== GigStatus.OPEN) {
-      throw new BadRequestException(`Cannot accept a gig with status "${gig.status}"`);
+  private async mutateWithRetry<T>(
+    id: string,
+    operation: (gig: Gig) => Promise<T>,
+  ): Promise<T> {
+    const maxRetries = 3;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (this.redis) {
+        try {
+          await this.redis.watch(this.gigKey(id));
+        } catch (err) {
+          this.logFallback('watch', err);
+        }
+      }
+
+      const gig = await this.tryFindById(id);
+      if (!gig) {
+        if (this.redis) {
+          try { await this.redis.unwatch(); } catch (err) { /* ignore */ }
+        }
+        throw new NotFoundException(`Gig ${id} not found`);
+      }
+
+      const currentVersion = gig.version || 1;
+      try {
+        const result = await operation(gig);
+        // Ensure in-memory fallback behaves like compare-and-set
+        if (!this.redis) {
+          const inMem = this.gigs.get(id);
+          if (inMem && inMem.version !== currentVersion + 1) {
+             throw new Error('In-memory transaction aborted');
+          }
+        }
+        return result;
+      } catch (err: any) {
+        if (this.redis) {
+          try { await this.redis.unwatch(); } catch (e) { /* ignore */ }
+        }
+        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed') || err.message?.includes('In-memory transaction aborted')) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
     }
-    gig.status = GigStatus.ACCEPTED;
-    gig.acceptedBy = responder;
-    gig.acceptedAt = new Date().toISOString();
-    await this.persistResolved(gig, GIG_EVENTS.GIG_ACCEPTED);
-    return gig;
+    throw new ConflictException(`Failed to modify gig ${id} due to concurrent modifications`);
+  }
+
+  async accept(id: string, responder: string): Promise<Gig> {
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) {
+        throw new ConflictException(`Cannot accept a gig with status "${gig.status}"`);
+      }
+      gig.status = GigStatus.ACCEPTED;
+      gig.acceptedBy = responder;
+      gig.acceptedAt = new Date().toISOString();
+      gig.version = (gig.version || 1) + 1;
+      await this.persistResolved(gig, GIG_EVENTS.GIG_ACCEPTED);
+      return gig;
+    });
   }
 
   async cancel(id: string): Promise<Gig> {
-    const gig = await this.findById(id);
-    if (gig.status !== GigStatus.OPEN) {
-      throw new BadRequestException(`Cannot cancel a gig with status "${gig.status}"`);
-    }
-    gig.status = GigStatus.CANCELLED;
-    gig.cancelledAt = new Date().toISOString();
-    await this.persistResolved(gig, GIG_EVENTS.GIG_CANCELLED);
-    return gig;
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) {
+        throw new ConflictException(`Cannot cancel a gig with status "${gig.status}"`);
+      }
+      gig.status = GigStatus.CANCELLED;
+      gig.cancelledAt = new Date().toISOString();
+      gig.version = (gig.version || 1) + 1;
+      await this.persistResolved(gig, GIG_EVENTS.GIG_CANCELLED);
+      return gig;
+    });
   }
 
   async update(id: string, dto: UpdateGigDto): Promise<Gig> {
-    const gig = await this.findById(id);
-    if (gig.status !== GigStatus.OPEN) {
-      throw new BadRequestException(`Cannot update a gig with status "${gig.status}"`);
-    }
-    if (dto.title !== undefined) gig.title = dto.title;
-    if (dto.budgetXLM !== undefined) gig.budgetXLM = dto.budgetXLM;
-    await this.persistGig(gig);
-    return gig;
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) {
+        throw new ConflictException(`Cannot update a gig with status "${gig.status}"`);
+      }
+      if (dto.title !== undefined) gig.title = dto.title;
+      if (dto.budgetXLM !== undefined) gig.budgetXLM = dto.budgetXLM;
+      if (dto.responseWindowHours !== undefined) {
+        gig.respondBy = new Date(Date.now() + dto.responseWindowHours * 60 * 60 * 1000).toISOString();
+      }
+      gig.version = (gig.version || 1) + 1;
+      await this.persistGig(gig);
+      return gig;
+    });
   }
 
   async remove(id: string): Promise<void> {
-    const gig = await this.findById(id);
-    if (gig.status === GigStatus.ACCEPTED) {
-      throw new BadRequestException('Cannot delete an accepted gig');
-    }
-    if (this.redis) {
-      try {
-        await this.redis
-          .multi()
-          .del(this.gigKey(id))
-          .zrem(GIGS_INDEX_KEY, id)
-          .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, id)
-          .srem(this.creatorKey(gig.creator), id)
-          .exec();
-        await this.invalidateSearchCache();
-        return;
-      } catch (err) {
-        this.logFallback('remove', err);
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status === GigStatus.ACCEPTED) {
+        throw new ConflictException('Cannot delete an accepted gig');
       }
-    }
-    this.gigs.delete(id);
-    await this.invalidateSearchCache();
+      if (this.redis) {
+        try {
+          const transaction = this.redis
+            .multi()
+            .del(this.gigKey(id))
+            .zrem(GIGS_INDEX_KEY, id)
+            .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, id)
+            .srem(this.creatorKey(gig.creator), id);
+          const results = await transaction.exec();
+          this.assertTransactionOk(results);
+          await this.invalidateSearchCache();
+          return;
+        } catch (err: any) {
+          if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+            throw err;
+          }
+          this.logFallback('remove', err);
+        }
+      }
+      this.gigs.delete(id);
+      await this.invalidateSearchCache();
+    });
   }
 
   /**
@@ -288,12 +365,14 @@ export class GigService implements OnModuleInit {
    * resolved by the time the sweep reached it. Used by the expiry sweep worker.
    */
   async expire(id: string): Promise<Gig | undefined> {
-    const gig = await this.tryFindById(id);
-    if (!gig || gig.status !== GigStatus.OPEN) return undefined;
-    gig.status = GigStatus.EXPIRED;
-    gig.expiredAt = new Date().toISOString();
-    await this.persistResolved(gig, GIG_EVENTS.GIG_EXPIRED);
-    return gig;
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) return undefined;
+      gig.status = GigStatus.EXPIRED;
+      gig.expiredAt = new Date().toISOString();
+      gig.version = (gig.version || 1) + 1;
+      await this.persistResolved(gig, GIG_EVENTS.GIG_EXPIRED);
+      return gig;
+    });
   }
 
   /** Writes a gig that just left OPEN status, dropping it from the open-expiry index. */
@@ -310,7 +389,10 @@ export class GigService implements OnModuleInit {
         this.assertTransactionOk(results);
         await this.invalidateSearchCache();
         return;
-      } catch (err) {
+      } catch (err: any) {
+        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+          throw err;
+        }
         this.logFallback('persistResolved', err);
       }
     }
@@ -320,18 +402,27 @@ export class GigService implements OnModuleInit {
     await this.invalidateSearchCache();
   }
 
-  /** Writes a gig while keeping it in the open-expiry index if still open. */
+  /**
+   * Writes a gig while keeping the open-expiry index (`GIGS_OPEN_BY_RESPOND_BY_KEY`) in sync
+   * with its (possibly just-changed) `respondBy` deadline — otherwise `findExpirable()`'s
+   * sweep would keep using a stale deadline after `update()` extends/shortens the response
+   * window (#432).
+   */
   private async persistGig(gig: Gig): Promise<void> {
     if (this.redis) {
       try {
         const results = await this.redis
           .multi()
           .set(this.gigKey(gig.id), JSON.stringify(gig))
+          .zadd(GIGS_OPEN_BY_RESPOND_BY_KEY, new Date(gig.respondBy).getTime(), gig.id)
           .exec();
         this.assertTransactionOk(results);
         await this.invalidateSearchCache();
         return;
-      } catch (err) {
+      } catch (err: any) {
+        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+          throw err;
+        }
         this.logFallback('persistGig', err);
       }
     }
@@ -383,8 +474,28 @@ export class GigService implements OnModuleInit {
     return `${GIGS_BY_CREATOR_PREFIX}${address}`;
   }
 
-  private searchCacheKey(status: GigStatus, page: number, limit: number): string {
-    return `${GIGS_SEARCH_CACHE_PREFIX}${status}:${page}:${limit}`;
+  /**
+   * Budget filters are hashed rather than interpolated raw so that arbitrary/malformed
+   * `minBudgetXLM`/`maxBudgetXLM` query values can't grow the cache key space unboundedly.
+   * Both bounds are normalized (parsed and re-stringified) first so that equivalent values
+   * (e.g. "500" vs "500.0") share a cache entry instead of needlessly fragmenting it.
+   */
+  private searchCacheKey(
+    status: GigStatus,
+    page: number,
+    limit: number,
+    minBudgetXLM?: string,
+    maxBudgetXLM?: string,
+  ): string {
+    const filterHash = this.budgetFilterHash(minBudgetXLM, maxBudgetXLM);
+    return `${GIGS_SEARCH_CACHE_PREFIX}${status}:${page}:${limit}:${filterHash}`;
+  }
+
+  private budgetFilterHash(minBudgetXLM?: string, maxBudgetXLM?: string): string {
+    const min = minBudgetXLM !== undefined ? parseFloat(minBudgetXLM) : undefined;
+    const max = maxBudgetXLM !== undefined ? parseFloat(maxBudgetXLM) : undefined;
+    const normalized = `${min ?? ''}:${max ?? ''}`;
+    return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
   }
 
   private getSearchCacheTtlSeconds(): number {

@@ -1,5 +1,16 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ConflictException,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
 import BigNumber from 'bignumber.js';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { MetricsService } from '../monitoring/metrics.service';
 import { UserType, UserStatus } from './user-profile.entity';
 import { CreateUserProfileDto, UpdateUserProfileDto, RateUserDto } from './user-profile.dto';
 import { randomUUID } from 'crypto';
@@ -31,17 +42,54 @@ export interface UserProfile {
   lastActiveAt?: string;
 }
 
+const PROFILE_KEY_PREFIX = 'profile:';
+const PROFILES_INDEX_KEY = 'profiles:index';
+const PROFILES_BY_WALLET_PREFIX = 'profiles:by-wallet:';
+
+/** Emitted (see `GET /metrics`) every time a call falls back to the in-memory store. */
+export const USER_PROFILE_PERSISTENCE_FALLBACK_METRIC = 'user_profile_persistence_fallback_total';
+
+/**
+ * User profile store. Backed by Redis so profile state survives restarts and is shared across
+ * instances — see PERSISTENT_STORAGE_SPIKE.md §2 and its "Follow-up decisions" addendum (#188).
+ *
+ * `search()` keeps doing an in-process substring scan over `findAll()`'s results — unchanged
+ * behavior from before this migration. Redis has no native substring-search equivalent at this
+ * data size without adding a separate module (RediSearch), which isn't guaranteed available on
+ * every deployment; proper search indexing is a later concern only if profile volume ever makes
+ * an in-process scan too slow.
+ *
+ * Falls back to a process-local Map when Redis is unavailable, logged at `error` level and
+ * counted via `USER_PROFILE_PERSISTENCE_FALLBACK_METRIC`.
+ */
 @Injectable()
-export class UserProfileService {
+export class UserProfileService implements OnModuleInit {
+  private readonly logger = new Logger(UserProfileService.name);
+
+  /** Fallback stores, only used while Redis is unavailable. */
   private profiles: Map<string, UserProfile> = new Map();
   private walletAddressIndex: Map<string, string> = new Map(); // walletAddress -> profileId
+
+  constructor(
+    @Optional() @Inject(REDIS_CLIENT) private readonly redis: Redis | null = null,
+    @Optional() private readonly metrics?: MetricsService,
+  ) {}
+
+  onModuleInit(): void {
+    if (!this.redis && process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'UserProfileService requires REDIS_URL to be configured in production — refusing to ' +
+          'start with per-instance in-memory storage, which would silently diverge across instances.',
+      );
+    }
+  }
 
   /**
    * Create a new user profile
    */
   async create(dto: CreateUserProfileDto): Promise<UserProfile> {
-    // Check if wallet address already exists
-    if (this.walletAddressIndex.has(dto.walletAddress)) {
+    const existing = await this.tryFindByWalletAddress(dto.walletAddress);
+    if (existing) {
       throw new ConflictException('Profile with this wallet address already exists');
     }
 
@@ -70,9 +118,23 @@ export class UserProfileService {
       lastActiveAt: now,
     };
 
+    if (this.redis) {
+      try {
+        const results = await this.redis
+          .multi()
+          .set(this.profileKey(id), JSON.stringify(profile))
+          .sadd(PROFILES_INDEX_KEY, id)
+          .set(this.walletKey(dto.walletAddress), id)
+          .exec();
+        this.assertTransactionOk(results);
+        return profile;
+      } catch (err) {
+        this.logFallback('create', err);
+      }
+    }
+
     this.profiles.set(id, profile);
     this.walletAddressIndex.set(dto.walletAddress, id);
-
     return profile;
   }
 
@@ -80,7 +142,7 @@ export class UserProfileService {
    * Find profile by ID
    */
   async findById(id: string): Promise<UserProfile> {
-    const profile = this.profiles.get(id);
+    const profile = await this.tryFindById(id);
     if (!profile) {
       throw new NotFoundException('User profile not found');
     }
@@ -91,11 +153,11 @@ export class UserProfileService {
    * Find profile by wallet address
    */
   async findByWalletAddress(walletAddress: string): Promise<UserProfile> {
-    const profileId = this.walletAddressIndex.get(walletAddress);
-    if (!profileId) {
+    const profile = await this.tryFindByWalletAddress(walletAddress);
+    if (!profile) {
       throw new NotFoundException('User profile not found');
     }
-    return this.findById(profileId);
+    return profile;
   }
 
   /**
@@ -108,7 +170,7 @@ export class UserProfileService {
     offset?: number;
     limit?: number;
   }): Promise<{ data: UserProfile[]; total: number }> {
-    let profiles = Array.from(this.profiles.values());
+    let profiles = await this.fetchAll();
 
     if (filters?.userType) {
       profiles = profiles.filter(
@@ -150,7 +212,7 @@ export class UserProfileService {
     if (dto.status !== undefined) profile.status = dto.status;
 
     profile.updatedAt = new Date().toISOString();
-
+    await this.persist(profile);
     return profile;
   }
 
@@ -159,6 +221,22 @@ export class UserProfileService {
    */
   async delete(id: string): Promise<void> {
     const profile = await this.findById(id);
+
+    if (this.redis) {
+      try {
+        const results = await this.redis
+          .multi()
+          .del(this.profileKey(id))
+          .srem(PROFILES_INDEX_KEY, id)
+          .del(this.walletKey(profile.walletAddress))
+          .exec();
+        this.assertTransactionOk(results);
+        return;
+      } catch (err) {
+        this.logFallback('delete', err);
+      }
+    }
+
     this.walletAddressIndex.delete(profile.walletAddress);
     this.profiles.delete(id);
   }
@@ -179,6 +257,7 @@ export class UserProfileService {
     profile.ratingCount = newRatingCount;
     profile.updatedAt = new Date().toISOString();
 
+    await this.persist(profile);
     return profile;
   }
 
@@ -189,6 +268,7 @@ export class UserProfileService {
     const profile = await this.findById(id);
     profile.completedJobs += 1;
     profile.updatedAt = new Date().toISOString();
+    await this.persist(profile);
     return profile;
   }
 
@@ -201,6 +281,7 @@ export class UserProfileService {
     const additionalAmount = new BigNumber(amount);
     profile.totalEarned = currentEarned.plus(additionalAmount).toFixed(7);
     profile.updatedAt = new Date().toISOString();
+    await this.persist(profile);
     return profile;
   }
 
@@ -213,6 +294,7 @@ export class UserProfileService {
     const additionalAmount = new BigNumber(amount);
     profile.totalSpent = currentSpent.plus(additionalAmount).toFixed(7);
     profile.updatedAt = new Date().toISOString();
+    await this.persist(profile);
     return profile;
   }
 
@@ -223,6 +305,7 @@ export class UserProfileService {
     const profile = await this.findById(id);
     profile.isVerified = true;
     profile.updatedAt = new Date().toISOString();
+    await this.persist(profile);
     return profile;
   }
 
@@ -232,18 +315,23 @@ export class UserProfileService {
   async updateLastActive(id: string): Promise<void> {
     const profile = await this.findById(id);
     profile.lastActiveAt = new Date().toISOString();
+    await this.persist(profile);
   }
 
   /**
    * Search profiles by name, bio, or skills with relevance ranking.
    * Results are ranked: exact name match > prefix name match > name contains > bio/skills match.
+   *
+   * Kept as an in-process scan over findAll() rather than a Redis-native query — see the class
+   * doc comment.
    */
   async search(
     query: string,
     options?: { offset?: number; limit?: number },
   ): Promise<{ data: UserProfile[]; total: number }> {
     const lowerQuery = query.toLowerCase();
-    const matches = Array.from(this.profiles.values())
+    const all = await this.fetchAll();
+    const matches = all
       .filter(
         profile =>
           profile.name.toLowerCase().includes(lowerQuery) ||
@@ -272,5 +360,92 @@ export class UserProfileService {
     const limit = options?.limit ?? 20;
     const data = matches.slice(offset, offset + limit);
     return { data, total };
+  }
+
+  // ─── Persistence helpers ────────────────────────────────────────────
+
+  private async persist(profile: UserProfile): Promise<void> {
+    if (this.redis) {
+      try {
+        const results = await this.redis
+          .multi()
+          .set(this.profileKey(profile.id), JSON.stringify(profile))
+          .exec();
+        this.assertTransactionOk(results);
+        return;
+      } catch (err) {
+        this.logFallback('persist', err);
+      }
+    }
+    this.profiles.set(profile.id, profile);
+  }
+
+  private async tryFindById(id: string): Promise<UserProfile | undefined> {
+    if (this.redis) {
+      try {
+        const raw = await this.redis.get(this.profileKey(id));
+        return raw ? (JSON.parse(raw) as UserProfile) : undefined;
+      } catch (err) {
+        this.logFallback('findById', err);
+      }
+    }
+
+    return this.profiles.get(id);
+  }
+
+  private async tryFindByWalletAddress(walletAddress: string): Promise<UserProfile | undefined> {
+    if (this.redis) {
+      try {
+        const id = await this.redis.get(this.walletKey(walletAddress));
+        return id ? await this.tryFindById(id) : undefined;
+      } catch (err) {
+        this.logFallback('findByWalletAddress', err);
+      }
+    }
+
+    const profileId = this.walletAddressIndex.get(walletAddress);
+    return profileId ? this.profiles.get(profileId) : undefined;
+  }
+
+  private async fetchAll(): Promise<UserProfile[]> {
+    if (this.redis) {
+      try {
+        const ids = await this.redis.smembers(PROFILES_INDEX_KEY);
+        if (ids.length === 0) return [];
+        const raw = await this.redis.mget(...ids.map(id => this.profileKey(id)));
+        return raw.filter((r): r is string => r !== null).map(r => JSON.parse(r) as UserProfile);
+      } catch (err) {
+        this.logFallback('findAll', err);
+      }
+    }
+
+    return Array.from(this.profiles.values());
+  }
+
+  private assertTransactionOk(results: Array<[Error | null, unknown]> | null): void {
+    if (!results) {
+      throw new Error('Redis transaction aborted (exec() returned null, e.g. a WATCH conflict)');
+    }
+    const failed = results.find(([err]) => err);
+    if (failed) {
+      throw new Error(`Redis transaction command failed: ${failed[0]!.message}`);
+    }
+  }
+
+  private profileKey(id: string): string {
+    return `${PROFILE_KEY_PREFIX}${id}`;
+  }
+
+  private walletKey(walletAddress: string): string {
+    return `${PROFILES_BY_WALLET_PREFIX}${walletAddress}`;
+  }
+
+  private logFallback(operation: string, err: unknown): void {
+    this.metrics?.increment(USER_PROFILE_PERSISTENCE_FALLBACK_METRIC, { operation });
+    this.logger.error(
+      `Redis unavailable for userProfile.${operation}, falling back to per-instance memory ` +
+        '(multi-instance state will diverge until Redis recovers)',
+      err instanceof Error ? err.stack : String(err),
+    );
   }
 }

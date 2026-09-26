@@ -2,10 +2,24 @@ import { Controller, Get, INestApplication, Post } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Reflector, APP_GUARD } from '@nestjs/core';
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import request from 'supertest';
 import { RateLimitGuard } from './rate-limit.guard';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { SKIP_RATE_LIMIT, RATE_LIMIT_POINTS, RATE_LIMIT_DURATION } from './rate-limit.decorator';
+import { validateEnv, TEST_ONLY_JWT_SECRET } from '../../config/env.config';
+
+// recordAbuse() reads config.RATE_LIMIT_* and extractVerifiedWallet() reads
+// config.JWT_SECRET, both of which require validateEnv() to have run first —
+// normally done once in main.ts.
+validateEnv();
+
+const jwtService = new JwtService();
+
+/** Signs a real JWT so tests can exercise RateLimitGuard's own verification path. */
+function signToken(payload: { address?: string; sub?: string }, secret = TEST_ONLY_JWT_SECRET) {
+  return jwtService.sign(payload, { secret, expiresIn: '1h' });
+}
 
 function mockContext(overrides?: {
   ip?: string;
@@ -16,6 +30,7 @@ function mockContext(overrides?: {
   body?: Record<string, string>;
   query?: Record<string, string>;
   params?: Record<string, string>;
+  headers?: Record<string, string>;
 }) {
   const ip = overrides?.ip ?? '127.0.0.1';
   const url = overrides?.url ?? '/auth/challenge';
@@ -34,9 +49,11 @@ function mockContext(overrides?: {
         method: overrides?.method ?? 'GET',
         url,
         route: { path: routePath },
-        headers: {},
+        headers: overrides?.headers ?? {},
         connection: { remoteAddress: '::1' },
         user: overrides?.user,
+        // body/query/params are intentionally still accepted here (and ignored by the
+        // guard) so tests can prove caller-controlled fields never select a bucket.
         body: overrides?.body,
         query: overrides?.query,
         params: overrides?.params,
@@ -231,6 +248,86 @@ describe('RateLimitGuard', () => {
       );
     });
 
+    it('should derive the wallet identity from a verified bearer token, since request.user is not yet populated when this global guard runs', async () => {
+      mockRedis.ttl.mockResolvedValue(0);
+      mockRedis.eval.mockResolvedValue([1, 99, 0]);
+
+      const token = signToken({ address: 'GABC123', sub: 'GABC123' });
+      const { context } = mockContext({ headers: { authorization: `Bearer ${token}` } });
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2);
+      expect(mockRedis.eval).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        1,
+        'ratelimit:bucket:wallet:gabc123:get:_auth_challenge',
+        100,
+        60_000,
+        expect.any(Number),
+        120_000,
+      );
+    });
+
+    it('should fall back to IP-only limiting when the bearer token is missing, malformed, or signed with the wrong secret', async () => {
+      mockRedis.ttl.mockResolvedValue(0);
+      mockRedis.eval.mockResolvedValue([1, 99, 0]);
+
+      const forgedToken = signToken(
+        { address: 'GFORGED1', sub: 'GFORGED1' },
+        'a-completely-different-secret',
+      );
+      const cases: Array<{ headers: Record<string, string> }> = [
+        { headers: { authorization: 'Bearer not-a-real-token' } },
+        { headers: { authorization: `Bearer ${forgedToken}` } },
+        { headers: {} },
+      ];
+
+      for (const overrides of cases) {
+        mockRedis.eval.mockClear();
+        const { context } = mockContext(overrides);
+        await expect(guard.canActivate(context)).resolves.toBe(true);
+        expect(mockRedis.eval).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('should never derive a wallet-scoped bucket from caller-controlled body/query/param fields, even when they are rotated per request', async () => {
+      mockRedis.ttl.mockResolvedValue(0);
+      mockRedis.eval.mockResolvedValue([1, 99, 0]);
+
+      for (const suffix of ['1', '2', '3']) {
+        mockRedis.eval.mockClear();
+        const { context } = mockContext({
+          body: {
+            address: `ATTACKER-BODY-${suffix}`,
+            walletAddress: `ATTACKER-BODY-WALLET-${suffix}`,
+          },
+          query: {
+            address: `ATTACKER-QUERY-${suffix}`,
+            walletAddress: `ATTACKER-QUERY-WALLET-${suffix}`,
+          },
+          params: {
+            address: `ATTACKER-PARAM-${suffix}`,
+            walletAddress: `ATTACKER-PARAM-WALLET-${suffix}`,
+          },
+        });
+        await expect(guard.canActivate(context)).resolves.toBe(true);
+
+        // Only the IP-scoped bucket is ever checked — rotating the unverified
+        // address on every request must not create a fresh wallet-scoped bucket.
+        expect(mockRedis.eval).toHaveBeenCalledTimes(1);
+        expect(mockRedis.eval).toHaveBeenCalledWith(
+          expect.any(String),
+          1,
+          'ratelimit:bucket:ip:127.0.0.1:get:_auth_challenge',
+          100,
+          60_000,
+          expect.any(Number),
+          120_000,
+        );
+      }
+    });
+
     it('should throw 429 and record abuse when the bucket is empty', async () => {
       mockRedis.ttl.mockResolvedValue(0);
       mockRedis.eval.mockResolvedValueOnce([0, 0, 12]).mockResolvedValueOnce(0);
@@ -263,10 +360,12 @@ describe('RateLimitGuard', () => {
     });
 
     it('should lock out identities after repeated empty-bucket attempts', async () => {
-      process.env.RATE_LIMIT_ABUSE_THRESHOLD = '2';
-      process.env.RATE_LIMIT_LOCKOUT_SECONDS = '30';
+      // Note: RATE_LIMIT_ABUSE_THRESHOLD/RATE_LIMIT_LOCKOUT_SECONDS env overrides can't be
+      // exercised per-test here — config.ts caches validateEnv()'s result at module scope, so
+      // this asserts against the actual default abuse threshold (5) and lockout (900s) instead.
+      // Per-test env-driven config overrides are covered by issue #467.
       mockRedis.ttl.mockResolvedValue(0);
-      mockRedis.eval.mockResolvedValueOnce([0, 0, 12]).mockResolvedValueOnce(30);
+      mockRedis.eval.mockResolvedValueOnce([0, 0, 12]).mockResolvedValueOnce(900);
 
       const { context } = mockContext();
       await expect(guard.canActivate(context)).rejects.toThrow(
@@ -274,7 +373,7 @@ describe('RateLimitGuard', () => {
           {
             statusCode: HttpStatus.TOO_MANY_REQUESTS,
             message: 'Too many requests - rate limit exceeded',
-            retryAfter: 30,
+            retryAfter: 900,
             scope: 'ip:127.0.0.1',
           },
           HttpStatus.TOO_MANY_REQUESTS,
@@ -289,8 +388,8 @@ describe('RateLimitGuard', () => {
         expect.any(Number),
         300_000,
         300,
-        2,
-        30,
+        5,
+        900,
         expect.any(String),
       );
     });
@@ -354,13 +453,15 @@ describe('RateLimitGuard Supertest integration', () => {
     });
   });
 
-  it('should evaluate both per-IP and per-wallet buckets for wallet requests', async () => {
+  it('should evaluate both per-IP and per-wallet buckets when the request carries a verified bearer token', async () => {
     mockRedis.ttl.mockResolvedValue(0);
     mockRedis.eval.mockResolvedValue([1, 99, 0]);
 
+    const token = signToken({ address: 'GABC123', sub: 'GABC123' });
     await request(app.getHttpServer())
       .post('/rate-limit-test/wallet')
-      .send({ walletAddress: 'GABC123' })
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
       .expect(201, { ok: true });
 
     expect(mockRedis.eval).toHaveBeenCalledTimes(2);
@@ -369,6 +470,44 @@ describe('RateLimitGuard Supertest integration', () => {
       expect.any(String),
       1,
       expect.stringContaining('ratelimit:bucket:wallet:gabc123'),
+      100,
+      60_000,
+      expect.any(Number),
+      120_000,
+    );
+  });
+
+  it('should not create a new wallet-scoped bucket when a client rotates an unverified walletAddress in the request body', async () => {
+    mockRedis.ttl.mockResolvedValue(0);
+    mockRedis.eval.mockResolvedValue([1, 99, 0]);
+
+    await request(app.getHttpServer())
+      .post('/rate-limit-test/wallet')
+      .send({ walletAddress: 'ROTATED-1' })
+      .expect(201, { ok: true });
+    await request(app.getHttpServer())
+      .post('/rate-limit-test/wallet')
+      .send({ walletAddress: 'ROTATED-2' })
+      .expect(201, { ok: true });
+
+    // Neither unauthenticated request produces a wallet bucket — each only checks
+    // its IP-scoped bucket once, regardless of the walletAddress supplied in the body.
+    expect(mockRedis.eval).toHaveBeenCalledTimes(2);
+    expect(mockRedis.eval).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      1,
+      expect.stringContaining('ratelimit:bucket:ip:'),
+      100,
+      60_000,
+      expect.any(Number),
+      120_000,
+    );
+    expect(mockRedis.eval).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      1,
+      expect.stringContaining('ratelimit:bucket:ip:'),
       100,
       60_000,
       expect.any(Number),

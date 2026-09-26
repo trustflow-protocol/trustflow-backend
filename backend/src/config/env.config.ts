@@ -13,84 +13,123 @@ import { z } from 'zod';
  * throughout the application, replacing inline `process.env.X || fallback` reads.
  */
 
-const EnvSchema = z.object({
-  // Node environment
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+const EnvSchema = z
+  .object({
+    // Node environment
+    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
-  // Server configuration
-  PORT: z.coerce.number().int().positive().default(3001),
-  CORS_ORIGIN: z.string().optional(),
-  API_URL: z.string().url().optional().default('http://localhost:3001'),
-  BODY_LIMIT_MB: z.coerce.number().int().positive().default(15),
+    // Server configuration
+    PORT: z.coerce.number().int().positive().default(3001),
+    CORS_ORIGIN: z.string().optional(),
+    API_URL: z.string().url().optional().default('http://localhost:3001'),
+    BODY_LIMIT_MB: z.coerce.number().int().positive().default(15),
 
-  // Authentication & Security
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters for security'),
-  ADMIN_ADDRESSES: z
-    .string()
-    .optional()
-    .describe('Comma-separated list of Stellar addresses with admin access'),
+    // Authentication & Security
+    // JWT_SECRET is required in production but may fall back to a clearly-marked
+    // test-only default in non-production environments so local dev/test can boot
+    // without a real secret. Production without a secret must fail fast.
+    JWT_SECRET: z.string().optional(),
+    ADMIN_ADDRESSES: z
+      .string()
+      .optional()
+      .describe('Comma-separated list of Stellar addresses with admin access'),
 
-  // Stellar Network Configuration
-  STELLAR_NETWORK: z.enum(['TESTNET', 'PUBLIC', 'MAINNET']).default('TESTNET'),
-  STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
-  SOROBAN_RPC_URL: z.string().url().default('https://soroban-testnet.stellar.org'),
-  TRUSTFLOW_CONTRACT_ID: z
-    .string()
-    .regex(/^C[A-Z2-7]{55}$/, 'TRUSTFLOW_CONTRACT_ID must be a valid Stellar contract address')
-    .optional()
-    .describe('Required for on-chain operations; optional for off-chain-only deployments'),
+    // Stellar Network Configuration
+    STELLAR_NETWORK: z.enum(['TESTNET', 'PUBLIC', 'MAINNET']).default('TESTNET'),
+    STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
+    SOROBAN_RPC_URL: z.string().url().default('https://soroban-testnet.stellar.org'),
+    TRUSTFLOW_CONTRACT_ID: z
+      .string()
+      .regex(/^C[A-Z2-7]{55}$/, 'TRUSTFLOW_CONTRACT_ID must be a valid Stellar contract address')
+      .optional()
+      .describe('Required for on-chain operations; optional for off-chain-only deployments'),
 
-  // Stellar failover endpoints (comma-separated URLs)
-  STELLAR_HORIZON_ENDPOINTS: z.string().optional(),
-  SOROBAN_RPC_ENDPOINTS: z.string().optional(),
+    // Stellar failover endpoints (comma-separated URLs)
+    STELLAR_HORIZON_ENDPOINTS: z.string().optional(),
+    SOROBAN_RPC_ENDPOINTS: z.string().optional(),
+    SOROBAN_START_LEDGER: z.coerce.number().int().nonnegative().optional().describe('Contract deployment ledger to start ingestion from'),
 
-  // Redis Configuration
-  REDIS_URL: z
-    .string()
-    .url()
-    .optional()
-    .describe('Required for rate limiting, outbox relay, and distributed caches'),
+    // Redis Configuration
+    REDIS_URL: z
+      .string()
+      .url()
+      .optional()
+      .describe('Required for rate limiting, outbox relay, and distributed caches'),
 
-  // Database Configuration (PostgreSQL)
-  DATABASE_URL: z
-    .string()
-    .url()
-    .optional()
-    .describe('PostgreSQL connection string; currently optional infrastructure'),
+    // Database Configuration (PostgreSQL)
+    DATABASE_URL: z
+      .string()
+      .url()
+      .optional()
+      .describe('PostgreSQL connection string; currently optional infrastructure'),
 
-  // Monitoring & Observability
-  SENTRY_DSN: z
-    .string()
-    .url()
-    .optional()
-    .describe('Sentry error tracking DSN; errors are logged but not reported when unset'),
+    // Monitoring & Observability
+    SENTRY_DSN: z
+      .string()
+      .url()
+      .optional()
+      .describe('Sentry error tracking DSN; errors are logged but not reported when unset'),
 
-  // Discord Integration
-  DISCORD_WEBHOOK_URL: z
-    .string()
-    .url()
-    .optional()
-    .describe('Discord webhook for dispute notifications'),
+    // Discord Integration
+    DISCORD_WEBHOOK_URL: z
+      .string()
+      .url()
+      .optional()
+      .describe('Discord webhook for dispute notifications'),
 
-  // Rate Limiting Configuration
-  RATE_LIMIT_ABUSE_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
-  RATE_LIMIT_ABUSE_THRESHOLD: z.coerce.number().int().positive().default(5),
-  RATE_LIMIT_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
+    // Rate Limiting Configuration
+    RATE_LIMIT_ABUSE_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
+    RATE_LIMIT_ABUSE_THRESHOLD: z.coerce.number().int().positive().default(5),
+    RATE_LIMIT_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
 
-  // Event Processing Configuration
-  EVENT_PROCESSING_CONCURRENCY: z.coerce.number().int().positive().default(8),
+    // Event Processing Configuration
+    EVENT_PROCESSING_CONCURRENCY: z.coerce.number().int().positive().default(8),
 
-  // IPFS Pinning Configuration
-  IPFS_PINATA_JWT: z.string().optional().describe('Pinata API JWT token'),
-  IPFS_WEB3_STORAGE_TOKEN: z.string().optional().describe('Web3.Storage API token'),
-  IPFS_INFURA_PROJECT_ID: z.string().optional().describe('Infura IPFS project ID'),
-  IPFS_INFURA_PROJECT_SECRET: z.string().optional().describe('Infura IPFS project secret'),
+    // IPFS Pinning Configuration
+    IPFS_PINATA_JWT: z.string().optional().describe('Pinata API JWT token'),
+    IPFS_WEB3_STORAGE_TOKEN: z.string().optional().describe('Web3.Storage API token'),
+    IPFS_INFURA_PROJECT_ID: z.string().optional().describe('Infura IPFS project ID'),
+    IPFS_INFURA_PROJECT_SECRET: z.string().optional().describe('Infura IPFS project secret'),
 
-  // Reputation System Configuration
-  REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
-});
+    // Reputation System Configuration
+    REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const secret = data.JWT_SECRET;
+    if (data.NODE_ENV === 'production') {
+      if (!secret || secret.trim() === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET is required in production',
+        });
+      } else if (secret.length < 16) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET must be at least 16 characters for security',
+        });
+      }
+    } else {
+      // Development/test: if a value is explicitly provided it must still meet minimum length
+      if (secret !== undefined && secret !== '' && secret.length < 16) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET must be at least 16 characters for security',
+        });
+      }
+    }
+  });
 
 export type EnvConfig = z.infer<typeof EnvSchema>;
+
+/**
+ * Fallback used only when NODE_ENV !== 'production' and no JWT_SECRET is provided.
+ * Clearly marked as test-only so it cannot be mistaken for a production secret.
+ */
+export const TEST_ONLY_JWT_SECRET =
+  'test-only-jwt-secret-for-development-and-test-do-not-use-in-production';
 
 let validatedConfig: EnvConfig | null = null;
 
@@ -109,7 +148,14 @@ export function validateEnv(): EnvConfig {
   }
 
   try {
-    validatedConfig = EnvSchema.parse(process.env);
+    const parsed = EnvSchema.parse(process.env) as EnvConfig;
+    // Inject clearly-marked test-only fallback for non-production when no secret is provided
+    if (!parsed.JWT_SECRET || parsed.JWT_SECRET.trim() === '') {
+      if (parsed.NODE_ENV !== 'production') {
+        (parsed as Record<string, unknown>).JWT_SECRET = TEST_ONLY_JWT_SECRET;
+      }
+    }
+    validatedConfig = parsed;
     return validatedConfig;
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -128,6 +174,20 @@ export function validateEnv(): EnvConfig {
 
 /**
  * Get the validated config object. Must call validateEnv() first (typically in main.ts).
+ *
+ * Deliberately throws instead of lazily calling validateEnv() on first access (#428). The
+ * alternative — having `getConfig()` self-initialize — would make every module-level
+ * `config.*` read "work by accident" regardless of import order, which is exactly the kind
+ * of ordering bug this project keeps hitting: it would silently mask a *new* module-level
+ * read added later (no test would ever exercise the "config not initialized yet" path,
+ * since it could no longer occur). Keeping the throw means that dependency is explicit and
+ * testable: every read of `config`/`getConfig()` must happen inside a factory, constructor,
+ * or method body — something Nest (or a test) controls the timing of — never at module
+ * evaluation time. `main.ts` still validates first via the top-level `validateEnv()` call;
+ * tests validate first via an explicit `validateEnv()` call before importing the module
+ * under test (see e.g. `rate-limit.guard.spec.ts`, `stellar.service.spec.ts`). See
+ * `env-config-import-order.spec.ts` for a regression test asserting that importing a module
+ * which reads `config` does NOT throw, because it no longer reads `config` at import time.
  *
  * @throws {Error} if validateEnv() hasn't been called yet
  */

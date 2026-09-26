@@ -1,6 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { validateEnv } from '../config/env.config';
+
+// AdminController is guarded by AdminGuard, which reads config.ADMIN_ADDRESSES in its
+// constructor — Nest instantiates guards during compile(), so validateEnv() must have
+// already run — normally done once in main.ts.
+validateEnv();
 
 describe('AdminController', () => {
   let controller: AdminController;

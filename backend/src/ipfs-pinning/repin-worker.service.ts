@@ -80,9 +80,10 @@ export class RepinWorkerService implements OnModuleInit, OnModuleDestroy {
 
   /** Runs a single sweep. Exposed so it can also be triggered manually (e.g. from tests or an admin endpoint). */
   async runOnce(): Promise<void> {
-    const targets = this.pinningService
-      .findAll()
-      .filter(record => record.status === PinStatus.DEGRADED || record.status === PinStatus.FAILED);
+    const all = await this.pinningService.findAll();
+    const targets = all.filter(
+      record => record.status === PinStatus.DEGRADED || record.status === PinStatus.FAILED,
+    );
 
     // Reconcile CIDs with bounded concurrency rather than serially — each
     // `reconcile()` makes per-provider network calls, so a sweep over many

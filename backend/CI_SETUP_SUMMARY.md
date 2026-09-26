@@ -5,6 +5,12 @@
 **Estimated Time**: 4-8 hours  
 **Difficulty**: 🟡 Medium
 
+> **Note**: this is the original implementation summary for #50. The pipeline has since been
+> simplified to a single job and gained a Redis service container and an `npm audit` gate —
+> see `.github/workflows/backend-ci.yml` and `.github/workflows/README.md` for the current,
+> authoritative description. The sections below have been corrected where they described the
+> old three-job/matrix shape.
+
 ## Overview
 
 Implemented a comprehensive GitHub Actions CI pipeline that automatically runs backend tests, linting, formatting checks, and builds on all pull requests that modify the backend directory. The CI ensures code quality and prevents broken code from being merged.
@@ -15,33 +21,24 @@ Implemented a comprehensive GitHub Actions CI pipeline that automatically runs b
 
 **File**: `.github/workflows/backend-ci.yml`
 
-**Features**:
+**Features (current)**:
 
 - ✅ Triggers on PRs affecting `backend/` directory
 - ✅ Runs on push to `main` and `develop` branches
-- ✅ Tests against Node.js 18.x and 20.x (matrix strategy)
-- ✅ 10-minute timeout to prevent runaway jobs
-- ✅ Three main jobs: Test, Build, Status Check
+- ✅ Single Node.js version, read from the repo-root `.nvmrc` (currently 20.x) — no matrix
+- ✅ 5-minute job timeout, plus a `cancel-in-progress` concurrency group
+- ✅ One job, `ci` (displayed as "Lint · TypeCheck · Test · Build"), backed by a
+  `redis:7-alpine` service container for the Redis-integration tests
 
-**Test Job**:
+**The `ci` job, in step order**:
 
-- Runs ESLint to check code quality
-- Validates Prettier formatting
-- Executes Jest test suite with coverage
-- Uploads coverage reports to Codecov (Node 20.x)
-- Runs on both Node 18.x and 20.x
-
-**Build Job**:
-
-- Compiles TypeScript to JavaScript
-- Runs TypeScript type checking (no emit)
-- Ensures production build succeeds
-
-**Status Check Job**:
-
-- Aggregates results from test and build jobs
-- Fails if any job fails
-- Provides clear status for branch protection
+- Lint (ESLint)
+- Format check (Prettier)
+- TypeScript check (`tsc --noEmit`) — separate from the build step, blocks the PR on type errors
+- Wait for Redis, then unit tests with coverage (`npm run test:ci`)
+- Build (`tsc`)
+- Dependency vulnerability scan (`npm audit --audit-level=high`)
+- Upload coverage to Codecov (best-effort — `fail_ci_if_error: false`)
 
 ### 2. Package Configuration
 
@@ -162,49 +159,35 @@ cd backend
 PR Created/Updated
          ↓
    Path Filter Check
-   (backend/* modified?)
+   (backend/* or the workflow file modified?)
          ↓
-    ┌────┴────┐
-    ↓         ↓
-Test Job   Build Job
-(Node 18)  (Node 20)
-    ↓         ↓
-Test Job
-(Node 20)
-    ↓
-Upload Coverage
-    ↓
-    └────┬────┘
-         ↓
-  Status Check Job
+   ci job (single job, Node from .nvmrc, redis:7-alpine service)
+   Lint → Format check → TypeScript check → Unit tests → Build → npm audit → Upload coverage
          ↓
     ✅ Pass / ❌ Fail
 ```
 
 ## Performance
 
-**Current Metrics**:
-
-- ⏱️ Average runtime: 2-4 minutes
-- 🎯 Target: Under 3 minutes per PR
-- 💰 CI minutes usage: ~6-8 minutes per PR (matrix)
+- ⏱️ Job timeout: 5 minutes (`timeout-minutes: 5`)
+- No measured average-runtime figure is tracked here; check recent runs of `Backend CI` on
+  the Actions tab for current numbers rather than trusting a static claim in this doc.
 
 **Optimizations**:
 
 - npm cache for faster installs
 - Path filtering (only runs on backend changes)
 - `--maxWorkers=2` for Jest in CI mode
-- 10-minute timeout prevents stuck jobs
-- Parallel matrix execution (Node 18 & 20)
+- 5-minute job timeout prevents stuck jobs
+- `cancel-in-progress` concurrency group cancels superseded runs on the same ref
 
 ## Branch Protection Setup
 
 Recommended settings for `main` branch:
 
-1. **Status checks required**:
-   - `Backend CI / Test Backend (20.x)`
-   - `Backend CI / Build Backend`
-   - `Backend CI / CI Status Check`
+1. **Status check required**:
+   - `Lint · TypeCheck · Test · Build` — the single check this workflow reports (verify the
+     exact string on a recent PR)
 
 2. **Require branches to be up to date**: ✅ Enabled
 
@@ -323,8 +306,7 @@ git commit -m "Add package-lock.json"
 
 4. **Verify CI runs**:
    - Check PR for status checks
-   - Verify all jobs pass
-   - Check runtime is under 3 minutes
+   - Verify the `ci` job passes
 
 ## Codecov Integration (Optional)
 
@@ -344,7 +326,8 @@ Coverage will appear as PR comments.
 
 - [ ] E2E integration tests
 - [ ] Database tests with PostgreSQL service
-- [ ] Security scanning (Snyk, npm audit)
+- [x] Security scanning — `npm audit --audit-level=high` gates the build (Snyk/Dependabot
+      integration is still open)
 - [ ] Dependency update automation (Dependabot)
 - [ ] Performance benchmarking
 - [ ] Docker image build and push
@@ -356,9 +339,7 @@ Coverage will appear as PR comments.
 
 ✅ Feature accurately implements the objective: Automatically run backend tests on PRs modifying backend DIR  
 ✅ Any PR that introduces TypeScript errors is automatically blocked  
-✅ CI pipeline runs in under 3 minutes per PR ⚡  
 ✅ Code is properly structured for review (CODEOWNERS, PR template)  
-✅ Multiple Node versions tested (18.x, 20.x)  
 ✅ Comprehensive documentation provided  
 ✅ Local CI check script for developers
 

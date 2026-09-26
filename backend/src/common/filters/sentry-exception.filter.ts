@@ -44,8 +44,7 @@ export class SentryExceptionFilter implements ExceptionFilter {
 
     // Resolve the correlation ID from the request object first (set by middleware),
     // then fall back to the AsyncLocalStorage context.
-    const correlationId =
-      request.correlationId ?? this.correlationIdStore?.get();
+    const correlationId = request.correlationId ?? this.correlationIdStore?.get();
 
     // Send 5xx errors and unexpected non-HTTP exceptions to Sentry
     const shouldCapture = !(exception instanceof HttpException) || status >= 500;

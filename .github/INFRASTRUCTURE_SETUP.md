@@ -26,12 +26,11 @@ Complete guide for configuring the TrustFlow backend infrastructure after mergin
 
    #### ✅ Require status checks to pass before merging
    - [x] Require branches to be up to date before merging
-   - **Search and select these status checks**:
-     - `Backend CI / Test Backend (20.x)`
-     - `Backend CI / Build Backend`
-     - `Backend CI / CI Status Check`
+   - **Search and select this status check**:
+     - `Lint · TypeCheck · Test · Build` — the single job `backend-ci.yml` reports (verify the
+       exact string on a recent PR's checks list; it must pass for merges)
 
-   > **Note**: These checks will only appear after the first PR triggers the CI workflow. If you don't see them yet, create a test PR first.
+   > **Note**: This check will only appear after the first PR triggers the CI workflow. If you don't see it yet, create a test PR first.
 
    #### ✅ Additional Settings
    - [x] **Require linear history** (keeps git history clean)
@@ -173,7 +172,7 @@ Reason: Testing Discord integration - deliverable not as specified
 **Issue: Backend not starting**
 
 - ✅ Run `npm install` in backend directory
-- ✅ Check Node.js version: `node -v` (should be 18+ or 20+)
+- ✅ Check Node.js version: `node -v` (should be >= 20)
 - ✅ Check for port conflicts (default: 3001)
 
 ---

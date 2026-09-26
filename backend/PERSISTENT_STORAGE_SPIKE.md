@@ -219,3 +219,79 @@ risk/blast-radius if left in-memory, not effort.
 | #190 — Migrate the remaining smaller in-memory stores (`DisputeSagaService`, `EscrowReconciliationStateStore`, `EventProcessorService`, `LedgerCursorService`, `MigrationStateStore`) to Redis, following the same pattern as this prototype | Whoever owns event-ingestion/disputes | Low-medium, can be split into per-store PRs | No, except `EventProcessorService`/`LedgerCursorService`'s reorg-safety semantics should be explicitly re-verified as part of that migration (see the issue's own acceptance criteria) |
 
 (Filed as GitHub issues linked from #181.)
+
+## 9. Follow-up decisions (issues #187–#190)
+
+Resolving the four follow-up issues this spike filed. All four land the same Redis pattern
+`GigService` prototyped in §4 — entity as `SET`/`GET`, indices as sets/sorted sets, `MULTI`/
+`EXEC` with `assertTransactionOk()`, a graceful in-memory fallback logged at `error` and counted
+via a per-store `*_persistence_fallback_total` metric, and production fail-fast in
+`onModuleInit()` when `REDIS_URL` is unconfigured.
+
+**#187 — `EscrowService`: Redis, not a relational store.** §2 deliberately left this open pending
+a decision informed by compliance/audit requirements. Decision: Redis. A relational store would
+give ACID multi-row transactions and SQL-based audit querying, but this backend has no DB
+driver, ORM, or connection pool configured anywhere — adopting one is new infrastructure, not a
+drop-in swap, and nothing `EscrowService` does (point lookups by id/contractEscrowId, filter by
+depositor) needs cross-entity joins or multi-row transactions that would justify that lift on its
+own. Redis durability/backup configuration for treating it as ground truth for money-adjacent
+state (§7) remains an infra question for whoever owns the deployment, not something this
+migration can verify — the in-memory fallback is refused outright in production rather than
+silently engaged, same as `GigService`. Callers that previously mutated a `Escrow` object
+returned from `findById()` in place and relied on Map-reference semantics to persist that
+mutation (`DisputeSagaService`'s compensating actions) were updated to call a new
+`EscrowService.correctStatus()` instead — a Redis-backed `findById()` returns a fresh
+deserialized copy each call, not a live reference, so that pattern would otherwise silently stop
+persisting.
+
+**#188 — `UserProfileService`: Redis, `search()` unchanged.** As recommended in §2:
+`search()` stays an in-process substring scan over `findAll()`'s results rather than a
+Redis-native query, since Redis has no substring-search equivalent at this data size without
+RediSearch (a separate module, not guaranteed available on every deployment).
+
+**#189 — `IpfsPinningService`: Redis for pin metadata; raw content stays in-memory-only.** Pin
+records (`SET pin:{cid} <json>`) move to Redis. The raw-content `Buffer` map does **not** — it
+stays exactly as it was before this migration, still in-memory-only, per §7's flag that large
+binary blobs are a poor fit for Redis as general-purpose KV storage. This backend has no
+S3-compatible object-storage client wired up today, the same "no driver for this yet" situation
+that ruled out a relational store for #187. Consequence: the re-pin worker's retry-without-
+refetch behavior (topping up replication from bytes already held in memory) is unchanged from
+before this PR — it still only works within a single process's uptime. A follow-up issue
+(#417 — see the tracker) covers resolving this properly: either move raw content to
+S3-compatible object storage with only a reference stored alongside the pin metadata, or drop
+retry-without-refetch and require the caller to resupply content on a failed re-pin, per a
+rough per-record size × expected volume estimate as §7 recommends.
+
+**#190 — remaining stores: Redis for all six.** `DisputeSagaService`, `EventProcessorService`,
+`LedgerCursorService`, `ReputationScoreStore`, `EscrowReconciliationStateStore`, and
+`MigrationStateStore` all migrated. Two required more than a mechanical swap:
+
+- `DisputeSagaService` had the same reference-mutation pattern flagged under #187 above, but for
+  its *own* saga records: every step handler mutated the object `findById()`/the internal Map
+  returned and relied on Map-reference semantics for the mutation to "stick" — no explicit save
+  call after most mutations. Every step now explicitly persists via `persistSaga()`/`createSaga()`
+  after each mutation, since a Redis-backed read returns a copy, not a live reference.
+- `ReputationScoreStore`'s caller, `ReputationService`, carried a documented assumption that its
+  read → modify → write sequence in `applyContribution()` ran synchronously to completion without
+  yielding to the event loop, specifically because the old store was a fully-synchronous Map —
+  its own doc comment flagged that swapping in a store backed by real I/O would reopen a
+  lost-update race and "need an optimistic-concurrency guard...to keep this property." Making the
+  store's `get`/`save` genuinely async (required for Redis either way) reopens exactly that race,
+  including for the in-memory fallback path — an `await`, even one that resolves immediately, is
+  still a real suspension point. Fix: `ReputationService` now serializes every contribution
+  through a single in-process queue (`withLock()`), and pure reads (`getScore`/`getLeaderboard`)
+  no longer persist the decayed value they compute, since exponential decay is memoryless —
+  decaying directly from the original `lastUpdatedAt` to "now" gives the same result as decaying
+  in persisted steps, so a read never needs to write. This closes the single-instance race the
+  existing "concurrent updates" test suite exercises; it does not make the update atomic *across*
+  backend instances (that would need a Lua script or Redis `WATCH`/`MULTI`), which is accepted
+  here given reputation score is a derived/informational value, not money-adjacent state like
+  escrow.
+- `MigrationRunnerService`'s "only one active run per migration" guard had the same
+  once-synchronous-now-not problem: a separate `findActiveByName()` read followed by a `create()`
+  write raced two overlapping `run()` calls (each could see "no active run" before either had
+  written its own claim), and even a single caller's claim-then-create left a window where a
+  concurrent `findAll()` could see a migration marked active with no run record yet.
+  `MigrationStateStore.claimAndCreate()` now does both as one call — a synchronous check-and-set
+  against the fallback Map (no `await` between checking and writing), or Redis `SET NX` followed
+  by the record write in the same call — closing both windows.

@@ -27,6 +27,7 @@ import {
   ApiBearerAuth,
   ApiConsumes,
 } from '@nestjs/swagger';
+import { ZodError } from 'zod';
 import { UserProfileService } from './user-profile.service';
 import {
   CreateUserProfileDto,
@@ -35,6 +36,7 @@ import {
   CreateUserProfileSchema,
   UpdateUserProfileSchema,
   RateUserSchema,
+  SearchQuerySchema,
 } from './user-profile.dto';
 import { UserType, UserStatus } from './user-profile.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
@@ -261,7 +263,7 @@ export class UserProfileController {
     name: 'q',
     required: true,
     type: String,
-    description: 'Search query',
+    description: 'Search query (2-100 characters)',
     example: 'blockchain developer',
   })
   @ApiQuery({
@@ -280,14 +282,25 @@ export class UserProfileController {
     status: 200,
     description: 'Paginated search results ranked by relevance',
   })
+  @ApiResponse({ status: 400, description: 'q is missing, blank, or out of range' })
   async search(
-    @Query('q') query: string,
+    @Query('q') query: string | undefined,
     @Query('offset') offset?: number,
     @Query('limit') limit?: number,
   ) {
+    let validated: { q: string };
+    try {
+      validated = SearchQuerySchema.parse({ q: query });
+    } catch (err) {
+      if (err instanceof ZodError) {
+        throw new BadRequestException(err.errors[0]?.message ?? 'Invalid search query');
+      }
+      throw err;
+    }
+
     const safeOffset = Math.max(0, Number(offset) || 0);
     const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
-    return this.userProfileService.search(query, { offset: safeOffset, limit: safeLimit });
+    return this.userProfileService.search(validated.q, { offset: safeOffset, limit: safeLimit });
   }
 
   @Get(':id')

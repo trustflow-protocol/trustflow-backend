@@ -45,8 +45,6 @@ describe('createRedisClient (#220)', () => {
 
     // Give the eager connect().catch() a tick to run.
     await new Promise(r => setTimeout(r, 50));
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('Initial Redis connection failed'),
-    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Initial Redis connection failed'));
   });
 });

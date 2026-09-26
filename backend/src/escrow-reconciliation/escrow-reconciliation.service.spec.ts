@@ -227,8 +227,8 @@ describe('EscrowReconciliationService', () => {
 
       const run = await service.reconcile();
 
-      expect(service.findById(run.runId)).toEqual(run);
-      expect(service.findAll()).toEqual([run]);
+      expect(await service.findById(run.runId)).toEqual(run);
+      expect(await service.findAll()).toEqual([run]);
     });
   });
 });
