@@ -384,14 +384,20 @@ export class RateLimitGuard implements CanActivate {
       return undefined;
     }
 
-    try {
-      const payload = this.jwtService.verify<{ address?: string; sub?: string }>(token, {
-        secret: config.JWT_SECRET,
-      });
-      return payload.address || payload.sub;
-    } catch {
-      return undefined;
+    const verificationSecrets = getJwtVerificationSecrets();
+
+    for (const secret of verificationSecrets) {
+      try {
+        const payload = this.jwtService.verify<{ address?: string; sub?: string }>(token, {
+          secret,
+        });
+        return payload.address || payload.sub;
+      } catch {
+        // Fall through to the next active secret during a key rotation overlap.
+      }
     }
+
+    return undefined;
   }
 
   private extractBearerToken(request: RateLimitRequest): string | undefined {

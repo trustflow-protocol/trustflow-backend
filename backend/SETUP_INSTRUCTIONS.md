@@ -37,7 +37,8 @@ STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 TRUSTFLOW_CONTRACT_ID=your_contract_id
-JWT_SECRET=your_secure_secret_here
+JWT_SECRET=change-me-before-production
+# ProductionJWT_SECRET must be at least 32 characters, random, and not a placeholder.
 PORT=3001
 DISCORD_WEBHOOK_URL=your_discord_webhook_url  # Optional
 PINATA_JWT=your_pinata_jwt  # Optional — unconfigured providers use an in-memory simulated store
