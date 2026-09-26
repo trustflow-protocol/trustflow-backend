@@ -93,6 +93,8 @@ REDIS_COMMAND_TIMEOUT_MS=1000
 
 See [`.env.example`](.env.example) for the full list of variables, including optional IPFS, database, and admin settings.
 
+**What dependencies are required?** See [Runtime Dependencies](docs/runtime-dependencies.md) for a detailed breakdown of each external service (Redis, PostgreSQL, Stellar, IPFS, etc.), what happens when they're unset or down, and which are mandatory for production.
+
 ### Running
 
 ```bash

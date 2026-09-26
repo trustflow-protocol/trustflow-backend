@@ -153,6 +153,50 @@ describeIfRedis('OutboxService and OutboxPublisherService (Redis integration)', 
     expect(await redis.zscore('outbox:pending', event.id)).toBeNull();
   });
 
+  it('expires delivered event bodies using the configured retention period', async () => {
+    const previous = process.env.OUTBOX_DELIVERED_TTL_SECONDS;
+    process.env.OUTBOX_DELIVERED_TTL_SECONDS = '60';
+    try {
+      const event = outbox.create('gig.created', 'gig', 'gig-ttl', {});
+      await outbox.append(event);
+      const [claimed] = await outbox.claimDue(Date.now(), 30_000, 1);
+
+      await outbox.markDelivered(claimed);
+
+      const ttl = await redis.ttl(`outbox:event:${event.id}`);
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(60);
+      expect(await outbox.findById(event.id)).toEqual(
+        expect.objectContaining({ status: 'delivered' }),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.OUTBOX_DELIVERED_TTL_SECONDS;
+      else process.env.OUTBOX_DELIVERED_TTL_SECONDS = previous;
+    }
+  });
+
+  it('marks an event failed and removes it from retry indexes at the attempt limit', async () => {
+    const previous = process.env.OUTBOX_MAX_ATTEMPTS;
+    process.env.OUTBOX_MAX_ATTEMPTS = '1';
+    try {
+      const event = outbox.create('gig.created', 'gig', 'gig-failed', {});
+      await outbox.append(event);
+      const [claimed] = await outbox.claimDue(Date.now(), 30_000, 1);
+
+      await outbox.retry(claimed, new Error('poison event'));
+
+      expect(await outbox.findById(event.id)).toEqual(
+        expect.objectContaining({ status: 'failed', attempts: 1, lastError: 'poison event' }),
+      );
+      expect(await redis.zscore('outbox:pending', event.id)).toBeNull();
+      expect(await redis.zscore('outbox:processing', event.id)).toBeNull();
+      expect(await redis.ttl(`outbox:event:${event.id}`)).toBe(-1);
+    } finally {
+      if (previous === undefined) delete process.env.OUTBOX_MAX_ATTEMPTS;
+      else process.env.OUTBOX_MAX_ATTEMPTS = previous;
+    }
+  });
+
   it('publishes to the gateway channel and pushes the payload onto the queue', async () => {
     const subscriber = new Redis(process.env.REDIS_URL!);
     const received = new Promise<string>(resolve => {
@@ -171,5 +215,28 @@ describeIfRedis('OutboxService and OutboxPublisherService (Redis integration)', 
 
     await subscriber.unsubscribe(OUTBOX_GATEWAY_CHANNEL);
     await subscriber.quit();
+  });
+
+  it('trims the worker queue to the configured maximum length', async () => {
+    const previous = process.env.OUTBOX_QUEUE_MAX_LENGTH;
+    process.env.OUTBOX_QUEUE_MAX_LENGTH = '2';
+    try {
+      const publisher = new OutboxPublisherService(redis);
+      const first = outbox.create('gig.created', 'gig', 'gig-queue-1', {});
+      const second = outbox.create('gig.created', 'gig', 'gig-queue-2', {});
+      const third = outbox.create('gig.created', 'gig', 'gig-queue-3', {});
+      await publisher.publish(first);
+      await publisher.publish(second);
+      await publisher.publish(third);
+
+      expect(await redis.llen(OUTBOX_QUEUE_KEY)).toBe(2);
+      expect(await redis.lrange(OUTBOX_QUEUE_KEY, 0, -1)).toEqual([
+        JSON.stringify(third),
+        JSON.stringify(second),
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.OUTBOX_QUEUE_MAX_LENGTH;
+      else process.env.OUTBOX_QUEUE_MAX_LENGTH = previous;
+    }
   });
 });

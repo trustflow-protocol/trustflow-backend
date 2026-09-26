@@ -15,6 +15,7 @@ import {
   UseGuards,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -384,7 +385,6 @@ export class UserProfileController {
         email: { type: 'string' },
         skills: { type: 'array', items: { type: 'string' } },
         socialLinks: { type: 'object' },
-        status: { type: 'string', enum: ['active', 'inactive', 'suspended'] },
       },
     },
   })
@@ -395,6 +395,7 @@ export class UserProfileController {
       'owns the profile.',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'You can only update your own profile' })
   @ApiResponse({ status: 404, description: 'Profile not found' })
   async update(
     @Param('id') id: string,
@@ -425,8 +426,17 @@ export class UserProfileController {
     description: 'Profile deleted successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'You can only delete your own profile' })
   @ApiResponse({ status: 404, description: 'Profile not found' })
-  async delete(@Param('id') id: string) {
+  async delete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const profile = await this.userProfileService.findById(id);
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    if (profile.walletAddress !== req.user.address) {
+      throw new ForbiddenException('You can only delete your own profile');
+    }
+
     await this.userProfileService.delete(id);
   }
 
@@ -538,8 +548,21 @@ export class UserProfileController {
   @ApiResponse({ status: 200, description: 'Avatar uploaded successfully' })
   @ApiResponse({ status: 400, description: 'Invalid file type or size' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'You can only upload an avatar for your own profile' })
   @ApiResponse({ status: 404, description: 'Profile not found' })
-  async uploadAvatar(@Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
+  async uploadAvatar(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const profile = await this.userProfileService.findById(id);
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    if (profile.walletAddress !== req.user.address) {
+      throw new ForbiddenException('You can only upload an avatar for your own profile');
+    }
+
     if (!file) {
       throw new BadRequestException('No file provided');
     }

@@ -10,6 +10,10 @@ import {
   Put,
   Query,
   UseGuards,
+  Req,
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -35,6 +39,14 @@ import { GigStatus } from './gig.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { Idempotent } from '../common/idempotency';
 
+/**
+ * Shape of `req.user` once `JwtAuthGuard` has run — see
+ * `JwtStrategy.validate()` (src/auth/jwt.strategy.ts).
+ */
+interface AuthenticatedRequest {
+  user: { address: string; sub: string };
+}
+
 @ApiTags('Gigs')
 @Controller('gigs')
 export class GigController {
@@ -49,7 +61,8 @@ export class GigController {
     summary: 'Post a gig solicitation',
     description:
       'Creates an open gig solicitation. If nobody accepts it within the response window ' +
-      '(default 72h), the background expiry sweep automatically marks it as expired.',
+      '(default 72h), the background expiry sweep automatically marks it as expired. ' +
+      'Creator must match the authenticated wallet address.',
   })
   @ApiHeader({
     name: 'Idempotency-Key',
@@ -68,7 +81,7 @@ export class GigController {
       properties: {
         creator: {
           type: 'string',
-          description: 'Stellar address of the gig creator',
+          description: 'Stellar address of the gig creator (must match authenticated wallet)',
           example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
         },
         title: { type: 'string', example: 'Build a Soroban escrow audit report' },
@@ -97,8 +110,12 @@ export class GigController {
       },
     },
   })
-  async create(@Body() dto: CreateGigDto) {
+  @ApiResponse({ status: 403, description: 'Creator must match the authenticated wallet' })
+  async create(@Body() dto: CreateGigDto, @Req() req: AuthenticatedRequest) {
     const validated = CreateGigSchema.parse(dto);
+    if (validated.creator !== req.user.address) {
+      throw new ForbiddenException('Creator must match the authenticated wallet address');
+    }
     return this.gigService.create(validated);
   }
 
@@ -262,7 +279,9 @@ export class GigController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Accept a gig solicitation',
-    description: 'Marks an open gig as accepted, removing it from the expiry sweep.',
+    description:
+      'Marks an open gig as accepted, removing it from the expiry sweep. ' +
+      'Responder must match the authenticated wallet address.',
   })
   @ApiParam({ name: 'id', description: 'Gig ID', example: 'gig-1234567890-ab12cd' })
   @ApiBody({
@@ -273,17 +292,34 @@ export class GigController {
       properties: {
         responder: {
           type: 'string',
-          description: 'Stellar address of the responder',
+          description: 'Stellar address of the responder (must match authenticated wallet)',
           example: 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY',
         },
       },
     },
   })
   @ApiResponse({ status: 200, description: 'Gig accepted successfully' })
-  @ApiResponse({ status: 400, description: 'Gig is not open' })
+  @ApiResponse({ status: 400, description: 'Gig is not open or cannot accept own gig' })
+  @ApiResponse({ status: 403, description: 'Responder must match the authenticated wallet' })
   @ApiResponse({ status: 404, description: 'Gig not found' })
-  async accept(@Param('id') id: string, @Body() dto: AcceptGigDto) {
+  async accept(
+    @Param('id') id: string,
+    @Body() dto: AcceptGigDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const validated = AcceptGigSchema.parse(dto);
+    if (validated.responder !== req.user.address) {
+      throw new ForbiddenException('Responder must match the authenticated wallet address');
+    }
+
+    const gig = await this.gigService.findById(id);
+    if (!gig) {
+      throw new NotFoundException('Gig not found');
+    }
+    if (gig.creator === validated.responder) {
+      throw new BadRequestException('Cannot accept your own gig');
+    }
+
     return this.gigService.accept(id, validated.responder);
   }
 
@@ -293,13 +329,22 @@ export class GigController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Cancel a gig solicitation',
-    description: 'Withdraws an open gig solicitation, removing it from the expiry sweep.',
+    description: 'Withdraws an open gig solicitation, removing it from the expiry sweep. Only the creator can cancel.',
   })
   @ApiParam({ name: 'id', description: 'Gig ID', example: 'gig-1234567890-ab12cd' })
   @ApiResponse({ status: 200, description: 'Gig cancelled successfully' })
   @ApiResponse({ status: 400, description: 'Gig is not open' })
+  @ApiResponse({ status: 403, description: 'Only the creator can cancel the gig' })
   @ApiResponse({ status: 404, description: 'Gig not found' })
-  async cancel(@Param('id') id: string) {
+  async cancel(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const gig = await this.gigService.findById(id);
+    if (!gig) {
+      throw new NotFoundException('Gig not found');
+    }
+    if (gig.creator !== req.user.address) {
+      throw new ForbiddenException('Only the creator can cancel the gig');
+    }
+
     return this.gigService.cancel(id);
   }
 
@@ -311,13 +356,26 @@ export class GigController {
     description:
       'Updating `responseWindowHours` resets the response deadline to `now + responseWindowHours`, ' +
       'replacing (not extending) the current `respondBy`. Only applies while the gig is `open`; ' +
-      'omit the field to leave the deadline unchanged.',
+      'omit the field to leave the deadline unchanged. Only the creator can update the gig.',
   })
   @ApiParam({ name: 'id', description: 'Gig ID', example: 'gig-1234567890-ab12cd' })
   @ApiResponse({ status: 200, description: 'Gig updated successfully' })
   @ApiResponse({ status: 400, description: 'Gig is not open' })
+  @ApiResponse({ status: 403, description: 'Only the creator can update the gig' })
   @ApiResponse({ status: 404, description: 'Gig not found' })
-  async update(@Param('id') id: string, @Body() dto: UpdateGigDto) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateGigDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const gig = await this.gigService.findById(id);
+    if (!gig) {
+      throw new NotFoundException('Gig not found');
+    }
+    if (gig.creator !== req.user.address) {
+      throw new ForbiddenException('Only the creator can update the gig');
+    }
+
     const validated = UpdateGigSchema.parse(dto);
     return this.gigService.update(id, validated);
   }
@@ -326,12 +384,24 @@ export class GigController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete a gig solicitation' })
+  @ApiOperation({
+    summary: 'Delete a gig solicitation',
+    description: 'Only the creator can delete a gig.',
+  })
   @ApiParam({ name: 'id', description: 'Gig ID', example: 'gig-1234567890-ab12cd' })
   @ApiResponse({ status: 204, description: 'Gig deleted successfully' })
   @ApiResponse({ status: 400, description: 'Cannot delete accepted gig' })
+  @ApiResponse({ status: 403, description: 'Only the creator can delete the gig' })
   @ApiResponse({ status: 404, description: 'Gig not found' })
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const gig = await this.gigService.findById(id);
+    if (!gig) {
+      throw new NotFoundException('Gig not found');
+    }
+    if (gig.creator !== req.user.address) {
+      throw new ForbiddenException('Only the creator can delete the gig');
+    }
+
     await this.gigService.remove(id);
   }
 }

@@ -282,3 +282,37 @@ export const config = new Proxy({} as EnvConfig, {
     return getConfig()[prop as keyof EnvConfig];
   },
 });
+
+/**
+ * Test-only helper: clears the cached config so it can be re-initialized.
+ * Used in Jest tests to reset state between test cases.
+ *
+ * @example
+ *   afterEach(() => {
+ *     resetEnvConfig();
+ *   });
+ */
+export function resetEnvConfig(): void {
+  validatedConfig = null;
+}
+
+/**
+ * Test-only helper: merges overrides into process.env, resets the config cache,
+ * and re-runs validation. Use in tests to set specific config values per test case.
+ *
+ * @param overrides - Environment variable overrides (e.g., { ADMIN_ADDRESSES: 'G...' })
+ * @throws {Error} if validation fails after merging overrides
+ *
+ * @example
+ *   beforeEach(() => {
+ *     setTestEnv({ ADMIN_ADDRESSES: 'GXXXXX' });
+ *   });
+ *   afterEach(() => {
+ *     resetEnvConfig();
+ *   });
+ */
+export function setTestEnv(overrides: Record<string, string>): void {
+  resetEnvConfig();
+  Object.assign(process.env, overrides);
+  validateEnv();
+}

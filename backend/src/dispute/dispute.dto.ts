@@ -12,13 +12,32 @@ import {
   IsNumber,
   Min,
   Max,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  Validate,
 } from 'class-validator';
 import { DisputeStep, DisputeVerdict, JurorVote, SagaStepRecord } from './dispute.types';
+import { StrKey } from '@stellar/stellar-sdk';
+
+@ValidatorConstraint({ name: 'isStellarAddress', async: false })
+export class IsStellarAddressValidator implements ValidatorConstraintInterface {
+  validate(value: string): boolean {
+    return StrKey.isValidEd25519PublicKey(value);
+  }
+
+  defaultMessage(): string {
+    return 'Invalid Stellar address format';
+  }
+}
 
 export class EscalateDisputeDto {
-  @ApiProperty({ description: 'Stellar address of the initiating party', example: 'GXXX...' })
+  @ApiProperty({
+    description: 'Stellar address of the initiating party (ignored; derived from JWT)',
+    example: 'GXXX...',
+  })
   @IsString()
   @IsNotEmpty()
+  @Validate(IsStellarAddressValidator)
   initiator: string;
 
   @ApiProperty({ description: 'Reason for the dispute', minLength: 10, maxLength: 500 })
@@ -41,6 +60,7 @@ export class AssignJurorsDto {
   @ArrayMaxSize(7)
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
+  @Validate(IsStellarAddressValidator, { each: true })
   jurors: string[];
 }
 
@@ -48,6 +68,7 @@ export class CastVoteDto {
   @ApiProperty({ description: 'Stellar address of the voting juror' })
   @IsString()
   @IsNotEmpty()
+  @Validate(IsStellarAddressValidator)
   jurorAddress: string;
 
   @ApiProperty({ enum: ['depositor', 'beneficiary', 'split'] })
