@@ -19,7 +19,8 @@ Automatically runs on:
 
 A single job, `ci`, displayed as **"Lint · TypeCheck · Test · Build"**, running on
 `ubuntu-latest` with a `redis:7-alpine` service container (backs the Redis-integration
-tests; tests that don't need it check `REDIS_URL` and skip). Steps, in order:
+tests) and a `postgres:16-alpine` service container (backs the Postgres-integration tests);
+tests that don't need either check `REDIS_URL`/`DATABASE_URL` and skip. Steps, in order:
 
 1. **Checkout**
 2. **Setup Node.js** — version read from the repo-root `.nvmrc` (currently 20), with npm
@@ -32,16 +33,22 @@ tests; tests that don't need it check `REDIS_URL` and skip). Steps, in order:
    injection-token/service import cycle before it ships (Nest resolves those to an `undefined`
    token at runtime rather than a compile error — see #429)
 8. **Wait for Redis** — polls the service container before trusting `REDIS_URL`
-9. **Unit tests** — `npm run test:ci` (Jest, `--maxWorkers=2`, with `REDIS_URL` set)
-10. **Build** — `npm run build` (`tsc`)
-11. **Dependency vulnerability scan** — `npm audit --audit-level=high`; gates on high/critical
-    findings only
-12. **Upload coverage** — sends `backend/coverage` to Codecov (`fail_ci_if_error: false`, so a
+9. **Wait for Postgres** — polls the service container before trusting `DATABASE_URL`
+10. **Unit tests** — `npm run test:ci` (Jest, `--maxWorkers=2`, with `REDIS_URL` and
+    `DATABASE_URL` set)
+11. **Build** — `npm run build` (`tsc`)
+12. **Dependency vulnerability scan (production)** — `npm audit --omit=dev --audit-level=high`;
+    blocks the PR. See `backend/DEPENDENCY_AUDIT_POLICY.md` for the triage process and the
+    current allow-list.
+13. **Dependency vulnerability scan (dev, non-blocking)** — `npm audit --audit-level=high`
+    (includes dev dependencies); a failure is downgraded to a `::warning::` annotation rather
+    than failing the job.
+14. **Upload coverage** — sends `backend/coverage` to Codecov (`fail_ci_if_error: false`, so a
     Codecov outage never blocks the PR)
 
 #### Timeout
 
-- `timeout-minutes: 5` for the job
+- `timeout-minutes: 7` for the job
 - Prevents a stuck run from consuming CI minutes
 
 #### Concurrency and permissions

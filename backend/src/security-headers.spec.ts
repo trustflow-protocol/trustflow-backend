@@ -21,6 +21,10 @@ describe('Security Headers (Helmet)', () => {
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
+      // SentryModule/LoggingModule/MonitoringModule provide the SentryService,
+      // CorrelationIdStore and MetricsHttpInterceptor that configureApp() wires up —
+      // the same stack a real request goes through, rather than a hand-rolled subset.
+      imports: [SentryModule, LoggingModule, MonitoringModule],
       controllers: [HealthController],
     }).compile();
 

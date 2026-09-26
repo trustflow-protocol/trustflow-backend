@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import request from 'supertest';
@@ -11,8 +11,15 @@ import {
   PIN_PROVIDERS,
   PinProviderName,
 } from './providers/ipfs-provider.interface';
+import { SentryModule } from '../sentry/sentry.module';
+import { LoggingModule } from '../common/logging/logging.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
+import { configureApp } from '../app.setup';
+import { validateEnv } from '../config/env.config';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'ipfs-pinning-e2e-secret';
+// configureApp() reads config.* — requires validateEnv() to have run first.
+validateEnv();
 
 /**
  * Stands in for a real IPFS pinning backend (Pinata/web3.storage/Infura) — this is the
@@ -74,6 +81,9 @@ describe('IPFS Pinning (API integration)', () => {
         IpfsPinningModule,
         JwtModule.register({ secret: process.env.JWT_SECRET, signOptions: { expiresIn: '1h' } }),
         PassportModule.register({ defaultStrategy: 'jwt' }),
+        SentryModule,
+        LoggingModule,
+        MonitoringModule,
       ],
       providers: [JwtStrategy],
     })
@@ -82,9 +92,7 @@ describe('IPFS Pinning (API integration)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
-    );
+    configureApp(app, { skipSentryInit: true, skipIndexerStart: true });
     await app.init();
 
     const jwtService = moduleFixture.get(JwtService);
@@ -142,12 +150,16 @@ describe('IPFS Pinning (API integration)', () => {
     });
 
     it('fails over to the remaining provider and reports DEGRADED when one provider fails', async () => {
+      // Distinct content — pinContent() skips re-pinning a provider already recorded as
+      // healthy for a given CID, so reusing CONTENT_BASE64 here would no-op against the
+      // fully-healthy record the earlier tests already created for it.
+      const content = Buffer.from('Hello, TrustFlow! (failover case)').toString('base64');
       providerA.failPin = true;
 
       const res = await request(app.getHttpServer())
         .post('/ipfs/pins')
         .set('Authorization', authHeader)
-        .send({ content: CONTENT_BASE64 })
+        .send({ content })
         .expect(201);
 
       expect(res.body.status).toBe('DEGRADED');
@@ -159,13 +171,15 @@ describe('IPFS Pinning (API integration)', () => {
     });
 
     it('returns 503 when every registered provider fails to pin', async () => {
+      // Distinct content — see the note in the DEGRADED test above.
+      const content = Buffer.from('Hello, TrustFlow! (total failure case)').toString('base64');
       providerA.failPin = true;
       providerB.failPin = true;
 
       await request(app.getHttpServer())
         .post('/ipfs/pins')
         .set('Authorization', authHeader)
-        .send({ content: CONTENT_BASE64 })
+        .send({ content })
         .expect(503);
     });
   });

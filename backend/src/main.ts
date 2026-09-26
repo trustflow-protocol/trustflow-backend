@@ -1,16 +1,10 @@
 import './config/load-dotenv.bootstrap';
 import { NestFactory } from '@nestjs/core';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import * as Sentry from '@sentry/node';
-import * as express from 'express';
-import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { SentryService } from './sentry/sentry.service';
-import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
-import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
-import { MetricsHttpInterceptor } from './monitoring/metrics-http.interceptor';
-import { CorrelationIdStore } from './common/logging/correlation-id.store';
+import { configureApp } from './app.setup';
 import { validateEnv, config } from './config/env.config';
 import {
   createSecurityHeadersMiddleware,
