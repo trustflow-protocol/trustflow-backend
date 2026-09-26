@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
+  MAX_BASE64_CONTENT_LENGTH,
   PinProviderName,
   PinRecord,
   PinStatus,
@@ -28,7 +29,7 @@ export class PinContentDto {
   })
   @IsBase64()
   @IsNotEmpty()
-  @MaxLength(14_316_560, {
+  @MaxLength(MAX_BASE64_CONTENT_LENGTH, {
     message: 'content exceeds the maximum allowed size of 10 MB (decoded)',
   })
   content: string;

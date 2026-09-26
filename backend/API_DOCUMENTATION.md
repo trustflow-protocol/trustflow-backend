@@ -277,6 +277,23 @@ Provides visibility into Stellar RPC endpoint health and failover status. Requir
 
 A provider entry becomes `UNPINNED` only when that provider confirmed it released the pin (or reports it as already absent); an unregistered provider counts as a failure. If any provider fails, `DELETE` answers `502 Bad Gateway` with `failedProviders` and the per-provider results in `providers`, the record moves to status `UNPINNING` (the failed provider stays `PINNED` with `lastError`), the retained content is kept and `ipfs.pin.removed` is **not** sent. Repeat the `DELETE` to retry only the providers that still hold the pin; once all have released it the record becomes `UNPINNED` and the webhook fires. Failures are counted in `ipfs_unpin_failure_total{provider}`.
 
+### Deliverables
+
+| Method | Endpoint                    | Description                                         |
+| ------ | --------------------------- | --------------------------------------------------- |
+| POST   | `/deliverables`             | Upload a deliverable for a gig and pin it to IPFS   |
+| GET    | `/deliverables/:id`         | Get a deliverable by ID                             |
+| GET    | `/deliverables/gig/:gigId`  | List the deliverables of a gig                      |
+
+`POST /deliverables` is restricted to the freelancer who accepted the gig. Checks run in this order, before the content is decoded or pinned:
+
+| Status | Condition |
+| ------ | --------- |
+| `400`  | `content` is not valid base64 (standard alphabet, whole 4-character groups) or is longer than 14,316,560 characters (10 MB decoded), the same cap as `POST /ipfs/pins` |
+| `404`  | the gig does not exist |
+| `409`  | the gig is not `accepted` (still open, expired or cancelled) |
+| `403`  | `freelancer` is not the gig's accepted freelancer, or the authenticated wallet is not |
+
 ### Admin Analytics
 
 Restricted to wallet addresses listed in `ADMIN_ADDRESSES` (see [Environment Variables](#environment-variables)). All routes require a JWT (`Authorization: Bearer ...`) from an admin address and return `403 Forbidden` for anyone else.

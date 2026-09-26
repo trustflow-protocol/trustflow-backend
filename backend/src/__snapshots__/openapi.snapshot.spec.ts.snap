@@ -1164,6 +1164,7 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
     },
     "/deliverables": {
       "post": {
+        "description": "Only the freelancer who accepted the gig can upload for it: the gig must exist, be accepted, and \`freelancer\` must be both the gig's accepted freelancer and the authenticated wallet. \`content\` must be valid base64 of at most 10 MB decoded.",
         "operationId": "DeliverableController_upload",
         "parameters": [],
         "requestBody": {
@@ -1172,7 +1173,8 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
               "schema": {
                 "properties": {
                   "content": {
-                    "description": "Base64-encoded file content",
+                    "description": "Base64-encoded file content (at most 10 MB decoded)",
+                    "maxLength": 14316560,
                     "type": "string",
                   },
                   "filename": {
@@ -1203,6 +1205,18 @@ exports[`OpenAPI document matches the checked-in snapshot 1`] = `
         "responses": {
           "201": {
             "description": "Deliverable uploaded and pinned",
+          },
+          "400": {
+            "description": "Invalid payload, or content is not valid base64 / exceeds the size limit",
+          },
+          "403": {
+            "description": "Gig was not accepted by both the given freelancer and the authenticated wallet",
+          },
+          "404": {
+            "description": "Gig not found",
+          },
+          "409": {
+            "description": "Gig has not been accepted",
           },
           "503": {
             "description": "IPFS pinning failed",
