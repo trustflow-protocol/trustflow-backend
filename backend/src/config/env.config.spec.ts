@@ -29,6 +29,18 @@ describe('Environment Configuration', () => {
     expect(config.STELLAR_HORIZON_URL).toBe('https://horizon-testnet.stellar.org');
   });
 
+  it('accepts a previous JWT secret for overlap rotation', () => {
+    process.env = {
+      JWT_SECRET: 'test-secret-at-least-16-chars',
+      JWT_SECRET_PREVIOUS: 'old-secret-at-least-16-chars',
+    };
+
+    const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
+    const config = freshValidateEnv();
+
+    expect(config.JWT_SECRET_PREVIOUS).toBe('old-secret-at-least-16-chars');
+  });
+
   it('uses the test-only secret fallback when JWT_SECRET is missing outside production', () => {
     process.env = {};
 

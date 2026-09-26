@@ -13,7 +13,7 @@ import { Redis, Result } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { SKIP_RATE_LIMIT, RATE_LIMIT_POINTS, RATE_LIMIT_DURATION } from './rate-limit.decorator';
-import { config } from '../../config/env.config';
+import { config, getJwtVerificationSecrets } from '../../config/env.config';
 
 const DEFAULT_POINTS = 100;
 const DEFAULT_DURATION = 60;
@@ -263,14 +263,20 @@ export class RateLimitGuard implements CanActivate {
       return undefined;
     }
 
-    try {
-      const payload = this.jwtService.verify<{ address?: string; sub?: string }>(token, {
-        secret: config.JWT_SECRET,
-      });
-      return payload.address || payload.sub;
-    } catch {
-      return undefined;
+    const verificationSecrets = getJwtVerificationSecrets();
+
+    for (const secret of verificationSecrets) {
+      try {
+        const payload = this.jwtService.verify<{ address?: string; sub?: string }>(token, {
+          secret,
+        });
+        return payload.address || payload.sub;
+      } catch {
+        // Fall through to the next active secret during a key rotation overlap.
+      }
     }
+
+    return undefined;
   }
 
   private extractBearerToken(request: RateLimitRequest): string | undefined {

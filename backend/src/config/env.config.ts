@@ -36,6 +36,10 @@ const EnvSchema = z
     // test-only default in non-production environments so local dev/test can boot
     // without a real secret. Production without a secret must fail fast.
     JWT_SECRET: z.string().optional(),
+    JWT_SECRET_PREVIOUS: z
+      .string()
+      .optional()
+      .describe('Previous JWT signing secret kept active during a rotation overlap window'),
     ADMIN_ADDRESSES: z
       .string()
       .optional()
@@ -147,6 +151,8 @@ const EnvSchema = z
     }
 
     const secret = data.JWT_SECRET;
+    const previousSecret = data.JWT_SECRET_PREVIOUS;
+
     if (data.NODE_ENV === 'production') {
       if (!secret || secret.trim() === '') {
         ctx.addIssue({
@@ -170,6 +176,22 @@ const EnvSchema = z
           message: 'JWT_SECRET must be at least 16 characters for security',
         });
       }
+    }
+
+    if (previousSecret !== undefined && previousSecret !== '' && previousSecret.length < 16) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET_PREVIOUS'],
+        message: 'JWT_SECRET_PREVIOUS must be at least 16 characters for security',
+      });
+    }
+
+    if (secret && previousSecret && secret === previousSecret) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET_PREVIOUS'],
+        message: 'JWT_SECRET_PREVIOUS must differ from JWT_SECRET',
+      });
     }
   });
 
@@ -247,6 +269,14 @@ export function getConfig(): EnvConfig {
     throw new Error('Config not initialized. Call validateEnv() first.');
   }
   return validatedConfig;
+}
+
+export function getJwtVerificationSecrets(): string[] {
+  const secrets = [config.JWT_SECRET, config.JWT_SECRET_PREVIOUS].filter(
+    (secret): secret is string => Boolean(secret && secret.trim()),
+  );
+
+  return [...new Set(secrets)];
 }
 
 /**

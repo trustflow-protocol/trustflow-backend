@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { getJwtVerificationSecrets } from '../config/env.config';
 import { NonceStoreService } from './nonce-store.service';
 
 const CHALLENGE_PREFIX = 'Sign this message to authenticate with TrustFlow: ';
@@ -65,11 +66,17 @@ export class AuthService {
   }
 
   validateToken(token: string): unknown {
-    try {
-      return this.jwtService.verify(token);
-    } catch (error) {
-      throw new UnauthorizedException('Invalid token');
+    const verificationSecrets = getJwtVerificationSecrets();
+
+    for (const secret of verificationSecrets) {
+      try {
+        return this.jwtService.verify(token, { secret });
+      } catch {
+        // Fall through to the next secret so tokens signed before a rotation remain valid.
+      }
     }
+
+    throw new UnauthorizedException('Invalid token');
   }
 
   private extractNonce(challenge: string): string | null {
