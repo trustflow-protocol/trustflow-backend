@@ -72,23 +72,6 @@ async function bootstrap() {
 
   // Enable CORS
   const corsOrigin = config.CORS_ORIGIN;
-  const nodeEnv = config.NODE_ENV;
-
-  // Validate CORS configuration in production
-  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
-    logger.error(
-      'CORS_ORIGIN must be explicitly set in production (cannot use wildcard with credentials: true)',
-    );
-    process.exit(1);
-  }
-
-  // Warn if using wildcard in any environment (but only fail in production)
-  if (corsOrigin === '*' && nodeEnv === 'production') {
-    logger.error(
-      'Using wildcard CORS origin with credentials enabled is a security risk. Set CORS_ORIGIN to a comma-separated list of allowed origins.',
-    );
-    process.exit(1);
-  }
 
   app.enableCors({
     origin: corsOrigin || '*',

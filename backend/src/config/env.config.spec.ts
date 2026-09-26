@@ -49,14 +49,83 @@ describe('Environment Configuration', () => {
     expect(freshValidateEnv().JWT_SECRET).toBeTruthy();
   });
 
-  it('should throw when JWT_SECRET is too short', () => {
+  it('requires Redis in production unless explicitly opting out', () => {
     process.env = {
-      JWT_SECRET: 'short',
+      NODE_ENV: 'production',
+      JWT_SECRET: 'production-secret-at-least-32-chars-long',
+      CORS_ORIGIN: 'https://trustflow.xyz',
+      STELLAR_NETWORK: 'PUBLIC',
+      STELLAR_HORIZON_URL: 'https://horizon.stellar.org',
+      SOROBAN_RPC_URL: 'https://soroban-rpc.stellar.org',
     };
 
     const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
 
-    expect(() => freshValidateEnv()).toThrow('JWT_SECRET must be at least 16 characters');
+    expect(() => freshValidateEnv()).toThrow('REDIS_URL is required in production');
+  });
+
+  it('rejects wildcard CORS in production', () => {
+    process.env = {
+      NODE_ENV: 'production',
+      JWT_SECRET: 'production-secret-at-least-32-chars-long',
+      CORS_ORIGIN: '*',
+      REDIS_URL: 'redis://localhost:6379',
+      STELLAR_NETWORK: 'PUBLIC',
+      STELLAR_HORIZON_URL: 'https://horizon.stellar.org',
+      SOROBAN_RPC_URL: 'https://soroban-rpc.stellar.org',
+    };
+
+    const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
+
+    expect(() => freshValidateEnv()).toThrow('CORS_ORIGIN');
+  });
+
+  it('should throw when JWT_SECRET is too short in production', () => {
+    process.env = {
+      NODE_ENV: 'production',
+      JWT_SECRET: 'short',
+      REDIS_URL: 'redis://localhost:6379',
+      CORS_ORIGIN: 'https://trustflow.xyz',
+      STELLAR_NETWORK: 'PUBLIC',
+      STELLAR_HORIZON_URL: 'https://horizon.stellar.org',
+      SOROBAN_RPC_URL: 'https://soroban-rpc.stellar.org',
+    };
+
+    const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
+
+    expect(() => freshValidateEnv()).toThrow('JWT_SECRET must be at least 32 characters in production');
+  });
+
+  it('rejects placeholder JWT secrets in production', () => {
+    process.env = {
+      NODE_ENV: 'production',
+      JWT_SECRET: 'change-me-before-production',
+      REDIS_URL: 'redis://localhost:6379',
+      CORS_ORIGIN: 'https://trustflow.xyz',
+      STELLAR_NETWORK: 'PUBLIC',
+      STELLAR_HORIZON_URL: 'https://horizon.stellar.org',
+      SOROBAN_RPC_URL: 'https://soroban-rpc.stellar.org',
+    };
+
+    const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
+
+    expect(() => freshValidateEnv()).toThrow('JWT_SECRET must not be a placeholder value in production');
+  });
+
+  it('rejects PUBLIC network config with testnet URLs', () => {
+    process.env = {
+      NODE_ENV: 'production',
+      JWT_SECRET: 'production-secret-at-least-32-chars-long',
+      REDIS_URL: 'redis://localhost:6379',
+      CORS_ORIGIN: 'https://trustflow.xyz',
+      STELLAR_NETWORK: 'PUBLIC',
+      STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
+      SOROBAN_RPC_URL: 'https://soroban-testnet.stellar.org',
+    };
+
+    const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
+
+    expect(() => freshValidateEnv()).toThrow('STELLAR_HORIZON_URL');
   });
 
   it('should throw when PORT is not a number', () => {

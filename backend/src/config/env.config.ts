@@ -20,6 +20,13 @@ const optionalPositiveInt = () =>
 const optionalString = () => z.preprocess(blankToUndefined, z.string().optional());
 const optionalBool = () => z.preprocess(blankToUndefined, z.enum(['true', 'false']).optional());
 
+const PLACEHOLDER_JWT_SECRETS = new Set([
+  'change-me-in-production',
+  'change-me-before-production',
+  'your-secret',
+  'secret',
+]);
+
 const EnvSchema = z
   .object({
     // Node environment
@@ -30,6 +37,7 @@ const EnvSchema = z
     CORS_ORIGIN: z.string().optional(),
     API_URL: z.string().url().optional().default('http://localhost:3001'),
     BODY_LIMIT_MB: z.coerce.number().int().positive().default(15),
+    ALLOW_NO_REDIS: optionalBool(),
 
     // Authentication & Security
     // JWT_SECRET is required in production but may fall back to a clearly-marked
@@ -127,6 +135,8 @@ const EnvSchema = z
   .superRefine((data, ctx) => {
     const issue = (path: string, message: string) =>
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+    const isProduction = data.NODE_ENV === 'production';
+    const isPublicNetwork = data.STELLAR_NETWORK === 'PUBLIC' || data.STELLAR_NETWORK === 'MAINNET';
 
     if (Boolean(data.DB_HOST) !== Boolean(data.DB_NAME)) {
       issue('DB_HOST', 'DB_HOST and DB_NAME must be set together');
@@ -134,7 +144,7 @@ const EnvSchema = z
     if (data.DATABASE_URL && (data.DB_HOST || data.DB_NAME)) {
       issue('DATABASE_URL', 'set either DATABASE_URL or DB_HOST/DB_NAME, not both');
     }
-    if (data.DB_SSL_REJECT_UNAUTHORIZED === 'false' && data.NODE_ENV === 'production') {
+    if (data.DB_SSL_REJECT_UNAUTHORIZED === 'false' && isProduction) {
       issue(
         'DB_SSL_REJECT_UNAUTHORIZED',
         'disabling PostgreSQL certificate verification is not allowed in production',
@@ -146,52 +156,73 @@ const EnvSchema = z
     const swaggerEnabled = data.SWAGGER_ENABLED
       ? data.SWAGGER_ENABLED === 'true'
       : data.NODE_ENV !== 'production';
-    if (data.NODE_ENV === 'production' && swaggerEnabled && !data.SWAGGER_USER) {
+    if (isProduction && swaggerEnabled && !data.SWAGGER_USER) {
       issue('SWAGGER_USER', 'protect production Swagger with SWAGGER_USER and SWAGGER_PASSWORD');
+    }
+
+    if (isProduction && (!data.REDIS_URL || data.REDIS_URL.trim() === '') && data.ALLOW_NO_REDIS !== 'true') {
+      issue(
+        'REDIS_URL',
+        'REDIS_URL is required in production unless ALLOW_NO_REDIS=true is set for a deliberate single-node opt-out',
+      );
+    }
+
+    if (isProduction) {
+      const corsOrigins = (data.CORS_ORIGIN ?? '')
+        .split(',')
+        .map(origin => origin.trim())
+        .filter(Boolean);
+
+      if (!data.CORS_ORIGIN || data.CORS_ORIGIN.trim() === '' || corsOrigins.some(origin => origin === '*' || origin.includes('*'))) {
+        issue(
+          'CORS_ORIGIN',
+          'CORS_ORIGIN must be explicitly set to a comma-separated list of allowed origins in production; wildcard is not allowed',
+        );
+      }
     }
 
     const secret = data.JWT_SECRET;
     const previousSecret = data.JWT_SECRET_PREVIOUS;
 
-    if (data.NODE_ENV === 'production') {
+    if (isProduction) {
       if (!secret || secret.trim() === '') {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['JWT_SECRET'],
-          message: 'JWT_SECRET is required in production',
-        });
-      } else if (secret.length < 16) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['JWT_SECRET'],
-          message: 'JWT_SECRET must be at least 16 characters for security',
-        });
+        issue('JWT_SECRET', 'JWT_SECRET is required in production');
+      } else if (secret.length < 32) {
+        issue('JWT_SECRET', 'JWT_SECRET must be at least 32 characters in production');
+      } else if (PLACEHOLDER_JWT_SECRETS.has(secret.trim().toLowerCase())) {
+        issue('JWT_SECRET', 'JWT_SECRET must not be a placeholder value in production');
       }
     } else {
       // Development/test: if a value is explicitly provided it must still meet minimum length
       if (secret !== undefined && secret !== '' && secret.length < 16) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['JWT_SECRET'],
-          message: 'JWT_SECRET must be at least 16 characters for security',
-        });
+        issue('JWT_SECRET', 'JWT_SECRET must be at least 16 characters for security');
       }
     }
 
     if (previousSecret !== undefined && previousSecret !== '' && previousSecret.length < 16) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['JWT_SECRET_PREVIOUS'],
-        message: 'JWT_SECRET_PREVIOUS must be at least 16 characters for security',
-      });
+      issue(
+        'JWT_SECRET_PREVIOUS',
+        'JWT_SECRET_PREVIOUS must be at least 16 characters for security',
+      );
     }
 
     if (secret && previousSecret && secret === previousSecret) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['JWT_SECRET_PREVIOUS'],
-        message: 'JWT_SECRET_PREVIOUS must differ from JWT_SECRET',
-      });
+      issue('JWT_SECRET_PREVIOUS', 'JWT_SECRET_PREVIOUS must differ from JWT_SECRET');
+    }
+
+    if (isPublicNetwork) {
+      if (!data.STELLAR_HORIZON_URL || /testnet/i.test(data.STELLAR_HORIZON_URL)) {
+        issue(
+          'STELLAR_HORIZON_URL',
+          'STELLAR_HORIZON_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
+        );
+      }
+      if (!data.SOROBAN_RPC_URL || /testnet/i.test(data.SOROBAN_RPC_URL)) {
+        issue(
+          'SOROBAN_RPC_URL',
+          'SOROBAN_RPC_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
+        );
+      }
     }
   });
 
