@@ -23,6 +23,19 @@ import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { NotificationService } from '../notification/notification.service';
 import { ReputationOutcome } from '../reputation/reputation.types';
+import { getCurrentUtcDate, toUtcIsoString } from '../common/dates';
+
+/** Simple keyed mutex for serializing concurrent operations. */
+class KeyedMutex {
+  private locks: Map<string, Promise<void>> = new Map();
+
+  async lock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const current = this.locks.get(key) ?? Promise.resolve();
+    const next = current.then(fn);
+    this.locks.set(key, next.catch(() => {}));
+    return next;
+  }
+}
 
 /** Webhook event names emitted by the saga */
 export const SAGA_EVENTS = {
@@ -67,6 +80,12 @@ export const DISPUTE_SAGA_PERSISTENCE_FALLBACK_METRIC = 'dispute_saga_persistenc
  *
  * Falls back to a process-local Map when Redis is unavailable, logged at `error` level and
  * counted via `DISPUTE_SAGA_PERSISTENCE_FALLBACK_METRIC`.
+ *
+ * Concurrency strategy: Transitions within a single saga and escalations within a single escrow
+ * are serialized using in-process keyed mutexes. This ensures atomicity at the single-instance
+ * level. Cross-instance coordination is out of scope — once saga state is persisted in a shared
+ * backend (e.g. a database), add distributed locking via DistributedLockService or database
+ * row-level locking to coordinate across instances.
  */
 @Injectable()
 export class DisputeSagaService implements OnModuleInit {
@@ -75,6 +94,9 @@ export class DisputeSagaService implements OnModuleInit {
   private readonly sagas: Map<string, DisputeSaga> = new Map();
   /** Fallback secondary index: escrowId → sagaId (one active saga per escrow). */
   private readonly escrowIndex: Map<string, string> = new Map();
+  /** Mutex for serializing escalations per escrow (and saga transitions per saga). */
+  private readonly escalateMutex = new KeyedMutex();
+  private readonly sagaMutex = new KeyedMutex();
 
   constructor(
     private readonly escrowService: EscrowService,
@@ -135,17 +157,19 @@ export class DisputeSagaService implements OnModuleInit {
   /**
    * Opens a new dispute saga for an escrow.
    * Compensating action: restore escrow status to 'active'.
+   * Serialized per escrow to prevent double escalation.
    */
   async escalate(escrowId: string, dto: EscalateDisputeDto): Promise<DisputeSaga> {
-    // Guard: only one active saga per escrow
-    const existing = await this.findByEscrowId(escrowId);
-    if (
-      existing &&
-      existing.currentStep !== DisputeStep.FAILED &&
-      existing.currentStep !== DisputeStep.COMPLETED
-    ) {
-      throw new ConflictException(`An active dispute saga already exists for escrow ${escrowId}`);
-    }
+    return this.escalateMutex.lock(escrowId, async () => {
+      // Guard: only one active saga per escrow
+      const existing = await this.findByEscrowId(escrowId);
+      if (
+        existing &&
+        existing.currentStep !== DisputeStep.FAILED &&
+        existing.currentStep !== DisputeStep.COMPLETED
+      ) {
+        throw new ConflictException(`An active dispute saga already exists for escrow ${escrowId}`);
+      }
 
     const escrow = await this.escrowService.findById(escrowId);
     if (!escrow) throw new NotFoundException(`Escrow ${escrowId} not found`);
@@ -161,7 +185,7 @@ export class DisputeSagaService implements OnModuleInit {
     }
 
     const sagaId = `saga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const now = new Date().toISOString();
+    const now = toUtcIsoString(getCurrentUtcDate());
 
     const saga: DisputeSaga = {
       sagaId,
@@ -204,6 +228,7 @@ export class DisputeSagaService implements OnModuleInit {
       await this.compensateEscalation(saga, error);
       throw error;
     }
+    });
   }
 
   // ─── Compensating action for Step 1 ──────────────────────────────
@@ -241,10 +266,12 @@ export class DisputeSagaService implements OnModuleInit {
   /**
    * Assigns jurors to review the dispute.
    * Compensating action: clear juror list and re-open for assignment.
+   * Serialized per saga to prevent concurrent transitions.
    */
   async assignJurors(sagaId: string, dto: AssignJurorsDto): Promise<DisputeSaga> {
-    const saga = await this.findById(sagaId);
-    this.assertStep(saga, DisputeStep.JUROR_ASSIGNMENT);
+    return this.sagaMutex.lock(sagaId, async () => {
+      const saga = await this.findById(sagaId);
+      this.assertStep(saga, DisputeStep.JUROR_ASSIGNMENT);
 
     // Validate input before initializing the step to avoid treating input errors as infrastructure failures
     const unique = [...new Set(dto.jurors)];
@@ -289,6 +316,7 @@ export class DisputeSagaService implements OnModuleInit {
       await this.compensateJurorAssignment(saga, error);
       throw error;
     }
+    });
   }
 
   // ─── Compensating action for Step 2 ──────────────────────────────
@@ -322,67 +350,69 @@ export class DisputeSagaService implements OnModuleInit {
 
   /**
    * Records a juror vote. When all assigned jurors have voted,
-   * the verdict is computed automatically.
+   * the verdict is computed automatically (exactly once, serialized per saga).
    * Compensating action: remove the vote and mark voting as incomplete.
    */
   async castVote(sagaId: string, dto: CastVoteDto): Promise<DisputeSaga> {
-    const saga = await this.findById(sagaId);
-    this.assertStep(saga, DisputeStep.VOTING);
+    return this.sagaMutex.lock(sagaId, async () => {
+      const saga = await this.findById(sagaId);
+      this.assertStep(saga, DisputeStep.VOTING);
 
-    if (!saga.assignedJurors?.includes(dto.jurorAddress)) {
-      throw new BadRequestException(`${dto.jurorAddress} is not an assigned juror for this saga`);
-    }
-
-    if (saga.votes?.some(v => v.jurorAddress === dto.jurorAddress)) {
-      throw new ConflictException(`Juror ${dto.jurorAddress} has already voted`);
-    }
-
-    this.recordStepStart(saga, DisputeStep.VOTING);
-
-    try {
-      const vote: JurorVote = {
-        jurorAddress: dto.jurorAddress,
-        vote: dto.vote,
-        castAt: new Date().toISOString(),
-      };
-      saga.votes = [...(saga.votes ?? []), vote];
-      this.touch(saga);
-
-      await this.webhookService.dispatch(SAGA_EVENTS.VOTE_CAST, {
-        sagaId,
-        jurorAddress: dto.jurorAddress,
-        votesIn: saga.votes.length,
-        votesNeeded: saga.assignedJurors!.length,
-      });
-
-      // All jurors have voted — compute verdict
-      if (saga.votes.length === saga.assignedJurors!.length) {
-        const verdict = this.computeVerdict(saga.votes);
-        saga.verdict = verdict;
-        this.recordStepComplete(saga, DisputeStep.VOTING);
-        saga.currentStep = DisputeStep.PAYOUT;
-
-        await this.webhookService.dispatch(SAGA_EVENTS.VERDICT_REACHED, { sagaId, verdict });
-        this.logger.log(`Saga ${sagaId}: verdict reached — ${verdict}`);
-
-        const escrow = await this.escrowService.findById(saga.escrowId);
-        if (escrow) {
-          await this.notificationService.notifyVerdictReached({
-            disputeId: sagaId,
-            escrowId: saga.escrowId,
-            verdict,
-            depositor: escrow.depositor,
-            beneficiary: escrow.beneficiary,
-          });
-        }
+      if (!saga.assignedJurors?.includes(dto.jurorAddress)) {
+        throw new BadRequestException(`${dto.jurorAddress} is not an assigned juror for this saga`);
       }
 
-      await this.persistSaga(saga);
-      return saga;
-    } catch (error) {
-      await this.compensateVoting(saga, dto.jurorAddress, error);
-      throw error;
-    }
+      if (saga.votes?.some(v => v.jurorAddress === dto.jurorAddress)) {
+        throw new ConflictException(`Juror ${dto.jurorAddress} has already voted`);
+      }
+
+      this.recordStepStart(saga, DisputeStep.VOTING);
+
+      try {
+        const vote: JurorVote = {
+          jurorAddress: dto.jurorAddress,
+          vote: dto.vote,
+          castAt: toUtcIsoString(getCurrentUtcDate()),
+        };
+        saga.votes = [...(saga.votes ?? []), vote];
+        this.touch(saga);
+
+        await this.webhookService.dispatch(SAGA_EVENTS.VOTE_CAST, {
+          sagaId,
+          jurorAddress: dto.jurorAddress,
+          votesIn: saga.votes.length,
+          votesNeeded: saga.assignedJurors!.length,
+        });
+
+        // All jurors have voted — compute verdict (exactly once)
+        if (saga.votes.length === saga.assignedJurors!.length && !saga.verdict) {
+          const verdict = this.computeVerdict(saga.votes);
+          saga.verdict = verdict;
+          this.recordStepComplete(saga, DisputeStep.VOTING);
+          saga.currentStep = DisputeStep.PAYOUT;
+
+          await this.webhookService.dispatch(SAGA_EVENTS.VERDICT_REACHED, { sagaId, verdict });
+          this.logger.log(`Saga ${sagaId}: verdict reached — ${verdict}`);
+
+          const escrow = await this.escrowService.findById(saga.escrowId);
+          if (escrow) {
+            await this.notificationService.notifyVerdictReached({
+              disputeId: sagaId,
+              escrowId: saga.escrowId,
+              verdict,
+              depositor: escrow.depositor,
+              beneficiary: escrow.beneficiary,
+            });
+          }
+        }
+
+        await this.persistSaga(saga);
+        return saga;
+      } catch (error) {
+        await this.compensateVoting(saga, dto.jurorAddress, error);
+        throw error;
+      }
+    });
   }
 
   /** Simple majority vote tally */
@@ -430,55 +460,63 @@ export class DisputeSagaService implements OnModuleInit {
   // ─── Step 4: Payout ───────────────────────────────────────────────
 
   /**
-   * Executes the payout according to the verdict.
+   * Executes the payout according to the verdict (exactly once, serialized per saga).
+   * Returns 409 Conflict if another request already completed the payout.
    * Compensating action: reverse the release and flag the escrow for manual review.
    */
   async executePayout(sagaId: string, dto: ExecutePayoutDto): Promise<DisputeSaga> {
-    const saga = await this.findById(sagaId);
-    this.assertStep(saga, DisputeStep.PAYOUT);
+    return this.sagaMutex.lock(sagaId, async () => {
+      const saga = await this.findById(sagaId);
+      this.assertStep(saga, DisputeStep.PAYOUT);
 
-    if (!saga.verdict) {
-      throw new BadRequestException('Cannot execute payout: no verdict has been recorded');
-    }
-
-    this.recordStepStart(saga, DisputeStep.PAYOUT);
-
-    try {
-      await this.applyPayout(saga, dto.splitPercentage);
-
-      saga.payoutTxHash = `payout-tx-${sagaId}-${Date.now()}`;
-      this.recordStepComplete(saga, DisputeStep.PAYOUT);
-
-      const now = new Date().toISOString();
-      saga.currentStep = DisputeStep.COMPLETED;
-      saga.completedAt = now;
-      this.touch(saga);
-      await this.persistSaga(saga);
-
-      await this.webhookService.dispatch(SAGA_EVENTS.PAYOUT_EXECUTED, {
-        sagaId,
-        verdict: saga.verdict,
-        payoutTxHash: saga.payoutTxHash,
-      });
-      await this.webhookService.dispatch(SAGA_EVENTS.SAGA_COMPLETED, { sagaId });
-
-      const payoutEscrow = await this.escrowService.findById(saga.escrowId);
-      if (payoutEscrow) {
-        await this.notificationService.notifyPayoutExecuted({
-          disputeId: sagaId,
-          escrowId: saga.escrowId,
-          verdict: saga.verdict,
-          depositor: payoutEscrow.depositor,
-          beneficiary: payoutEscrow.beneficiary,
-        });
+      if (!saga.verdict) {
+        throw new BadRequestException('Cannot execute payout: no verdict has been recorded');
       }
 
-      this.logger.log(`Saga ${sagaId}: completed — payout executed for ${saga.verdict}`);
-      return saga;
-    } catch (error) {
-      await this.compensatePayout(saga, error);
-      throw error;
-    }
+      // Check if payout was already executed (another request won the race)
+      if (saga.payoutTxHash) {
+        throw new ConflictException('Payout has already been executed for this saga');
+      }
+
+      this.recordStepStart(saga, DisputeStep.PAYOUT);
+
+      try {
+        await this.applyPayout(saga, dto.splitPercentage);
+
+        saga.payoutTxHash = `payout-tx-${sagaId}-${Date.now()}`;
+        this.recordStepComplete(saga, DisputeStep.PAYOUT);
+
+        const now = toUtcIsoString(getCurrentUtcDate());
+        saga.currentStep = DisputeStep.COMPLETED;
+        saga.completedAt = now;
+        this.touch(saga);
+        await this.persistSaga(saga);
+
+        await this.webhookService.dispatch(SAGA_EVENTS.PAYOUT_EXECUTED, {
+          sagaId,
+          verdict: saga.verdict,
+          payoutTxHash: saga.payoutTxHash,
+        });
+        await this.webhookService.dispatch(SAGA_EVENTS.SAGA_COMPLETED, { sagaId });
+
+        const payoutEscrow = await this.escrowService.findById(saga.escrowId);
+        if (payoutEscrow) {
+          await this.notificationService.notifyPayoutExecuted({
+            disputeId: sagaId,
+            escrowId: saga.escrowId,
+            verdict: saga.verdict,
+            depositor: payoutEscrow.depositor,
+            beneficiary: payoutEscrow.beneficiary,
+          });
+        }
+
+        this.logger.log(`Saga ${sagaId}: completed — payout executed for ${saga.verdict}`);
+        return saga;
+      } catch (error) {
+        await this.compensatePayout(saga, error);
+        throw error;
+      }
+    });
   }
 
   /** Apply the payout by releasing or marking the escrow based on the verdict */
@@ -549,12 +587,12 @@ export class DisputeSagaService implements OnModuleInit {
   }
 
   private touch(saga: DisputeSaga): void {
-    saga.updatedAt = new Date().toISOString();
+    saga.updatedAt = toUtcIsoString(getCurrentUtcDate());
   }
 
   private markFailed(saga: DisputeSaga, reason: string): void {
     saga.currentStep = DisputeStep.FAILED;
-    saga.failedAt = new Date().toISOString();
+    saga.failedAt = toUtcIsoString(getCurrentUtcDate());
     saga.compensationReason = reason;
     this.touch(saga);
   }
@@ -562,25 +600,25 @@ export class DisputeSagaService implements OnModuleInit {
   private recordStepStart(saga: DisputeSaga, step: DisputeStep): void {
     // Remove any prior incomplete record for the same step (idempotent retry)
     saga.stepHistory = saga.stepHistory.filter(r => !(r.step === step && !r.completedAt));
-    saga.stepHistory.push({ step, startedAt: new Date().toISOString() });
+    saga.stepHistory.push({ step, startedAt: toUtcIsoString(getCurrentUtcDate()) });
   }
 
   private recordStepComplete(saga: DisputeSaga, step: DisputeStep): void {
     const record = this.lastRecord(saga, step);
-    if (record) record.completedAt = new Date().toISOString();
+    if (record) record.completedAt = toUtcIsoString(getCurrentUtcDate());
   }
 
   private recordStepFailed(saga: DisputeSaga, step: DisputeStep, error: string): void {
     const record = this.lastRecord(saga, step);
     if (record) {
-      record.failedAt = new Date().toISOString();
+      record.failedAt = toUtcIsoString(getCurrentUtcDate());
       record.error = error;
     }
   }
 
   private recordStepCompensated(saga: DisputeSaga, step: DisputeStep): void {
     const record = this.lastRecord(saga, step);
-    if (record) record.compensatedAt = new Date().toISOString();
+    if (record) record.compensatedAt = toUtcIsoString(getCurrentUtcDate());
   }
 
   private lastRecord(saga: DisputeSaga, step: DisputeStep): SagaStepRecord | undefined {
