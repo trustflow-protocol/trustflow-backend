@@ -314,6 +314,14 @@ describe('EscrowService', () => {
         expect(patched.status).toBe('disputed');
       });
 
+      it('rejects a status outside EscrowStatus and leaves the escrow untouched', async () => {
+        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+        await expect(
+          service.applyChainState(escrow.id, { status: 'Bogus' as never }),
+        ).rejects.toThrow('Invalid escrow status');
+        expect((await service.findById(escrow.id))?.status).toBe('pending');
+      });
+
       it('updates amountXLM when provided', async () => {
         const escrow = await service.create(DEPOSITOR, BENEFICIARY, '100');
         const patched = await service.applyChainState(escrow.id, { amountXLM: '200' });

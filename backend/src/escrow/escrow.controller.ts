@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
   Post,
   Body,
@@ -19,9 +21,6 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { EscrowService } from './escrow.service';
-import { WebhookService } from '../webhook/webhook.service';
-import { DiscordService } from '../webhook/discord.service';
-import { WebhookEvent } from '../webhook/webhook.dto';
 import { ReputationService } from '../reputation/reputation.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
 import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
@@ -42,9 +41,6 @@ void ReleaseEscrowSchema;
 export class EscrowController {
   constructor(
     private readonly escrowService: EscrowService,
-    private readonly webhookService: WebhookService,
-    private readonly discordService: DiscordService,
-    private readonly reputationService: ReputationService,
     private readonly escrowReleaseTransactionBuilderService: EscrowReleaseTransactionBuilderService,
   ) {}
 
@@ -93,11 +89,14 @@ export class EscrowController {
     schema: {
       type: 'object',
       properties: {
-        id: { type: 'string', example: 'esc-1234567890' },
+        id: { type: 'string', format: 'uuid', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' },
         depositor: { type: 'string' },
         beneficiary: { type: 'string' },
         amountXLM: { type: 'string' },
-        status: { type: 'string', enum: ['pending', 'active', 'released', 'disputed'] },
+        status: {
+          type: 'string',
+          enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
+        },
         createdAt: { type: 'string', format: 'date-time' },
       },
     },
@@ -127,7 +126,7 @@ export class EscrowController {
   @ApiParam({
     name: 'id',
     description: 'Escrow ID',
-    example: 'esc-1234567890',
+    example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005',
   })
   @ApiResponse({
     status: 200,
@@ -135,11 +134,15 @@ export class EscrowController {
     schema: {
       type: 'object',
       properties: {
-        id: { type: 'string' },
+        id: { type: 'string', format: 'uuid', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' },
         depositor: { type: 'string' },
         beneficiary: { type: 'string' },
         amountXLM: { type: 'string' },
-        status: { type: 'string' },
+        status: {
+          type: 'string',
+          enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
+        },
+        contractEscrowId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         disputeReason: { type: 'string', nullable: true },
         disputedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -190,7 +193,10 @@ export class EscrowController {
               depositor: { type: 'string' },
               beneficiary: { type: 'string' },
               amountXLM: { type: 'string' },
-              status: { type: 'string' },
+              status: {
+                type: 'string',
+                enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
+              },
               createdAt: { type: 'string', format: 'date-time' },
             },
           },
@@ -210,6 +216,7 @@ export class EscrowController {
   }
 
   @Post(':id/release')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Release escrow funds',
     description: 'Approves a milestone tranche and releases funds to the beneficiary.',
@@ -217,16 +224,30 @@ export class EscrowController {
   @ApiParam({
     name: 'id',
     description: 'Escrow ID',
-    example: 'esc-1234567890',
+    example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005',
   })
   @ApiResponse({
     status: 200,
     description: 'Escrow released successfully',
+    schema: {
+      type: 'object',
+      required: ['id', 'depositor', 'beneficiary', 'amountXLM', 'status', 'createdAt'],
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        depositor: { type: 'string' },
+        beneficiary: { type: 'string' },
+        amountXLM: { type: 'string' },
+        status: {
+          type: 'string',
+          enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
+        },
+        createdAt: { type: 'string', format: 'date-time' },
+      },
+    },
   })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
   async release(@Param('id') id: string) {
     const escrow = await this.escrowService.release(id);
-    await this.reputationService.recordEscrowCompleted(escrow);
     return escrow;
   }
 
@@ -241,7 +262,11 @@ export class EscrowController {
       'chain event flows back into this API through the existing event-ingestion pipeline. ' +
       'Requires TRUSTFLOW_CONTRACT_ID to be configured and the escrow to be linked to an on-chain ID.',
   })
-  @ApiParam({ name: 'id', description: 'Escrow ID', example: 'esc-1234567890' })
+  @ApiParam({
+    name: 'id',
+    description: 'Escrow ID',
+    example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005',
+  })
   @ApiQuery({
     name: 'sourceAccount',
     description: 'Stellar address that will sign and submit the transaction',
@@ -287,6 +312,7 @@ export class EscrowController {
   }
 
   @Post(':id/dispute')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Raise a dispute',
     description:
@@ -295,7 +321,7 @@ export class EscrowController {
   @ApiParam({
     name: 'id',
     description: 'Escrow ID',
-    example: 'esc-1234567890',
+    example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005',
   })
   @ApiBody({
     description: 'Dispute details',
@@ -328,25 +354,6 @@ export class EscrowController {
   async raiseDispute(@Param('id') id: string, @Body() dto: RaiseDisputeDto) {
     const validated = RaiseDisputeSchema.parse(dto);
     const escrow = await this.escrowService.raiseDispute(id, validated.reason);
-
-    // Dispatch webhook event
-    await this.webhookService.dispatch(WebhookEvent.DisputeRaised, {
-      escrowId: escrow.id,
-      depositor: escrow.depositor,
-      beneficiary: escrow.beneficiary,
-      amountXLM: escrow.amountXLM,
-      reason: escrow.disputeReason,
-      disputedAt: escrow.disputedAt,
-    });
-
-    // Send Discord notification
-    await this.discordService.notifyDisputeNeedsJurors({
-      escrowId: escrow.id,
-      depositor: escrow.depositor,
-      beneficiary: escrow.beneficiary,
-      amountXLM: escrow.amountXLM,
-      reason: escrow.disputeReason,
-    });
 
     return escrow;
   }

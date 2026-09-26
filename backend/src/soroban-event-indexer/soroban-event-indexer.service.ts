@@ -3,6 +3,7 @@ import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { getStellarConfig } from '../stellar/stellar.config';
+import { config } from '../config/env.config';
 
 export interface IndexedSorobanEvent {
   eventId: string;
@@ -72,17 +73,42 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
     }
 
     const cursor = await this.getCursor();
-    const currentLedger = await this.getCurrentLedger();
-    const startLedger = cursor + 1;
+    const bounds = await this.getLedgerBounds();
+    const currentLedger = bounds.latestLedger;
+    const oldestLedger = bounds.oldestLedger;
+
+    let startLedger = cursor > 0 ? cursor + 1 : undefined;
+
+    if (!startLedger) {
+      if (config.SOROBAN_START_LEDGER !== undefined) {
+        startLedger = Math.max(config.SOROBAN_START_LEDGER, oldestLedger);
+        this.logger.log(
+          `No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`,
+        );
+      } else {
+        startLedger = Math.max(currentLedger - 1000, oldestLedger);
+        this.logger.log(
+          `No checkpoint found and no config, starting from latest - 1000: ${startLedger}`,
+        );
+      }
+    } else if (startLedger < oldestLedger) {
+      this.logger.warn(
+        `Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`,
+      );
+      startLedger = oldestLedger;
+    }
+
     const endLedger = Math.min(currentLedger, startLedger + this.MAX_LEDGER_RANGE - 1);
 
     if (startLedger > endLedger) return [];
 
-    const response = await this.rpcServer.getEvents({
+    const getEventsParams: any = {
       startLedger,
       filters: [{ type: 'contract', contractIds: [contractId] }],
       limit: 100,
-    });
+    };
+
+    const response = (await this.rpcServer.getEvents(getEventsParams)) as any;
 
     const events: IndexedSorobanEvent[] = [];
     for (const raw of response.events) {
@@ -91,7 +117,7 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
         ledger: raw.ledger,
         contractId: raw.contractId?.toString() || contractId,
         eventType: this.parseTopic(raw.topic[0]),
-        topic: raw.topic.map(t => this.parseTopic(t)),
+        topic: raw.topic.map((topic: unknown) => this.parseTopic(topic)),
         value: this.parseValue(raw.value),
         xdr: raw.value.toXDR().toString(),
         indexedAt: new Date().toISOString(),
@@ -157,12 +183,21 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
     }
   }
 
-  private async getCurrentLedger(): Promise<number> {
-    const res = await this.rpcServer.getHealth();
-    if (res && typeof res === 'object' && 'latest_ledger' in res) {
-      return (res as { latest_ledger: number }).latest_ledger;
+  private async getLedgerBounds(): Promise<{ latestLedger: number; oldestLedger: number }> {
+    try {
+      const response = await this.rpcServer.getHealth();
+      if (response && typeof response === 'object') {
+        const anyResp = response as any;
+        return {
+          latestLedger: anyResp.latestLedger ?? anyResp.latest_ledger ?? 0,
+          oldestLedger: anyResp.oldestLedger ?? anyResp.oldest_ledger ?? 0,
+        };
+      }
+      return { latestLedger: 0, oldestLedger: 0 };
+    } catch (error) {
+      this.logger.error('Failed to get ledger bounds:', error);
+      return { latestLedger: 0, oldestLedger: 0 };
     }
-    return 0;
   }
 
   private parseTopic(topic: unknown): string {
@@ -172,8 +207,8 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
         sym?: () => { toString(): string };
         bytes?: () => Uint8Array;
       };
-      if (t?.switch?.().name === 'SCV_SYMBOL') return t.sym!().toString();
-      if (t?.switch?.().name === 'SCV_BYTES') return Buffer.from(t.bytes!()).toString();
+      if ((t?.switch?.().name as string) === 'scvSymbol') return t.sym!().toString();
+      if ((t?.switch?.().name as string) === 'scvBytes') return Buffer.from(t.bytes!()).toString();
       return String(topic);
     } catch {
       return 'unknown';
@@ -183,7 +218,7 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
   private parseValue(value: unknown): unknown {
     try {
       const v = value as { switch?: () => { name: string }; bytes?: () => Uint8Array };
-      if (v?.switch?.().name === 'SCV_BYTES') {
+      if ((v?.switch?.().name as string) === 'scvBytes') {
         return JSON.parse(Buffer.from(v.bytes!()).toString());
       }
       return String(value);

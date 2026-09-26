@@ -64,11 +64,15 @@ export class IdempotencyKeyInterceptor implements NestInterceptor {
     if (!isIdempotent) return next.handle();
 
     const request = context.switchToHttp().getRequest();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return next.handle();
+
     const idempotencyKey = request.headers['idempotency-key'] as string | undefined;
 
     if (!idempotencyKey) return next.handle();
 
-    const endpoint = `${request.method}:${request.route?.path ?? request.url}`;
+    const scope = request.user?.sub ?? request.ip ?? 'anonymous';
+    const routePath = `${request.method}:${request.route?.path ?? request.url}`;
+    const endpoint = `${scope}:${routePath}`;
     const requestHash = IdempotencyKeyService.hashBody(request.body);
 
     const claimResult = await this.idempotencyService.claim(endpoint, idempotencyKey, requestHash);
@@ -83,7 +87,7 @@ export class IdempotencyKeyInterceptor implements NestInterceptor {
       }
 
       if (record.requestHash !== requestHash) {
-        this.metrics?.increment('idempotency_key_mismatch_total', { endpoint });
+        this.metrics?.increment('idempotency_key_mismatch_total', { endpoint: routePath });
         throw new HttpException(
           {
             statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -94,7 +98,7 @@ export class IdempotencyKeyInterceptor implements NestInterceptor {
       }
 
       if (record.status === 'pending') {
-        this.metrics?.increment('idempotency_conflict_total', { endpoint });
+        this.metrics?.increment('idempotency_conflict_total', { endpoint: routePath });
         throw new HttpException(
           {
             statusCode: HttpStatus.CONFLICT,
@@ -115,14 +119,18 @@ export class IdempotencyKeyInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap(async (responseBody: unknown) => {
         const response = context.switchToHttp().getResponse();
-        await this.idempotencyService.finalize(
-          endpoint,
-          idempotencyKey,
-          requestHash,
-          response.statusCode,
-          responseBody,
-          this.capturedHeaders(response),
-        );
+        if (response.statusCode >= 400) {
+          await this.idempotencyService.release(endpoint, idempotencyKey);
+        } else {
+          await this.idempotencyService.finalize(
+            endpoint,
+            idempotencyKey,
+            requestHash,
+            response.statusCode,
+            responseBody,
+            this.capturedHeaders(response),
+          );
+        }
       }),
       catchError(async err => {
         await this.idempotencyService.release(endpoint, idempotencyKey);

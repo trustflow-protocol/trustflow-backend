@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -85,6 +86,7 @@ export class GigService implements OnModuleInit {
       status: GigStatus.OPEN,
       createdAt: now.toISOString(),
       respondBy: new Date(now.getTime() + windowHours * 60 * 60 * 1000).toISOString(),
+      version: 1,
     };
 
     const event = this.outbox?.create(GIG_EVENTS.GIG_CREATED, 'gig', id, gig);
@@ -238,65 +240,124 @@ export class GigService implements OnModuleInit {
     return result;
   }
 
-  async accept(id: string, responder: string): Promise<Gig> {
-    const gig = await this.findById(id);
-    if (gig.status !== GigStatus.OPEN) {
-      throw new BadRequestException(`Cannot accept a gig with status "${gig.status}"`);
+  private async mutateWithRetry<T>(
+    id: string,
+    operation: (gig: Gig) => Promise<T>,
+  ): Promise<T> {
+    const maxRetries = 3;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (this.redis) {
+        try {
+          await this.redis.watch(this.gigKey(id));
+        } catch (err) {
+          this.logFallback('watch', err);
+        }
+      }
+
+      const gig = await this.tryFindById(id);
+      if (!gig) {
+        if (this.redis) {
+          try { await this.redis.unwatch(); } catch (err) { /* ignore */ }
+        }
+        throw new NotFoundException(`Gig ${id} not found`);
+      }
+
+      const currentVersion = gig.version || 1;
+      try {
+        const result = await operation(gig);
+        // Ensure in-memory fallback behaves like compare-and-set
+        if (!this.redis) {
+          const inMem = this.gigs.get(id);
+          if (inMem && inMem.version !== currentVersion + 1) {
+             throw new Error('In-memory transaction aborted');
+          }
+        }
+        return result;
+      } catch (err: any) {
+        if (this.redis) {
+          try { await this.redis.unwatch(); } catch (e) { /* ignore */ }
+        }
+        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed') || err.message?.includes('In-memory transaction aborted')) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
     }
-    gig.status = GigStatus.ACCEPTED;
-    gig.acceptedBy = responder;
-    gig.acceptedAt = new Date().toISOString();
-    await this.persistResolved(gig, GIG_EVENTS.GIG_ACCEPTED);
-    return gig;
+    throw new ConflictException(`Failed to modify gig ${id} due to concurrent modifications`);
+  }
+
+  async accept(id: string, responder: string): Promise<Gig> {
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) {
+        throw new ConflictException(`Cannot accept a gig with status "${gig.status}"`);
+      }
+      gig.status = GigStatus.ACCEPTED;
+      gig.acceptedBy = responder;
+      gig.acceptedAt = new Date().toISOString();
+      gig.version = (gig.version || 1) + 1;
+      await this.persistResolved(gig, GIG_EVENTS.GIG_ACCEPTED);
+      return gig;
+    });
   }
 
   async cancel(id: string): Promise<Gig> {
-    const gig = await this.findById(id);
-    if (gig.status !== GigStatus.OPEN) {
-      throw new BadRequestException(`Cannot cancel a gig with status "${gig.status}"`);
-    }
-    gig.status = GigStatus.CANCELLED;
-    gig.cancelledAt = new Date().toISOString();
-    await this.persistResolved(gig, GIG_EVENTS.GIG_CANCELLED);
-    return gig;
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) {
+        throw new ConflictException(`Cannot cancel a gig with status "${gig.status}"`);
+      }
+      gig.status = GigStatus.CANCELLED;
+      gig.cancelledAt = new Date().toISOString();
+      gig.version = (gig.version || 1) + 1;
+      await this.persistResolved(gig, GIG_EVENTS.GIG_CANCELLED);
+      return gig;
+    });
   }
 
   async update(id: string, dto: UpdateGigDto): Promise<Gig> {
-    const gig = await this.findById(id);
-    if (gig.status !== GigStatus.OPEN) {
-      throw new BadRequestException(`Cannot update a gig with status "${gig.status}"`);
-    }
-    if (dto.title !== undefined) gig.title = dto.title;
-    if (dto.budgetXLM !== undefined) gig.budgetXLM = dto.budgetXLM;
-    if (dto.responseWindowHours !== undefined) {
-      gig.respondBy = new Date(Date.now() + dto.responseWindowHours * 60 * 60 * 1000).toISOString();
-    }
-    await this.persistGig(gig);
-    return gig;
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) {
+        throw new ConflictException(`Cannot update a gig with status "${gig.status}"`);
+      }
+      if (dto.title !== undefined) gig.title = dto.title;
+      if (dto.budgetXLM !== undefined) gig.budgetXLM = dto.budgetXLM;
+      if (dto.responseWindowHours !== undefined) {
+        gig.respondBy = new Date(Date.now() + dto.responseWindowHours * 60 * 60 * 1000).toISOString();
+      }
+      gig.version = (gig.version || 1) + 1;
+      await this.persistGig(gig);
+      return gig;
+    });
   }
 
   async remove(id: string): Promise<void> {
-    const gig = await this.findById(id);
-    if (gig.status === GigStatus.ACCEPTED) {
-      throw new BadRequestException('Cannot delete an accepted gig');
-    }
-    if (this.redis) {
-      try {
-        await this.redis
-          .multi()
-          .del(this.gigKey(id))
-          .zrem(GIGS_INDEX_KEY, id)
-          .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, id)
-          .srem(this.creatorKey(gig.creator), id)
-          .exec();
-        await this.invalidateSearchCache();
-        return;
-      } catch (err) {
-        this.logFallback('remove', err);
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status === GigStatus.ACCEPTED) {
+        throw new ConflictException('Cannot delete an accepted gig');
       }
-    }
-    this.gigs.delete(id);
-    await this.invalidateSearchCache();
+      if (this.redis) {
+        try {
+          const transaction = this.redis
+            .multi()
+            .del(this.gigKey(id))
+            .zrem(GIGS_INDEX_KEY, id)
+            .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, id)
+            .srem(this.creatorKey(gig.creator), id);
+          const results = await transaction.exec();
+          this.assertTransactionOk(results);
+          await this.invalidateSearchCache();
+          return;
+        } catch (err: any) {
+          if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+            throw err;
+          }
+          this.logFallback('remove', err);
+        }
+      }
+      this.gigs.delete(id);
+      await this.invalidateSearchCache();
+    });
   }
 
   /**
@@ -304,12 +365,14 @@ export class GigService implements OnModuleInit {
    * resolved by the time the sweep reached it. Used by the expiry sweep worker.
    */
   async expire(id: string): Promise<Gig | undefined> {
-    const gig = await this.tryFindById(id);
-    if (!gig || gig.status !== GigStatus.OPEN) return undefined;
-    gig.status = GigStatus.EXPIRED;
-    gig.expiredAt = new Date().toISOString();
-    await this.persistResolved(gig, GIG_EVENTS.GIG_EXPIRED);
-    return gig;
+    return this.mutateWithRetry(id, async (gig) => {
+      if (gig.status !== GigStatus.OPEN) return undefined;
+      gig.status = GigStatus.EXPIRED;
+      gig.expiredAt = new Date().toISOString();
+      gig.version = (gig.version || 1) + 1;
+      await this.persistResolved(gig, GIG_EVENTS.GIG_EXPIRED);
+      return gig;
+    });
   }
 
   /** Writes a gig that just left OPEN status, dropping it from the open-expiry index. */
@@ -326,7 +389,10 @@ export class GigService implements OnModuleInit {
         this.assertTransactionOk(results);
         await this.invalidateSearchCache();
         return;
-      } catch (err) {
+      } catch (err: any) {
+        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+          throw err;
+        }
         this.logFallback('persistResolved', err);
       }
     }
@@ -353,7 +419,10 @@ export class GigService implements OnModuleInit {
         this.assertTransactionOk(results);
         await this.invalidateSearchCache();
         return;
-      } catch (err) {
+      } catch (err: any) {
+        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+          throw err;
+        }
         this.logFallback('persistGig', err);
       }
     }

@@ -5,6 +5,8 @@ import * as crypto from 'crypto';
 import * as dns from 'dns';
 import * as net from 'net';
 import { withRetry, isRetryable } from './retry.helper';
+import { OutboxService } from '../outbox/outbox.service';
+import { forwardRef, Inject } from '@nestjs/common';
 
 /** Base backoff between webhook delivery attempts; grows linearly per attempt. */
 const WEBHOOK_RETRY_BASE_DELAY_MS = 1000;
@@ -172,6 +174,10 @@ export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
   private endpoints = new Map<string, WebhookEndpointConfig>();
 
+  constructor(
+    @Inject(forwardRef(() => OutboxService)) private readonly outboxService: OutboxService,
+  ) {}
+
   async register(id: string, url: string, secret?: string) {
     await validateWebhookUrl(url);
     this.endpoints.set(id, { url, secret });
@@ -181,6 +187,10 @@ export class WebhookService {
   }
 
   async dispatch(event: string, data: unknown, dedupKey?: string) {
+    this.outboxService.sendWebhook(null, event, data, dedupKey);
+  }
+
+  async deliver(event: string, data: unknown, dedupKey?: string) {
     const payload: WebhookPayload = { event, data, timestamp: new Date().toISOString(), dedupKey };
     // Re-validate each endpoint at dispatch time to protect against DNS rebinding
     const validEndpoints: WebhookEndpointConfig[] = [];

@@ -64,9 +64,27 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
 
   async ingestEvents(contractId: string): Promise<ProcessedEvent[]> {
     const checkpoint = await this.ledgerCursorService.getCursor(contractId);
-    const currentLedger = await this.getCurrentLedgerSequence();
+    const bounds = await this.getLedgerBounds();
+    const currentLedger = bounds.latestLedger;
+    const oldestLedger = bounds.oldestLedger;
 
-    const startLedger = checkpoint ? checkpoint.lastProcessedLedger + 1 : 1;
+    let startLedger: number;
+    if (checkpoint) {
+      startLedger = checkpoint.lastProcessedLedger + 1;
+      if (startLedger < oldestLedger) {
+        this.logger.warn(`Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`);
+        startLedger = oldestLedger;
+      }
+    } else {
+      if (config.SOROBAN_START_LEDGER !== undefined) {
+        startLedger = Math.max(config.SOROBAN_START_LEDGER, oldestLedger);
+        this.logger.log(`No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`);
+      } else {
+        startLedger = Math.max(currentLedger - 1000, oldestLedger);
+        this.logger.log(`No checkpoint found and no config, starting from latest - 1000: ${startLedger}`);
+      }
+    }
+
     const endLedger = Math.min(currentLedger, startLedger + this.MAX_LEDGER_RANGE - 1);
 
     if (startLedger > endLedger) {
@@ -190,7 +208,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
         const batchEnd = Math.min(currentStart + 99, endLedger);
 
         // Build request parameters — when using cursor, omit startLedger and endLedger
-        const getEventsParams: SorobanRpc.Server.GetEventsRequest = {
+        const getEventsParams: any = {
           filters: [
             {
               type: 'contract',
@@ -211,8 +229,8 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
           getEventsParams.endLedger = batchEnd + 1; // +1 because endLedger is exclusive
         }
 
-        const response = await this.rpcServer.getEvents(getEventsParams);
-        allEvents.push(...response.events.map(event => this.parseEvent(event)));
+        const response = (await this.rpcServer.getEvents(getEventsParams)) as any;
+        allEvents.push(...response.events.map((event: any) => this.parseEvent(event)));
 
         // Check if more events exist in this batch via cursor
         if (response.cursor && response.events.length === 100) {
@@ -250,7 +268,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
 
   private parseEventValue(value: xdr.ScVal): Record<string, unknown> | string {
     try {
-      if (value.switch().name === 'SCV_BYTES') {
+      if ((value.switch().name as string) === 'scvBytes') {
         const bytes = value.bytes();
         return JSON.parse(Buffer.from(bytes).toString()) as Record<string, unknown>;
       }
@@ -262,10 +280,10 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
 
   private parseTopic(topic: xdr.ScVal): string {
     try {
-      if (topic.switch().name === 'SCV_SYMBOL') {
+      if ((topic.switch().name as string) === 'scvSymbol') {
         return topic.sym().toString();
       }
-      if (topic.switch().name === 'SCV_BYTES') {
+      if ((topic.switch().name as string) === 'scvBytes') {
         return Buffer.from(topic.bytes()).toString();
       }
       return topic.toXDR().toString();
@@ -274,16 +292,20 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async getCurrentLedgerSequence(): Promise<number> {
+  private async getLedgerBounds(): Promise<{ latestLedger: number; oldestLedger: number }> {
     try {
       const response = await this.rpcServer.getHealth();
-      if (response && typeof response === 'object' && 'latest_ledger' in response) {
-        return (response as { latest_ledger: number }).latest_ledger;
+      if (response && typeof response === 'object') {
+        const anyResp = response as any;
+        return {
+          latestLedger: anyResp.latestLedger ?? anyResp.latest_ledger ?? 0,
+          oldestLedger: anyResp.oldestLedger ?? anyResp.oldest_ledger ?? 0,
+        };
       }
-      return 0;
+      return { latestLedger: 0, oldestLedger: 0 };
     } catch (error) {
-      this.logger.error('Failed to get current ledger:', error);
-      return 0;
+      this.logger.error('Failed to get ledger bounds:', error);
+      return { latestLedger: 0, oldestLedger: 0 };
     }
   }
 

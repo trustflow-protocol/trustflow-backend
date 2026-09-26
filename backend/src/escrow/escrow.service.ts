@@ -1,10 +1,21 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
+import { OutboxService } from '../outbox/outbox.service';
 
-export type EscrowStatus = 'pending' | 'active' | 'released' | 'disputed' | 'cancelled';
+export const ESCROW_EVENTS = {
+  ESCROW_CREATED: 'escrow.created',
+  ESCROW_FUNDED: 'escrow.funded',
+  ESCROW_RELEASED: 'escrow.released',
+  ESCROW_CANCELLED: 'escrow.cancelled',
+  ESCROW_SPLIT: 'escrow.split',
+  ESCROW_DISPUTED: 'escrow.disputed',
+} as const;
+
+export const ESCROW_STATUSES = ['pending', 'active', 'released', 'disputed', 'cancelled'] as const;
+export type EscrowStatus = (typeof ESCROW_STATUSES)[number];
 
 export interface Escrow {
   id: string;
@@ -83,6 +94,7 @@ export class EscrowService implements OnModuleInit {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly metrics: MetricsService,
+    @Optional() private readonly outbox?: OutboxService,
   ) {}
 
   /**
@@ -127,14 +139,17 @@ export class EscrowService implements OnModuleInit {
       createdAt: new Date().toISOString(),
     };
 
+    const event = this.outbox?.create(ESCROW_EVENTS.ESCROW_CREATED, 'escrow', id, escrow);
+
     if (this.redis) {
       try {
-        const results = await this.redis
+        const transaction = this.redis
           .multi()
           .set(this.escrowKey(id), JSON.stringify(escrow))
           .zadd(ESCROWS_INDEX_KEY, Date.parse(escrow.createdAt), id)
-          .sadd(this.depositorKey(depositor), id)
-          .exec();
+          .sadd(this.depositorKey(depositor), id);
+        if (event) this.outbox!.appendToTransaction(transaction, event);
+        const results = await transaction.exec();
         this.assertTransactionOk(results);
         return escrow;
       } catch (err) {
@@ -143,6 +158,7 @@ export class EscrowService implements OnModuleInit {
     }
 
     this.escrows.set(id, escrow);
+    if (event) await this.outbox!.append(event);
     return escrow;
   }
 
@@ -241,7 +257,12 @@ export class EscrowService implements OnModuleInit {
   async applyChainState(id: string, patch: ChainStatePatch): Promise<Escrow> {
     const escrow = await this.findById(id);
     if (!escrow) throw new Error('Escrow not found');
-    if (patch.status !== undefined) escrow.status = patch.status;
+    if (patch.status !== undefined) {
+      if (!ESCROW_STATUSES.includes(patch.status)) {
+        throw new Error(`Invalid escrow status: ${String(patch.status)}`);
+      }
+      escrow.status = patch.status;
+    }
     if (patch.amountXLM !== undefined) escrow.amountXLM = patch.amountXLM;
     await this.persist(escrow);
     return escrow;
@@ -304,7 +325,7 @@ export class EscrowService implements OnModuleInit {
       throw new Error(`Cannot fund escrow in status: ${escrow.status}`);
     }
     escrow.status = 'active';
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_FUNDED);
     return escrow;
   }
 
@@ -312,7 +333,7 @@ export class EscrowService implements OnModuleInit {
     const escrow = await this.findById(id);
     if (!escrow) throw new Error('Escrow not found');
     escrow.status = 'released';
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_RELEASED);
     return escrow;
   }
 
@@ -320,7 +341,7 @@ export class EscrowService implements OnModuleInit {
     const escrow = await this.findById(id);
     if (!escrow) throw new Error('Escrow not found');
     escrow.status = 'cancelled';
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_CANCELLED);
     return escrow;
   }
 
@@ -329,7 +350,7 @@ export class EscrowService implements OnModuleInit {
     if (!escrow) throw new Error('Escrow not found');
     escrow.status = 'released';
     escrow.splitPercentage = splitPercentage;
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_SPLIT);
     return escrow;
   }
 
@@ -343,18 +364,22 @@ export class EscrowService implements OnModuleInit {
     escrow.disputeReason = reason;
     escrow.disputedAt = new Date().toISOString();
 
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_DISPUTED);
     return escrow;
   }
 
   /** Writes an escrow's current field values without touching any index (its id/depositor never change). */
-  private async persist(escrow: Escrow): Promise<void> {
+  private async persist(escrow: Escrow, eventType?: string): Promise<void> {
+    const event = eventType
+      ? this.outbox?.create(eventType, 'escrow', escrow.id, escrow)
+      : undefined;
     if (this.redis) {
       try {
-        const results = await this.redis
+        const transaction = this.redis
           .multi()
-          .set(this.escrowKey(escrow.id), JSON.stringify(escrow))
-          .exec();
+          .set(this.escrowKey(escrow.id), JSON.stringify(escrow));
+        if (event) this.outbox!.appendToTransaction(transaction, event);
+        const results = await transaction.exec();
         this.assertTransactionOk(results);
         return;
       } catch (err) {
@@ -362,6 +387,7 @@ export class EscrowService implements OnModuleInit {
       }
     }
     this.escrows.set(escrow.id, escrow);
+    if (event) await this.outbox!.append(event);
   }
 
   private async fetchMany(ids: string[]): Promise<Escrow[]> {

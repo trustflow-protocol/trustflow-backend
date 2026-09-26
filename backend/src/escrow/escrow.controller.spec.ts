@@ -2,11 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { EscrowController } from './escrow.controller';
 import { EscrowService, Escrow } from './escrow.service';
-import { WebhookService } from '../webhook/webhook.service';
-import { DiscordService } from '../webhook/discord.service';
-import { ReputationService } from '../reputation/reputation.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
-import { WebhookEvent } from '../webhook/webhook.dto';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -44,17 +40,6 @@ function buildMocks() {
     }),
   };
 
-  const webhookService = {
-    dispatch: jest.fn().mockResolvedValue(undefined),
-  };
-
-  const discordService = {
-    notifyDisputeNeedsJurors: jest.fn().mockResolvedValue(undefined),
-  };
-
-  const reputationService = {
-    recordEscrowCompleted: jest.fn().mockResolvedValue(undefined),
-  };
 
   const txBuilderService = {
     buildRelease: jest.fn().mockResolvedValue({
@@ -66,12 +51,8 @@ function buildMocks() {
     }),
   };
 
-  return {
     escrow,
     escrowService,
-    webhookService,
-    discordService,
-    reputationService,
     txBuilderService,
   };
 }
@@ -90,9 +71,6 @@ describe('EscrowController', () => {
       controllers: [EscrowController],
       providers: [
         { provide: EscrowService, useValue: mocks.escrowService },
-        { provide: WebhookService, useValue: mocks.webhookService },
-        { provide: DiscordService, useValue: mocks.discordService },
-        { provide: ReputationService, useValue: mocks.reputationService },
         {
           provide: EscrowReleaseTransactionBuilderService,
           useValue: mocks.txBuilderService,
@@ -183,7 +161,6 @@ describe('EscrowController', () => {
       const result = await controller.release('esc-001');
 
       expect(mocks.escrowService.release).toHaveBeenCalledWith('esc-001');
-      expect(mocks.reputationService.recordEscrowCompleted).toHaveBeenCalledWith(released);
       expect(result).toEqual(released);
     });
 
@@ -212,28 +189,6 @@ describe('EscrowController', () => {
         'Work not delivered',
       );
 
-      expect(mocks.webhookService.dispatch).toHaveBeenCalledWith(
-        WebhookEvent.DisputeRaised,
-        expect.objectContaining({
-          escrowId: disputed.id,
-          depositor: disputed.depositor,
-          beneficiary: disputed.beneficiary,
-          amountXLM: disputed.amountXLM,
-          reason: disputed.disputeReason,
-          disputedAt: disputed.disputedAt,
-        }),
-      );
-
-      expect(mocks.discordService.notifyDisputeNeedsJurors).toHaveBeenCalledWith(
-        expect.objectContaining({
-          escrowId: disputed.id,
-          depositor: disputed.depositor,
-          beneficiary: disputed.beneficiary,
-          amountXLM: disputed.amountXLM,
-          reason: disputed.disputeReason,
-        }),
-      );
-
       expect(result).toEqual(disputed);
     });
 
@@ -254,9 +209,6 @@ describe('EscrowController', () => {
       await expect(controller.raiseDispute('esc-001', { reason: 'too late' })).rejects.toThrow(
         BadRequestException,
       );
-
-      expect(mocks.webhookService.dispatch).not.toHaveBeenCalled();
-      expect(mocks.discordService.notifyDisputeNeedsJurors).not.toHaveBeenCalled();
     });
 
     it('propagates BadRequestException when escrow is already disputed', async () => {
@@ -270,13 +222,10 @@ describe('EscrowController', () => {
       );
     });
 
-    it('does not dispatch webhook or Discord when service throws', async () => {
+    it('propagates exception when service throws', async () => {
       mocks.escrowService.raiseDispute.mockRejectedValue(new Error('unexpected'));
 
       await expect(controller.raiseDispute('esc-001', {})).rejects.toThrow();
-
-      expect(mocks.webhookService.dispatch).not.toHaveBeenCalled();
-      expect(mocks.discordService.notifyDisputeNeedsJurors).not.toHaveBeenCalled();
     });
   });
 

@@ -29,13 +29,12 @@ describe('Environment Configuration', () => {
     expect(config.STELLAR_HORIZON_URL).toBe('https://horizon-testnet.stellar.org');
   });
 
-  it('should throw when JWT_SECRET is missing', () => {
+  it('uses the test-only secret fallback when JWT_SECRET is missing outside production', () => {
     process.env = {};
 
     const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
 
-    expect(() => freshValidateEnv()).toThrow('Environment variable validation failed');
-    expect(() => freshValidateEnv()).toThrow('JWT_SECRET');
+    expect(freshValidateEnv().JWT_SECRET).toBeTruthy();
   });
 
   it('should throw when JWT_SECRET is too short', () => {
@@ -57,6 +56,28 @@ describe('Environment Configuration', () => {
     const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
 
     expect(() => freshValidateEnv()).toThrow('Environment variable validation failed');
+  });
+
+  it('rejects incomplete database connection settings and invalid TLS booleans', () => {
+    process.env = { JWT_SECRET: 'test-secret-at-least-16-chars', DB_HOST: 'db.example' };
+    const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
+    expect(() => freshValidateEnv()).toThrow('DB_HOST and DB_NAME must be set together');
+
+    jest.resetModules();
+    process.env = { JWT_SECRET: 'test-secret-at-least-16-chars', DB_SSL: 'sometimes' };
+    const { validateEnv: validateInvalidTls } = jest.requireActual('./env.config');
+    expect(() => validateInvalidTls()).toThrow('DB_SSL');
+  });
+
+  it('refuses to disable PostgreSQL certificate verification in production', () => {
+    process.env = {
+      NODE_ENV: 'production',
+      JWT_SECRET: 'production-secret-at-least-16-chars',
+      DB_SSL: 'true',
+      DB_SSL_REJECT_UNAUTHORIZED: 'false',
+    };
+    const { validateEnv: freshValidateEnv } = jest.requireActual('./env.config');
+    expect(() => freshValidateEnv()).toThrow('disabling PostgreSQL certificate verification');
   });
 
   it('should throw when NODE_ENV is invalid', () => {

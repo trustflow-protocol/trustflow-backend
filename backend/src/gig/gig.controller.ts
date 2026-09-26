@@ -164,7 +164,23 @@ export class GigController {
     description: 'Retrieves gig details including status and response deadline.',
   })
   @ApiParam({ name: 'id', description: 'Gig ID', example: 'gig-1234567890-ab12cd' })
-  @ApiResponse({ status: 200, description: 'Gig solicitation details' })
+  @ApiResponse({
+    status: 200,
+    description: 'Gig solicitation details',
+    schema: {
+      type: 'object',
+      required: ['id', 'creator', 'title', 'budgetXLM', 'status', 'createdAt', 'respondBy'],
+      properties: {
+        id: { type: 'string', example: 'gig-1234567890-ab12cd' },
+        creator: { type: 'string' },
+        title: { type: 'string' },
+        budgetXLM: { type: 'string' },
+        status: { type: 'string', enum: ['open', 'accepted', 'expired', 'cancelled'] },
+        createdAt: { type: 'string', format: 'date-time' },
+        respondBy: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
   @ApiResponse({ status: 404, description: 'Gig not found' })
   findOne(@Param('id') id: string) {
     return this.gigService.findById(id);
@@ -241,6 +257,7 @@ export class GigController {
   }
 
   @Post(':id/accept')
+  @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
@@ -271,6 +288,7 @@ export class GigController {
   }
 
   @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({

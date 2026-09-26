@@ -23,6 +23,7 @@ export interface Gig {
   acceptedAt?: string;
   expiredAt?: string;
   cancelledAt?: string;
+  version: number;
 }
 
 /** Webhook events emitted by the gig service and expiry sweep worker. */

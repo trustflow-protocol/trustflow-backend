@@ -1,4 +1,5 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { WebhookModule } from './webhook/webhook.module';
@@ -27,6 +28,7 @@ import { CorrelationIdMiddleware } from './common/logging/correlation-id.middlew
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     LoggingModule,
     SentryModule,
     RedisModule,
