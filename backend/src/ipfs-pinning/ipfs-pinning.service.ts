@@ -38,16 +38,12 @@ export const IPFS_PINNING_PERSISTENCE_FALLBACK_METRIC = 'ipfs_pinning_persistenc
  * Pin registry. Backed by Redis so pin metadata survives restarts and is shared across
  * instances — see PERSISTENT_STORAGE_SPIKE.md and its "Follow-up decisions" addendum (#189).
  *
- * Decision on the raw-content `Buffer` map: it stays in-memory only, exactly as before this
- * migration, rather than moving to Redis or to object storage. A per-record size x expected
- * volume estimate (spike §7) would be needed before treating Redis as general-purpose blob
- * storage, and this backend has no S3-compatible client wired up today the way it has no SQL
- * driver for the Escrow decision (#187) — adopting one is new infrastructure, not a drop-in
- * swap. Consequence: the re-pin worker's retry-without-refetch behavior (topping up replication
- * from bytes already in memory) only works within a single process's uptime, same as before
- * this PR; after a restart, a re-pin for a CID whose content isn't held by any other still-
- * healthy provider requires the original caller to resupply it. A follow-up issue tracks
- * resolving this properly (object storage vs. requiring resupply on every re-pin).
+ * Decision: drop retry-without-refetch entirely. The service no longer retains original bytes
+ * for a pinned CID after the initial upload, so a later re-pin can only succeed if the caller
+ * provides the content again. This keeps the system operational without introducing object-
+ * storage infrastructure or a hidden per-process memory dependency. Reconcile/replicate now fail
+ * explicitly when the content is missing instead of silently no-op'ing and leaving the pin
+ * degraded indefinitely.
  *
  * Falls back to a process-local Map for pin metadata when Redis is unavailable, logged at
  * `error` level and counted via `IPFS_PINNING_PERSISTENCE_FALLBACK_METRIC`.
@@ -58,9 +54,6 @@ export class IpfsPinningService implements OnModuleInit {
 
   /** Fallback pin-record store, only used while Redis is unavailable. */
   private readonly pins = new Map<string, PinRecord>();
-  /** Original bytes for each pinned CID, retained so the re-pin worker can top up replication
-   * later. In-memory only by design — see the class doc comment. */
-  private readonly content = new Map<string, Buffer>();
 
   constructor(
     @Inject(PIN_PROVIDERS) private readonly providers: IpfsPinProvider[],
@@ -152,7 +145,6 @@ export class IpfsPinningService implements OnModuleInit {
       updatedAt: now,
     };
     record.replicationFactor = Math.max(record.replicationFactor, replicationFactor);
-    this.content.set(cid, buffer);
     await this.persist(record);
 
     await this.replicate(record, buffer);
@@ -196,14 +188,14 @@ export class IpfsPinningService implements OnModuleInit {
       }
     }
 
-    const buffer = this.content.get(cid);
-    if (this.countHealthy(record) < record.replicationFactor && buffer) {
-      await this.replicate(record, buffer).catch(error => {
+    if (this.countHealthy(record) < record.replicationFactor) {
+      await this.replicate(record).catch(error => {
         this.logger.warn(
           `Reconcile: unable to restore full replication for ${cid}: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        throw error;
       });
     } else {
       this.finalizeStatus(record);
@@ -250,7 +242,6 @@ export class IpfsPinningService implements OnModuleInit {
 
     record.status = PinStatus.UNPINNED;
     record.updatedAt = new Date().toISOString();
-    this.content.delete(cid);
     await this.persist(record);
 
     await this.webhookService.dispatch(IPFS_EVENTS.PIN_REMOVED, { cid });
@@ -260,7 +251,17 @@ export class IpfsPinningService implements OnModuleInit {
   // ─── Internal helpers ─────────────────────────────────────────────
 
   /** Attempts to pin `content` to enough not-yet-healthy providers to reach the replication factor. */
-  private async replicate(record: PinRecord, content: Buffer): Promise<void> {
+  private async replicate(record: PinRecord, content?: Buffer): Promise<void> {
+    if (!content) {
+      const message =
+        `Cannot retry replication for ${record.cid}: original content is no longer retained. ` +
+        'The caller must re-upload the content to retry this pin.';
+      record.status = PinStatus.DEGRADED;
+      record.updatedAt = new Date().toISOString();
+      await this.persist(record);
+      throw new ServiceUnavailableException(message);
+    }
+
     const healthyNames = new Set(this.healthyProviders(record));
     const candidates = this.providers.filter(p => !healthyNames.has(p.name));
 

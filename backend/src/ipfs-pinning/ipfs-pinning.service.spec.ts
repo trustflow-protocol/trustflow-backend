@@ -126,22 +126,16 @@ describe('IpfsPinningService', () => {
   });
 
   describe('reconcile', () => {
-    it('detects a lost pin, dispatches PIN_LOST, and tops up via a spare provider', async () => {
+    it('detects a lost pin and fails explicitly when no original content is retained for retry', async () => {
       await service.pinContent({ content: CONTENT }); // pinned to pinata + web3Storage
 
       pinata.verify.mockResolvedValue(false); // pinata silently lost the pin
-      const record = await service.reconcile(CID);
-
+      await expect(service.reconcile(CID)).rejects.toThrow('original content is no longer retained');
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         IPFS_EVENTS.PIN_LOST,
         expect.objectContaining({ cid: CID, provider: PinProviderName.PINATA }),
       );
-      expect(infura.pin).toHaveBeenCalledWith(CID, expect.any(Buffer));
-      expect(record.status).toBe(PinStatus.HEALTHY);
-      expect(webhookService.dispatch).toHaveBeenCalledWith(
-        IPFS_EVENTS.PIN_RESTORED,
-        expect.objectContaining({ cid: CID }),
-      );
+      expect(infura.pin).not.toHaveBeenCalled();
     });
 
     it('leaves a fully healthy pin untouched', async () => {
