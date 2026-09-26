@@ -19,6 +19,8 @@ export interface IndexedSorobanEvent {
 const EVENT_KEY_PREFIX = 'soroban:event:';
 const EVENTS_INDEX_KEY = 'soroban:events:index';
 const CURSOR_KEY = 'soroban:event-indexer:cursor';
+const DEFAULT_EVENT_LIMIT = 50;
+const MAX_EVENT_LIMIT = 200;
 
 @Injectable()
 export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy {
@@ -135,15 +137,18 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
     return events;
   }
 
-  async getEvents(limit = 50): Promise<IndexedSorobanEvent[]> {
+  async getEvents(limit = DEFAULT_EVENT_LIMIT): Promise<IndexedSorobanEvent[]> {
+    const safeLimit = Number.isFinite(limit) ? Math.trunc(limit) : DEFAULT_EVENT_LIMIT;
+    const boundedLimit = Math.min(Math.max(safeLimit, 1), MAX_EVENT_LIMIT);
+
     if (this.redis) {
       try {
-        const ids = await this.redis.zrevrange(EVENTS_INDEX_KEY, 0, limit - 1);
+        const ids = await this.redis.zrevrange(EVENTS_INDEX_KEY, 0, boundedLimit - 1);
         if (ids.length === 0) return [];
         const raw = await this.redis.mget(...ids.map(id => `${EVENT_KEY_PREFIX}${id}`));
         return raw.filter((r): r is string => r !== null).map(r => JSON.parse(r));
-      } catch {
-        // fall through
+      } catch (error) {
+        this.logger.error('Failed to read Soroban events from Redis', error);
       }
     }
     return [];
