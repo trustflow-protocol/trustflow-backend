@@ -3,13 +3,14 @@ import { EscrowService, Escrow } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { EscrowReconciliationStateStore } from './escrow-reconciliation-state.store';
+import { InvalidChainStateError } from './chain-escrow.validation';
 import { ChainEscrowRecord, DriftType, RECONCILIATION_EVENTS } from './escrow-reconciliation.types';
 
 function makeEscrow(overrides: Partial<Escrow> = {}): Escrow {
   return {
     id: 'esc-1',
-    depositor: 'GDEP',
-    beneficiary: 'GBEN',
+    depositor: `G${'A'.repeat(55)}`,
+    beneficiary: `G${'B'.repeat(55)}`,
     amountXLM: '100',
     status: 'active',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -21,8 +22,8 @@ function makeEscrow(overrides: Partial<Escrow> = {}): Escrow {
 function makeChainRecord(overrides: Partial<ChainEscrowRecord> = {}): ChainEscrowRecord {
   return {
     contractEscrowId: 'chain-esc-1',
-    depositor: 'GDEP',
-    beneficiary: 'GBEN',
+    depositor: `G${'A'.repeat(55)}`,
+    beneficiary: `G${'B'.repeat(55)}`,
     amountXLM: '100',
     status: 'active',
     ...overrides,
@@ -287,6 +288,36 @@ describe('EscrowReconciliationService', () => {
 
       expect(await service.findById(run.runId)).toEqual(run);
       expect(await service.findAll()).toEqual([run]);
+    });
+  });
+
+  describe('invalid chain data', () => {
+    it('records an unrepaired error against that escrow and never writes to the DB', async () => {
+      escrowService.findAll.mockResolvedValue([
+        makeEscrow(),
+        makeEscrow({ id: 'esc-2', contractEscrowId: 'chain-esc-2' }),
+      ]);
+      chainClient.getEscrow
+        .mockRejectedValueOnce(new InvalidChainStateError('chain-esc-1', 'unrecognised status'))
+        .mockResolvedValueOnce(makeChainRecord({ contractEscrowId: 'chain-esc-2' }));
+
+      const run = await service.reconcile();
+
+      expect(escrowService.applyChainState).not.toHaveBeenCalled();
+      expect(run.checked).toBe(2);
+      expect(run.drifts).toHaveLength(1);
+      expect(run.drifts[0]).toMatchObject({
+        contractEscrowId: 'chain-esc-1',
+        driftType: DriftType.INVALID_CHAIN_DATA,
+        repaired: false,
+      });
+      expect(run.drifts[0].repairError).toContain('unrecognised status');
+    });
+
+    it('rethrows unexpected errors', async () => {
+      escrowService.findAll.mockResolvedValue([makeEscrow()]);
+      chainClient.getEscrow.mockRejectedValue(new Error('network'));
+      await expect(service.reconcile()).rejects.toThrow('network');
     });
   });
 });

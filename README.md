@@ -117,6 +117,7 @@ See [Backend Setup Instructions](backend/SETUP_INSTRUCTIONS.md) for detailed dev
 
 **Swagger UI**: `http://localhost:3001/api/docs`  
 **OpenAPI JSON**: `http://localhost:3001/api/docs-json`
+(Disabled in production unless `SWAGGER_ENABLED=true`; protect with `SWAGGER_USER`/`SWAGGER_PASSWORD`.)
 
 Full guide: [API Documentation](backend/API_DOCUMENTATION.md)
 

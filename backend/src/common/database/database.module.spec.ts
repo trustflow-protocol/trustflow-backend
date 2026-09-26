@@ -1,4 +1,7 @@
-import { buildPoolConfig } from './database.module';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { buildPoolConfig, buildSslConfig } from './database.module';
 
 describe('buildPoolConfig', () => {
   it('returns null when neither DATABASE_URL nor DB_HOST/DB_NAME are set', () => {
@@ -70,13 +73,55 @@ describe('buildPoolConfig', () => {
     expect(config).toMatchObject({ max: 10, idleTimeoutMillis: 30_000 });
   });
 
-  it('enables ssl with rejectUnauthorized: false when DB_SSL=true', () => {
-    const config = buildPoolConfig({
-      DATABASE_URL: 'postgres://localhost/trustflow',
-      DB_SSL: 'true',
+  describe('ssl', () => {
+    const url = 'postgres://localhost/trustflow';
+    const PEM = '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----';
+
+    it('verifies the server certificate by default when DB_SSL=true', () => {
+      expect(buildPoolConfig({ DATABASE_URL: url, DB_SSL: 'true' })?.ssl).toEqual({
+        rejectUnauthorized: true,
+      });
     });
 
-    expect(config?.ssl).toEqual({ rejectUnauthorized: false });
+    it('accepts an inline PEM CA, cert and key', () => {
+      const ssl = buildPoolConfig({
+        DATABASE_URL: url,
+        DB_SSL: 'true',
+        DB_SSL_CA: PEM,
+        DB_SSL_CERT: PEM,
+        DB_SSL_KEY: PEM,
+      })?.ssl;
+      expect(ssl).toEqual({ rejectUnauthorized: true, ca: PEM, cert: PEM, key: PEM });
+    });
+
+    it('reads the CA from a file path', () => {
+      const file = join(mkdtempSync(join(tmpdir(), 'ca-')), 'ca.pem');
+      writeFileSync(file, PEM);
+      expect(
+        buildPoolConfig({ DATABASE_URL: url, DB_SSL: 'true', DB_SSL_CA: file })?.ssl,
+      ).toMatchObject({ rejectUnauthorized: true, ca: PEM });
+    });
+
+    it('allows an explicit opt-out outside production and warns', () => {
+      const warn = jest.fn();
+      expect(
+        buildSslConfig({ DB_SSL: 'true', DB_SSL_REJECT_UNAUTHORIZED: 'false' }, { warn }),
+      ).toEqual({ rejectUnauthorized: false });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT verified'));
+    });
+
+    it('refuses the opt-out in production', () => {
+      expect(() =>
+        buildSslConfig(
+          { DB_SSL: 'true', DB_SSL_REJECT_UNAUTHORIZED: 'false', NODE_ENV: 'production' },
+          { warn: jest.fn() },
+        ),
+      ).toThrow('not allowed');
+    });
+
+    it('ignores ssl settings when DB_SSL is not true', () => {
+      expect(buildSslConfig({ DB_SSL: 'false', DB_SSL_CA: PEM })).toBeUndefined();
+    });
   });
 
   it('leaves ssl undefined when DB_SSL is unset', () => {

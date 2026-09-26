@@ -45,7 +45,7 @@ export class DisputeSagaController {
 
   @Get('escrow/:escrowId')
   @ApiOperation({ summary: 'Get the active dispute saga for an escrow' })
-  @ApiParam({ name: 'escrowId', example: 'esc-1234567890' })
+  @ApiParam({ name: 'escrowId', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' })
   @ApiResponse({ status: 200, type: DisputeSagaResponseDto })
   @ApiResponse({ status: 404, description: 'No active dispute saga for this escrow' })
   findByEscrow(@Param('escrowId') escrowId: string) {
@@ -62,7 +62,7 @@ export class DisputeSagaController {
       'Opens a new dispute saga for the escrow. Freezes the escrow and notifies juror pool via Discord. ' +
       'Compensating action: restores escrow status to active if this step fails.',
   })
-  @ApiParam({ name: 'escrowId', example: 'esc-1234567890' })
+  @ApiParam({ name: 'escrowId', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' })
   @ApiResponse({ status: 201, type: DisputeSagaResponseDto })
   @ApiResponse({ status: 400, description: 'Escrow already released' })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
@@ -72,6 +72,7 @@ export class DisputeSagaController {
   }
 
   @Post(':sagaId/assign-jurors')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Step 2 — Assign jurors',
     description:
@@ -86,6 +87,7 @@ export class DisputeSagaController {
   }
 
   @Post(':sagaId/vote')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Step 3 — Cast a juror vote',
     description:
@@ -102,6 +104,7 @@ export class DisputeSagaController {
   }
 
   @Post(':sagaId/payout')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Step 4 — Execute payout',
     description:

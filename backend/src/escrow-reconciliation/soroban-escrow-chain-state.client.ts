@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { rpc as SorobanRpc, xdr, nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { ChainEscrowRecord } from './escrow-reconciliation.types';
+import { InvalidChainStateError, parseChainEscrow } from './chain-escrow.validation';
 import { getStellarConfig } from '../stellar/stellar.config';
 
 /**
@@ -55,6 +56,7 @@ export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
       return this.toChainRecord(contractEscrowId, native);
     } catch (error) {
       if (this.isNotFound(error)) return undefined;
+      if (error instanceof InvalidChainStateError) throw error;
       this.logger.error(
         `Failed to read chain state for escrow ${contractEscrowId}`,
         error instanceof Error ? error.stack : String(error),
@@ -63,17 +65,8 @@ export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
     }
   }
 
-  private toChainRecord(
-    contractEscrowId: string,
-    native: Record<string, unknown>,
-  ): ChainEscrowRecord {
-    return {
-      contractEscrowId,
-      depositor: String(native.depositor),
-      beneficiary: String(native.beneficiary),
-      amountXLM: String(native.amount),
-      status: native.status as ChainEscrowRecord['status'],
-    };
+  private toChainRecord(contractEscrowId: string, native: unknown): ChainEscrowRecord {
+    return parseChainEscrow(contractEscrowId, native);
   }
 
   private isNotFound(error: unknown): boolean {

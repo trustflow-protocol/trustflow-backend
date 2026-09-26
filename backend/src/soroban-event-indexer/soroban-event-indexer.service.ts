@@ -117,7 +117,7 @@ export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy
         ledger: raw.ledger,
         contractId: raw.contractId?.toString() || contractId,
         eventType: this.parseTopic(raw.topic[0]),
-        topic: raw.topic.map((t: unknown) => this.parseTopic(t)),
+        topic: raw.topic.map((topic: unknown) => this.parseTopic(topic)),
         value: this.parseValue(raw.value),
         xdr: raw.value.toXDR().toString(),
         indexedAt: new Date().toISOString(),
