@@ -14,7 +14,7 @@
     "test:ci": "jest --ci --coverage --maxWorkers=2",
     "test:integration": "bash scripts/test-integration.sh",
     "lint": "eslint \"src/**/*.ts\" --fix",
-    "lint:check": "eslint \"src/**/*.ts\"",
+    "lint:check": "eslint \"src/**/*.ts\" --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "check:cycles": "madge --circular --extensions ts src",
