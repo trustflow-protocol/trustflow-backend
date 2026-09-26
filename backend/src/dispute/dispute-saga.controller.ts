@@ -8,6 +8,9 @@ import {
   HttpStatus,
   NotFoundException,
   UseGuards,
+  Req,
+  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBearerAuth } from '@nestjs/swagger';
 import { DisputeSagaService } from './dispute-saga.service';
@@ -19,6 +22,15 @@ import {
   DisputeSagaResponseDto,
 } from './dispute.dto';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../admin/admin.guard';
+
+/**
+ * Shape of `req.user` once `JwtAuthGuard` has run — see
+ * `JwtStrategy.validate()` (src/auth/jwt.strategy.ts).
+ */
+interface AuthenticatedRequest {
+  user: { address: string; sub: string };
+}
 
 @ApiTags('Dispute Resolution')
 @ApiBearerAuth('JWT-auth')
@@ -59,29 +71,42 @@ export class DisputeSagaController {
   @ApiOperation({
     summary: 'Step 1 — Escalate dispute',
     description:
-      'Opens a new dispute saga for the escrow. Freezes the escrow and notifies juror pool via Discord. ' +
+      'Opens a new dispute saga for the escrow. The authenticated wallet must be either the ' +
+      'depositor or beneficiary of the escrow. Freezes the escrow and notifies juror pool via Discord. ' +
       'Compensating action: restores escrow status to active if this step fails.',
   })
   @ApiParam({ name: 'escrowId', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' })
   @ApiResponse({ status: 201, type: DisputeSagaResponseDto })
-  @ApiResponse({ status: 400, description: 'Escrow already released' })
+  @ApiResponse({ status: 400, description: 'Escrow already released or already has active dispute' })
+  @ApiResponse({ status: 403, description: 'Only depositor or beneficiary can escalate dispute' })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
   @ApiResponse({ status: 409, description: 'Active saga already exists for this escrow' })
-  escalate(@Param('escrowId') escrowId: string, @Body() dto: EscalateDisputeDto) {
-    return this.sagaService.escalate(escrowId, dto);
+  escalate(
+    @Param('escrowId') escrowId: string,
+    @Body() dto: EscalateDisputeDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    // Bind initiator to authenticated wallet instead of trusting the body
+    const escalateDto: EscalateDisputeDto = {
+      ...dto,
+      initiator: req.user.address,
+    };
+    return this.sagaService.escalate(escrowId, escalateDto);
   }
 
   @Post(':sagaId/assign-jurors')
+  @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Step 2 — Assign jurors',
+    summary: 'Step 2 — Assign jurors (Admin only)',
     description:
-      'Assigns 3–7 jurors to the dispute. ' +
+      'Assigns 3–7 jurors to the dispute. Requires admin authentication. ' +
       'Compensating action: clears the juror list and reverts the saga to the assignment step.',
   })
   @ApiParam({ name: 'sagaId', example: 'saga-1234567890-abc' })
   @ApiResponse({ status: 200, type: DisputeSagaResponseDto })
   @ApiResponse({ status: 400, description: 'Saga not at JUROR_ASSIGNMENT step' })
+  @ApiResponse({ status: 403, description: 'Admin access required' })
   assignJurors(@Param('sagaId') sagaId: string, @Body() dto: AssignJurorsDto) {
     return this.sagaService.assignJurors(sagaId, dto);
   }
@@ -104,17 +129,19 @@ export class DisputeSagaController {
   }
 
   @Post(':sagaId/payout')
+  @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Step 4 — Execute payout',
+    summary: 'Step 4 — Execute payout (Admin only)',
     description:
-      'Releases funds based on the recorded verdict. For SPLIT verdicts, an optional ' +
-      'splitPercentage (0–100, depositor share) can be provided; defaults to 50. ' +
+      'Releases funds based on the recorded verdict. Requires admin authentication. ' +
+      'For SPLIT verdicts, an optional splitPercentage (0–100, depositor share) can be provided; defaults to 50. ' +
       'Compensating action: re-flags the escrow as disputed and marks it for manual admin review.',
   })
   @ApiParam({ name: 'sagaId', example: 'saga-1234567890-abc' })
   @ApiResponse({ status: 200, type: DisputeSagaResponseDto })
   @ApiResponse({ status: 400, description: 'No verdict or saga not at PAYOUT step' })
+  @ApiResponse({ status: 403, description: 'Admin access required' })
   executePayout(@Param('sagaId') sagaId: string, @Body() dto: ExecutePayoutDto) {
     return this.sagaService.executePayout(sagaId, dto);
   }
