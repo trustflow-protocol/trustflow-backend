@@ -232,7 +232,7 @@ very large or streamed payloads.
 
 | Method | Endpoint        | Description        |
 | ------ | --------------- | ------------------ |
-| POST   | `/webhooks`     | Register webhook   |
+| POST   | `/webhooks`     | Register webhook (subscribe to: `*` for all events, or specific event types like `gig.created`, `dispute.raised`, `ipfs.pin.created`, etc.) |
 | DELETE | `/webhooks/:id` | Unregister webhook |
 
 ### Monitoring
@@ -384,41 +384,278 @@ background re-pin worker) detects it and restores replication via a spare provid
 
 ---
 
-## 📦 Webhook Events
+## 📦 Webhook Events and Outbox Catalog
 
-When you register a webhook, you'll receive POST requests for these events:
+### Event Delivery Mechanisms
 
-### Event Types
+TrustFlow emits events via two independent mechanisms:
 
-| Event              | Description        | Payload            |
-| ------------------ | ------------------ | ------------------ |
-| `escrow.created`   | New escrow created | Escrow details     |
-| `escrow.released`  | Funds released     | Escrow details     |
-| `dispute.raised`   | Dispute initiated  | Dispute details    |
-| `dispute.resolved` | Dispute resolved   | Resolution details |
-| `ipfs.pin.created`  | Content newly pinned                          | CID, replication factor, pinned providers |
-| `ipfs.pin.degraded` | Pin dropped below its replication factor      | CID                                        |
-| `ipfs.pin.restored` | Replication restored after a loss             | CID, healthy provider count                |
-| `ipfs.pin.lost`      | A provider no longer holds a previously-pinned CID | CID, provider                        |
-| `ipfs.pin.failed`   | Every registered provider failed to pin a CID | CID                                        |
-| `ipfs.pin.removed`  | Content unpinned from all providers           | CID                                        |
+1. **Direct Webhook Dispatch**: `dispute.raised` is sent synchronously to registered webhooks immediately after the dispute is created.
+2. **Transactional Outbox**: Other events are persisted atomically with their triggering action in a Redis-backed outbox, then relayed asynchronously by `OutboxRelayService` to webhooks, WebSocket gateway, and workers for at-least-once delivery with deduplication.
 
-### Webhook Payload Format
+Events delivered via the outbox include a `dedupKey` for idempotent processing (see [Receiving Webhooks](#receiving-webhooks)).
+
+### Complete Event Catalog
+
+#### Gig Events (Outbox-Relayed)
+
+| Event | Module | Trigger | Status | Transport |
+|-------|--------|---------|--------|-----------|
+| `gig.created` | Gig | New gig posted | ✅ Implemented | Outbox |
+| `gig.accepted` | Gig | Responder accepts open gig | ✅ Implemented | Outbox |
+| `gig.expired` | Gig | Auto-expiry sweep runs on open gigs past respondBy | ✅ Implemented | Outbox |
+| `gig.cancelled` | Gig | Poster cancels an open gig | ✅ Implemented | Outbox |
+
+**Gig Payload Shape**:
+```typescript
+{
+  id: string;
+  title: string;
+  description: string;
+  budget: string; // XLM amount
+  poster: string; // Stellar address
+  respondBy: string; // ISO 8601 timestamp
+  status: "open" | "accepted" | "expired" | "cancelled";
+  acceptedBy?: string; // Responder address (if accepted)
+  acceptedAt?: string; // ISO 8601 timestamp (if accepted)
+  expiredAt?: string; // ISO 8601 timestamp (if expired)
+  cancelledAt?: string; // ISO 8601 timestamp (if cancelled)
+  createdAt: string; // ISO 8601 timestamp
+}
+```
+
+#### Escrow Events
+
+| Event | Module | Trigger | Status | Transport |
+|-------|--------|---------|--------|-----------|
+| `escrow.created` | Escrow | New escrow vault created | ❌ Documented but not yet emitted | Direct webhook |
+| `escrow.released` | Escrow | Funds released to beneficiary | ❌ Documented but not yet emitted | Direct webhook |
+| `dispute.raised` | Dispute | Dispute escalated by depositor or beneficiary | ✅ Implemented | Direct webhook |
+
+**Escrow Payload Shape**:
+```typescript
+{
+  id: string;
+  depositor: string; // Stellar address
+  beneficiary: string; // Stellar address
+  amountXLM: string; // Amount in XLM
+  status: "pending" | "released" | "disputed";
+  milestone?: {
+    id: string;
+    description: string;
+    amountXLM: string;
+    releasedAt?: string;
+  };
+  createdAt: string; // ISO 8601 timestamp
+  releasedAt?: string; // ISO 8601 timestamp (if released)
+}
+```
+
+#### Dispute Saga Events (Outbox-Relayed)
+
+| Event | Module | Trigger | Status | Transport |
+|-------|--------|---------|--------|-----------|
+| `dispute.escalated` | Dispute Saga | Dispute escalation initiated | ✅ Implemented | Outbox |
+| `dispute.jurors_assigned` | Dispute Saga | Jurors randomly selected from reputation pool | ✅ Implemented | Outbox |
+| `dispute.vote_cast` | Dispute Saga | A juror casts their vote | ✅ Implemented | Outbox |
+| `dispute.verdict_reached` | Dispute Saga | Quorum reached and verdict determined | ✅ Implemented | Outbox |
+| `dispute.payout_executed` | Dispute Saga | Funds distributed per verdict | ✅ Implemented | Outbox |
+| `dispute.saga_completed` | Dispute Saga | Dispute resolved and saga marked complete | ✅ Implemented | Outbox |
+| `dispute.saga_compensating` | Dispute Saga | Compensation transaction initiated on failure | ✅ Implemented | Outbox |
+| `dispute.saga_failed` | Dispute Saga | Saga failed at a step and marked as failed | ✅ Implemented | Outbox |
+
+**Dispute Saga Payload Shape**:
+```typescript
+{
+  sagaId: string;
+  escrowId: string;
+  step: string; // Current saga step
+  status: "pending" | "completed" | "failed" | "compensating";
+  jurors?: string[]; // Array of juror Stellar addresses
+  votes?: {
+    juror: string;
+    decision: "for_depositor" | "for_beneficiary";
+  }[];
+  verdict?: "for_depositor" | "for_beneficiary";
+  verdictAt?: string; // ISO 8601 timestamp
+  payoutDetails?: {
+    recipient: string; // Stellar address
+    amountXLM: string;
+  };
+  error?: string; // Error message on failure
+  createdAt: string; // ISO 8601 timestamp
+}
+```
+
+#### IPFS Pinning Events (Outbox-Relayed)
+
+| Event | Module | Trigger | Status | Transport |
+|-------|--------|---------|--------|-----------|
+| `ipfs.pin.created` | IPFS Pinning | Content pinned to at least one provider | ✅ Implemented | Outbox |
+| `ipfs.pin.degraded` | IPFS Pinning | Pin dropped below target replication factor | ✅ Implemented | Outbox |
+| `ipfs.pin.restored` | IPFS Pinning | Replication restored to target level | ✅ Implemented | Outbox |
+| `ipfs.pin.lost` | IPFS Pinning | A provider dropped a previously-pinned CID | ✅ Implemented | Outbox |
+| `ipfs.pin.failed` | IPFS Pinning | All providers failed to pin a CID | ✅ Implemented | Outbox |
+| `ipfs.pin.removed` | IPFS Pinning | Content unpinned from all providers | ✅ Implemented | Outbox |
+
+**IPFS Pinning Payload Shape**:
+```typescript
+{
+  cid: string; // Content identifier (CIDv1, base32-encoded)
+  size: number; // Content size in bytes
+  filename?: string; // Optional original filename
+  replicationFactor: number; // Target replica count
+  status: "PINNING" | "HEALTHY" | "DEGRADED" | "FAILED";
+  providers: {
+    provider: "pinata" | "web3.storage" | "infura";
+    status: "PINNED" | "FAILED" | "LOST";
+    attempts: number;
+    pinnedAt?: string; // ISO 8601 timestamp
+  }[];
+  createdAt: string; // ISO 8601 timestamp
+  updatedAt: string; // ISO 8601 timestamp
+}
+```
+
+#### Escrow Reconciliation Events (Outbox-Relayed)
+
+| Event | Module | Trigger | Status | Transport |
+|-------|--------|---------|--------|-----------|
+| `escrow_reconciliation.drift_detected` | Escrow Reconciliation | Off-chain state diverges from on-chain | ✅ Implemented | Outbox |
+| `escrow_reconciliation.escrow_backfilled` | Escrow Reconciliation | Missing on-chain escrow backfilled from on-chain | ✅ Implemented | Outbox |
+
+**Escrow Reconciliation Payload Shape**:
+```typescript
+{
+  escrowId: string;
+  driftType: "state_mismatch" | "missing_escrow";
+  onChainAmount?: string;
+  offChainAmount?: string;
+  detailedAt: string; // ISO 8601 timestamp
+}
+```
+
+### Webhook Payload Envelope
+
+All webhook POST requests to registered endpoints follow this envelope format:
 
 ```json
 {
-  "event": "dispute.raised",
+  "event": "gig.created",
   "data": {
-    "escrowId": "esc-1234567890",
-    "depositor": "GXXXXX...",
-    "beneficiary": "GYYYY...",
-    "amountXLM": "100",
-    "reason": "Work not delivered",
-    "disputedAt": "2026-06-13T01:00:00.000Z"
+    "id": "gig-123",
+    "title": "Fix my website",
+    "description": "Update contact form",
+    "budget": "50",
+    "poster": "GXXXXX...",
+    "respondBy": "2026-06-20T00:00:00.000Z",
+    "status": "open",
+    "createdAt": "2026-06-13T00:00:00.000Z"
   },
-  "timestamp": "2026-06-13T01:00:00.000Z"
+  "timestamp": "2026-06-13T00:00:00.000Z",
+  "dedupKey": "gig:gig-123:gig.created"
 }
 ```
+
+- `event`: The event type name (from the catalog above).
+- `data`: Event-specific payload (shape depends on event type).
+- `timestamp`: ISO 8601 UTC timestamp when the event was created.
+- `dedupKey`: Stable deduplication key (for outbox-relayed events). Use this to detect and drop duplicates from at-least-once delivery.
+
+### Receiving Webhooks
+
+#### Signature Verification
+
+If a `secret` was provided when registering the webhook, the API includes an `X-TrustFlow-Signature` header on every POST request. The signature is a hex-encoded HMAC-SHA256 of the **raw JSON request body** using the registered secret.
+
+**Node.js Example**:
+
+```typescript
+import * as crypto from 'crypto';
+
+const secret = 'your-registered-secret';
+const rawBody = JSON.stringify(payload); // Use the raw request body
+const signature = crypto
+  .createHmac('sha256', secret)
+  .update(rawBody, 'utf8')
+  .digest('hex');
+
+// Compare with header
+const headerSignature = req.headers['x-trustflow-signature'];
+if (signature !== headerSignature) {
+  console.error('Signature verification failed');
+  res.statusCode = 401;
+  res.end();
+  return;
+}
+console.log('Signature verified');
+```
+
+**Important**: Always verify signatures before processing the webhook payload to ensure authenticity.
+
+#### Idempotent Processing
+
+Events delivered via the outbox include a `dedupKey` field. Persist this key in your system and skip processing if a duplicate arrives (at-least-once delivery guarantee).
+
+**Node.js Example**:
+
+```typescript
+// Pseudo-code; replace with your database logic
+const existingEvent = await db.webhookEvents.findOne({ dedupKey: payload.dedupKey });
+if (existingEvent) {
+  console.log('Duplicate detected; skipping');
+  res.statusCode = 200;
+  res.end();
+  return;
+}
+
+// Process the event
+await processEvent(payload);
+
+// Persist the dedupKey to prevent reprocessing
+await db.webhookEvents.insert({ dedupKey: payload.dedupKey, ...payload });
+```
+
+#### Retry and Timeout Behavior
+
+- **Timeout**: HTTP requests to your endpoint time out after 10 seconds (`WEBHOOK_TIMEOUT_MS`).
+- **Retries**: Failed deliveries are retried up to 3 times. Only network errors (socket timeouts, DNS failures, connection resets) and HTTP 5xx responses trigger a retry; 4xx responses and other errors do not retry.
+- **Backoff**: Retry delay starts at 1 second and increases linearly (1s, 2s, 3s). Maximum delay is capped at 30 seconds.
+- **Delivery Guarantee**: At-least-once — your endpoint may receive the same event multiple times on failure or crash recovery. Always use `dedupKey` for idempotency.
+
+**Retry Logic**:
+- Attempt 1: Immediate
+- Attempt 2: ~1s delay
+- Attempt 3: ~2s delay  
+- Attempt 4: ~3s delay
+- If all fail, the event is retried periodically by the outbox relay with exponential backoff (capped at 30s).
+
+### Registering a Webhook
+
+```bash
+curl -X POST http://localhost:3001/webhooks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "my-webhook-1",
+    "url": "https://example.com/webhooks/trustflow",
+    "events": ["gig.created", "dispute.raised"],
+    "secret": "your-16-char-minimum-secret"
+  }'
+```
+
+**Response**:
+
+```json
+{
+  "registered": true,
+  "id": "my-webhook-1"
+}
+```
+
+- `id`: Unique identifier for this webhook (used to unregister).
+- `url`: HTTPS-accessible endpoint (HTTP allowed in development; SSRF-protected in production).
+- `events`: Optional array of event types to subscribe to. If omitted or `["*"]`, all events are sent.
+- `secret`: Optional 16+ character secret for signature verification. If omitted, no signature header is sent.
 
 ---
 
