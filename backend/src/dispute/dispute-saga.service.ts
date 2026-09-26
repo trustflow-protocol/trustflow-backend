@@ -6,6 +6,7 @@ import {
   BadRequestException,
   ConflictException,
   OnModuleInit,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -152,6 +153,13 @@ export class DisputeSagaService implements OnModuleInit {
       throw new BadRequestException('Cannot dispute a released escrow');
     }
 
+    // Verify that initiator is either depositor or beneficiary
+    if (dto.initiator !== escrow.depositor && dto.initiator !== escrow.beneficiary) {
+      throw new ForbiddenException(
+        'Only the depositor or beneficiary can escalate a dispute for this escrow',
+      );
+    }
+
     const sagaId = `saga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
 
@@ -238,15 +246,27 @@ export class DisputeSagaService implements OnModuleInit {
     const saga = await this.findById(sagaId);
     this.assertStep(saga, DisputeStep.JUROR_ASSIGNMENT);
 
+    // Validate input before initializing the step to avoid treating input errors as infrastructure failures
+    const unique = [...new Set(dto.jurors)];
+    if (unique.length < 3) {
+      throw new BadRequestException('At least 3 distinct juror addresses are required');
+    }
+
+    // Prevent escrow parties from being assigned as jurors to avoid conflicts of interest
+    const escrow = await this.escrowService.findById(saga.escrowId);
+    if (escrow) {
+      for (const juror of unique) {
+        if (juror === escrow.depositor || juror === escrow.beneficiary) {
+          throw new BadRequestException(
+            'Escrow parties (depositor and beneficiary) cannot be assigned as jurors',
+          );
+        }
+      }
+    }
+
     this.recordStepStart(saga, DisputeStep.JUROR_ASSIGNMENT);
 
     try {
-      // Deduplicate juror addresses
-      const unique = [...new Set(dto.jurors)];
-      if (unique.length < 3) {
-        throw new BadRequestException('At least 3 distinct juror addresses are required');
-      }
-
       saga.assignedJurors = unique;
       this.recordStepComplete(saga, DisputeStep.JUROR_ASSIGNMENT);
       saga.currentStep = DisputeStep.VOTING;

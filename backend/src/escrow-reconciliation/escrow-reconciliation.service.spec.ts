@@ -31,6 +31,7 @@ function makeChainRecord(overrides: Partial<ChainEscrowRecord> = {}): ChainEscro
 }
 
 describe('EscrowReconciliationService', () => {
+  const originalConcurrency = process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY;
   let escrowService: jest.Mocked<
     Pick<
       EscrowService,
@@ -59,6 +60,14 @@ describe('EscrowReconciliationService', () => {
       webhookService as unknown as WebhookService,
       store,
     );
+  });
+
+  afterEach(() => {
+    if (originalConcurrency === undefined) {
+      delete process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY;
+    } else {
+      process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY = originalConcurrency;
+    }
   });
 
   describe('no drift', () => {
@@ -219,6 +228,55 @@ describe('EscrowReconciliationService', () => {
 
       expect(run.drifts[0]).toMatchObject({ repaired: false, repairError: 'write conflict' });
       expect(run.repairedCount).toBe(0);
+    });
+  });
+
+  describe('chain read failures', () => {
+    it('records a failed read, continues checking other escrows, saves the run, and dispatches the webhook', async () => {
+      const secondEscrow = makeEscrow({ id: 'esc-2', contractEscrowId: 'chain-esc-2' });
+      escrowService.findAll.mockResolvedValue([makeEscrow(), secondEscrow]);
+      chainClient.getEscrow.mockImplementation(async contractEscrowId => {
+        if (contractEscrowId === 'chain-esc-1') throw new Error('RPC timeout');
+        return makeChainRecord({ contractEscrowId });
+      });
+
+      const run = await service.reconcile();
+
+      expect(run.checked).toBe(2);
+      expect(run.errorCount).toBe(1);
+      expect(run.errors[0]).toMatchObject({
+        contractEscrowId: 'chain-esc-1',
+        message: 'RPC timeout',
+      });
+      expect(run.drifts).toEqual([]);
+      expect(await service.findById(run.runId)).toEqual(run);
+      expect(webhookService.dispatch).toHaveBeenCalledWith(
+        RECONCILIATION_EVENTS.DRIFT_DETECTED,
+        expect.objectContaining({ errorCount: 1 }),
+      );
+    });
+
+    it('bounds chain reads using the configured concurrency', async () => {
+      process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY = '2';
+      const escrows = Array.from({ length: 6 }, (_, index) =>
+        makeEscrow({ id: `esc-${index}`, contractEscrowId: `chain-esc-${index}` }),
+      );
+      escrowService.findAll.mockResolvedValue(escrows);
+      let active = 0;
+      let maximumActive = 0;
+      chainClient.getEscrow.mockImplementation(async contractEscrowId => {
+        active++;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        active--;
+        return makeChainRecord({ contractEscrowId });
+      });
+
+      const run = await service.reconcile();
+
+      expect(run.errorCount).toBe(0);
+      expect(maximumActive).toBeLessThanOrEqual(2);
+      expect(chainClient.getEscrow).toHaveBeenCalledTimes(6);
     });
   });
 

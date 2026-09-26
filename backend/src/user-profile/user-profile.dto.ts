@@ -45,7 +45,7 @@ export type CreateUserProfileDto = z.infer<typeof CreateUserProfileSchema>;
 
 /**
  * Schema for updating an existing user profile
- * All fields are optional except walletAddress for identification
+ * All fields are optional. Status is intentionally excluded — only admins can modify status.
  */
 export const UpdateUserProfileSchema = z.object({
   name: z
@@ -66,7 +66,6 @@ export const UpdateUserProfileSchema = z.object({
       website: z.string().regex(URL_REGEX).optional(),
     })
     .optional(),
-  status: z.nativeEnum(UserStatus).optional(),
 });
 
 export type UpdateUserProfileDto = z.infer<typeof UpdateUserProfileSchema>;
