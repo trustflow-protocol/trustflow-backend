@@ -91,9 +91,24 @@ REDIS_URL=redis://localhost:6379
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
+RATE_LIMIT_ON_REDIS_ERROR=allow
+REDIS_COMMAND_TIMEOUT_MS=1000
 ```
 
 `/health` and `/metrics` are exempt through `@SkipRateLimit()`.
+
+### Behaviour when Redis is unavailable
+
+The limiter never turns a Redis problem into a generic `500`. When a Redis command fails or does not answer within `REDIS_COMMAND_TIMEOUT_MS`, the request is handled by an explicit policy:
+
+| Policy | Effect | Default for |
+| ------ | ------ | ----------- |
+| `allow` (fail open) | The request proceeds unthrottled. Most routes do not otherwise need Redis, so a Redis blip should not take the API down. | Every route, via `RATE_LIMIT_ON_REDIS_ERROR=allow` |
+| `deny` (fail closed) | The request is rejected with `503 Service Unavailable` and a `Retry-After: 5` header. | `/auth/*` |
+
+`/auth/*` fails closed so that a Redis outage cannot be used to brute-force the login flow. A route overrides the global default with `@RateLimitOnRedisError('deny' | 'allow')` or `@RateLimit(points, duration, { onRedisError: 'deny' })`; the route setting wins over `RATE_LIMIT_ON_REDIS_ERROR`.
+
+Each failure increments the `rate_limit_redis_error_total{route,policy}` counter on `/metrics`. The error is logged with the identity scope and route at most once every 30 seconds, with a count of the suppressed repeats. When `REDIS_URL` is not set at all, rate limiting is disabled and a single warning is logged at startup.
 
 ---
 
@@ -455,9 +470,11 @@ Swagger UI will be at: `http://localhost:3001/api/docs`
 PORT=3001
 JWT_SECRET=your-secret
 REDIS_URL=redis://localhost:6379
+REDIS_COMMAND_TIMEOUT_MS=1000
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
+RATE_LIMIT_ON_REDIS_ERROR=allow
 IDEMPOTENCY_KEY_TTL_SECONDS=86400
 STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org

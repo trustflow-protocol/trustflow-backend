@@ -86,6 +86,9 @@ REDIS_URL=redis://localhost:6379
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
+# allow (fail open, default) or deny (503 + Retry-After) when Redis is down; /auth/* always denies
+RATE_LIMIT_ON_REDIS_ERROR=allow
+REDIS_COMMAND_TIMEOUT_MS=1000
 ```
 
 See [`.env.example`](.env.example) for the full list of variables, including optional IPFS, database, and admin settings.
