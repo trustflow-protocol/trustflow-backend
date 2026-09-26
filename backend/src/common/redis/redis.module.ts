@@ -32,6 +32,9 @@ export function createRedisClient(logger: Logger = new Logger('RedisModule')): R
 
   const client = new Redis(url, {
     maxRetriesPerRequest: 3,
+    // Without this a command on an unreachable Redis waits out the whole retry/backoff
+    // sequence (seconds). Reject fast so callers can apply their own degradation policy.
+    commandTimeout: config.REDIS_COMMAND_TIMEOUT_MS,
     retryStrategy: times => Math.min(times * 100, 3000),
     lazyConnect: true,
   });

@@ -45,6 +45,9 @@ export class SentryExceptionFilter implements ExceptionFilter {
 
     let status: number;
     let message: string;
+    // Structured fields a handler deliberately attached to its HttpException response
+    // (e.g. per-provider results on a partial failure), forwarded next to the standard ones.
+    let details: Record<string, unknown> = {};
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -53,6 +56,12 @@ export class SentryExceptionFilter implements ExceptionFilter {
         typeof res === 'string'
           ? res
           : ((res as { message?: string }).message ?? exception.message);
+      if (typeof res === 'object' && res !== null) {
+        details = { ...(res as Record<string, unknown>) };
+        delete details.statusCode;
+        delete details.message;
+        delete details.error;
+      }
     } else {
       const knownStatus = extractKnownHttpStatus(exception);
       if (knownStatus !== undefined) {
@@ -89,6 +98,7 @@ export class SentryExceptionFilter implements ExceptionFilter {
     }
 
     response.status(status).json({
+      ...details,
       statusCode: status,
       message,
       timestamp: new Date().toISOString(),

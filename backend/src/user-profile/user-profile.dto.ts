@@ -99,7 +99,8 @@ export type SearchQueryDto = z.infer<typeof SearchQuerySchema>;
 
 /**
  * Response DTO for user profile
- * Excludes sensitive internal fields
+ * Excludes sensitive internal fields, including the email address: this is the only shape
+ * unauthenticated endpoints may return.
  */
 export interface UserProfileResponseDto {
   id: string;
@@ -125,4 +126,12 @@ export interface UserProfileResponseDto {
   createdAt: string;
   updatedAt: string;
   lastActiveAt?: string;
+}
+
+/**
+ * Response DTO for a profile read by its own owner — the public view plus the email address
+ * the owner registered with. Never returned to anyone else.
+ */
+export interface OwnerProfileResponseDto extends UserProfileResponseDto {
+  email?: string;
 }

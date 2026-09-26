@@ -4,9 +4,13 @@ import { AuthService } from './auth.service';
 import { VerifyDto } from './dto/verify.dto';
 import { ChallengeResponseDto } from './dto/challenge-response.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
+import { RateLimitOnRedisError } from '../common/rate-limit/rate-limit.decorator';
 
 @ApiTags('Authentication')
 @Controller('auth')
+// Fail closed if Redis is down: an unthrottled login flow invites brute-forcing, so these
+// routes answer 503 + Retry-After instead of skipping the limiter.
+@RateLimitOnRedisError('deny')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 

@@ -6,17 +6,29 @@ import {
   HttpStatus,
   Inject,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Redis, Result } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../redis/redis.module';
-import { SKIP_RATE_LIMIT, RATE_LIMIT_POINTS, RATE_LIMIT_DURATION } from './rate-limit.decorator';
+import {
+  SKIP_RATE_LIMIT,
+  RATE_LIMIT_POINTS,
+  RATE_LIMIT_DURATION,
+  RATE_LIMIT_ON_REDIS_ERROR,
+  RateLimitRedisErrorPolicy,
+} from './rate-limit.decorator';
 import { config } from '../../config/env.config';
+import { MetricsService } from '../../monitoring/metrics.service';
 
 const DEFAULT_POINTS = 100;
 const DEFAULT_DURATION = 60;
+/** At most one Redis-error log line per this interval; the rest are only counted. */
+const REDIS_ERROR_LOG_INTERVAL_MS = 30_000;
+/** `Retry-After` advertised when a `deny` policy rejects a request during a Redis outage. */
+const REDIS_ERROR_RETRY_AFTER_SECONDS = 5;
 
 /** Minimal shape of the HTTP request object that rate-limiting reads from. */
 interface RateLimitRequest {
@@ -140,10 +152,19 @@ export class RateLimitGuard implements CanActivate {
   // request.user, so it must be able to verify the bearer token itself.
   private readonly jwtService = new JwtService();
 
+  private lastRedisErrorLogAt = 0;
+  private suppressedRedisErrors = 0;
+
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly reflector: Reflector,
+    @Optional() private readonly metrics?: MetricsService,
   ) {
+    if (!this.redis) {
+      // Logged once at startup, not on every request.
+      this.logger.warn('Redis not configured — rate limiting disabled');
+    }
+
     // Registers redis.rateLimitCheck() (and pipeline.rateLimitCheck()) backed by EVALSHA,
     // with ioredis handling the SCRIPT LOAD + NOSCRIPT-triggered re-send transparently — the
     // Lua source is sent to Redis at most once per connection instead of on every request.
@@ -159,10 +180,7 @@ export class RateLimitGuard implements CanActivate {
     ]);
     if (skip) return true;
 
-    if (!this.redis) {
-      this.logger.warn('Redis not configured — rate limiting disabled');
-      return true;
-    }
+    if (!this.redis) return true;
 
     const points =
       this.reflector.getAllAndOverride<number>(RATE_LIMIT_POINTS, [
@@ -204,13 +222,20 @@ export class RateLimitGuard implements CanActivate {
       );
     }
 
-    const results = (await pipeline.exec()) ?? [];
+    // Only Redis failures are caught here. The 429 decision below is made outside the try
+    // so a genuine rate-limit rejection is never mistaken for an outage.
+    let decisions: Array<[number, number]>;
+    try {
+      decisions = this.parseResults(
+        await this.withTimeout(pipeline.exec(), config.REDIS_COMMAND_TIMEOUT_MS),
+        identities.length,
+      );
+    } catch (error) {
+      return this.onRedisError(context, error, identities, route);
+    }
 
     for (let i = 0; i < identities.length; i++) {
-      const [error, raw] = results[i] ?? [];
-      if (error) throw error;
-
-      const [allowed, retryAfter] = raw as [number, number];
+      const [allowed, retryAfter] = decisions[i];
       if (Number(allowed) !== 1) {
         const identity = identities[i];
         throw new HttpException(
@@ -226,6 +251,102 @@ export class RateLimitGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  /**
+   * Normalises a pipeline reply into one `[allowed, retryAfter]` tuple per identity, throwing
+   * when the reply carries a command error or is incomplete/malformed — all of which mean
+   * "Redis could not give us a decision" and are handled by the outage policy.
+   */
+  private parseResults(
+    results: Array<[Error | null, unknown]> | null,
+    expected: number,
+  ): Array<[number, number]> {
+    const decisions: Array<[number, number]> = [];
+    for (let i = 0; i < expected; i++) {
+      const [error, raw] = results?.[i] ?? [new Error('Redis pipeline returned no reply'), null];
+      if (error) throw error;
+      if (!Array.isArray(raw) || raw.length < 2) {
+        throw new Error('Redis rate limit script returned an unexpected reply');
+      }
+      decisions.push([Number(raw[0]), Number(raw[1])]);
+    }
+    return decisions;
+  }
+
+  /**
+   * Belt-and-braces on top of the ioredis `commandTimeout`: the request never waits longer
+   * than this for the rate limiter, even if a pipeline is not covered by the client option.
+   */
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Redis timed out after ${ms}ms`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
+  /**
+   * Applies the configured outage policy: `allow` (fail open) lets the request through,
+   * `deny` (fail closed) rejects it with 503 + `Retry-After`. The route's
+   * `@RateLimitOnRedisError()` / `@RateLimit(..., { onRedisError })` metadata wins over the
+   * global `RATE_LIMIT_ON_REDIS_ERROR` default. Never surfaces a generic 500.
+   */
+  private onRedisError(
+    context: ExecutionContext,
+    error: unknown,
+    identities: RateLimitIdentity[],
+    route: string,
+  ): boolean {
+    const policy: RateLimitRedisErrorPolicy =
+      this.reflector.getAllAndOverride<RateLimitRedisErrorPolicy>(RATE_LIMIT_ON_REDIS_ERROR, [
+        context.getHandler(),
+        context.getClass(),
+      ]) ?? config.RATE_LIMIT_ON_REDIS_ERROR;
+
+    this.metrics?.increment('rate_limit_redis_error_total', { route, policy });
+    this.logRedisError(error, identities, route, policy);
+
+    if (policy === 'allow') return true;
+
+    context
+      .switchToHttp()
+      .getResponse()
+      ?.setHeader?.('Retry-After', String(REDIS_ERROR_RETRY_AFTER_SECONDS));
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        message: 'Rate limiting is temporarily unavailable - please retry shortly',
+        retryAfter: REDIS_ERROR_RETRY_AFTER_SECONDS,
+      },
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  }
+
+  /** Logs at most once per {@link REDIS_ERROR_LOG_INTERVAL_MS}; the metric counts them all. */
+  private logRedisError(
+    error: unknown,
+    identities: RateLimitIdentity[],
+    route: string,
+    policy: RateLimitRedisErrorPolicy,
+  ): void {
+    const now = Date.now();
+    if (now - this.lastRedisErrorLogAt < REDIS_ERROR_LOG_INTERVAL_MS) {
+      this.suppressedRedisErrors++;
+      return;
+    }
+    const suppressed = this.suppressedRedisErrors;
+    this.suppressedRedisErrors = 0;
+    this.lastRedisErrorLogAt = now;
+
+    const reason = error instanceof Error ? error.message : String(error);
+    const scopes = identities.map(identity => identity.scope).join('+');
+    const outcome = policy === 'allow' ? 'allowing request' : 'rejecting request with 503';
+    const message =
+      `Rate limiter Redis error (scope=${scopes}, route=${route}) — ${outcome}: ${reason}` +
+      (suppressed > 0 ? ` [${suppressed} similar errors suppressed]` : '');
+    if (policy === 'allow') this.logger.warn(message);
+    else this.logger.error(message);
   }
 
   private getIdentities(request: RateLimitRequest): RateLimitIdentity[] {

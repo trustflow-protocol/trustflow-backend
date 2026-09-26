@@ -1,4 +1,4 @@
-import { Controller, Get, INestApplication, Post } from '@nestjs/common';
+import { Controller, Get, INestApplication, Logger, Post } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Reflector, APP_GUARD } from '@nestjs/core';
 import { HttpException, HttpStatus } from '@nestjs/common';
@@ -6,8 +6,15 @@ import { JwtService } from '@nestjs/jwt';
 import request from 'supertest';
 import { RateLimitGuard } from './rate-limit.guard';
 import { REDIS_CLIENT } from '../redis/redis.module';
-import { SKIP_RATE_LIMIT, RATE_LIMIT_POINTS, RATE_LIMIT_DURATION } from './rate-limit.decorator';
-import { validateEnv, TEST_ONLY_JWT_SECRET } from '../../config/env.config';
+import {
+  SKIP_RATE_LIMIT,
+  RATE_LIMIT_POINTS,
+  RATE_LIMIT_DURATION,
+  RATE_LIMIT_ON_REDIS_ERROR,
+  RateLimitRedisErrorPolicy,
+} from './rate-limit.decorator';
+import { validateEnv, getConfig, TEST_ONLY_JWT_SECRET } from '../../config/env.config';
+import { MetricsService } from '../../monitoring/metrics.service';
 
 // recordAbuse() reads config.RATE_LIMIT_* and extractVerifiedWallet() reads
 // config.JWT_SECRET, both of which require validateEnv() to have run first —
@@ -38,6 +45,7 @@ function mockContext(overrides?: {
 
   const handler = () => {};
   const cls = class Mock {};
+  const response = { setHeader: jest.fn() };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const context: any = {
@@ -58,10 +66,11 @@ function mockContext(overrides?: {
         query: overrides?.query,
         params: overrides?.params,
       }),
+      getResponse: () => response,
     }),
   };
 
-  return { context };
+  return { context, response };
 }
 
 type PipelineResult = [Error | null, [number, number] | null];
@@ -80,7 +89,7 @@ function createRedisMock() {
       rateLimitCheck(...args);
       return pipelineObj;
     },
-    exec: jest.fn(() => Promise.resolve(pending)),
+    exec: jest.fn(() => Promise.resolve(pending) as Promise<PipelineResult[]>),
   };
 
   return {
@@ -92,15 +101,29 @@ function createRedisMock() {
     queueResults(results: PipelineResult[]) {
       pending = results;
     },
+    /** Make every following `pipeline.exec()` reject, as when the connection is down. */
+    failExec(error: Error) {
+      pipelineObj.exec.mockImplementation(() => Promise.reject(error));
+    },
+    /** Make every following `pipeline.exec()` never settle, as when Redis stalls. */
+    hangExec() {
+      pipelineObj.exec.mockImplementation(() => new Promise<PipelineResult[]>(() => undefined));
+    },
   };
 }
 
-function createReflector(overrides?: { skip?: boolean; points?: number; duration?: number }) {
+function createReflector(overrides?: {
+  skip?: boolean;
+  points?: number;
+  duration?: number;
+  onRedisError?: RateLimitRedisErrorPolicy;
+}) {
   return {
     getAllAndOverride: jest.fn((key: string) => {
       if (key === SKIP_RATE_LIMIT) return overrides?.skip;
       if (key === RATE_LIMIT_POINTS) return overrides?.points;
       if (key === RATE_LIMIT_DURATION) return overrides?.duration;
+      if (key === RATE_LIMIT_ON_REDIS_ERROR) return overrides?.onRedisError;
       return undefined;
     }),
   };
@@ -173,6 +196,27 @@ describe('RateLimitGuard', () => {
     it('should allow request when redis is null', async () => {
       const { context } = mockContext();
       await expect(guard.canActivate(context)).resolves.toBe(true);
+    });
+
+    it('should warn once at startup, not on every request', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          RateLimitGuard,
+          { provide: REDIS_CLIENT, useValue: null },
+          { provide: Reflector, useValue: createReflector() },
+        ],
+      }).compile();
+      const disabledGuard = module.get<RateLimitGuard>(RateLimitGuard);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('Redis not configured — rate limiting disabled');
+
+      for (let i = 0; i < 3; i++) {
+        const { context } = mockContext();
+        await expect(disabledGuard.canActivate(context)).resolves.toBe(true);
+      }
+      expect(warn).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -415,11 +459,159 @@ describe('RateLimitGuard', () => {
       expect(mockRedis.rateLimitCheck).toHaveBeenCalledTimes(1);
     });
 
-    it('should propagate a Redis error for an identity instead of silently allowing the request', async () => {
-      mockRedis.queueResults([[new Error('connection lost'), null]]);
+  });
 
-      const { context } = mockContext();
-      await expect(guard.canActivate(context)).rejects.toThrow('connection lost');
+  describe('when Redis fails', () => {
+    let metrics: MetricsService;
+    let warn: jest.SpyInstance;
+    let error: jest.SpyInstance;
+
+    async function makeGuard(onRedisError?: RateLimitRedisErrorPolicy) {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          RateLimitGuard,
+          MetricsService,
+          { provide: REDIS_CLIENT, useValue: mockRedis },
+          { provide: Reflector, useValue: createReflector({ onRedisError }) },
+        ],
+      }).compile();
+      metrics = module.get(MetricsService);
+      return module.get<RateLimitGuard>(RateLimitGuard);
+    }
+
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    });
+
+    const failures: Array<[string, () => void]> = [
+      ['exec() rejecting', () => mockRedis.failExec(new Error('connection lost'))],
+      [
+        'a command error in the pipeline reply',
+        () => mockRedis.queueResults([[new Error('READONLY'), null]]),
+      ],
+      ['a missing pipeline reply', () => mockRedis.queueResults([])],
+      [
+        'a malformed script reply',
+        () => mockRedis.queueResults([[null, null as unknown as [number, number]]]),
+      ],
+    ];
+
+    it.each(failures)(
+      'should fail open by default on %s and count the error',
+      async (_name, fail) => {
+        const openGuard = await makeGuard();
+        fail();
+
+        const { context } = mockContext();
+        await expect(openGuard.canActivate(context)).resolves.toBe(true);
+
+        expect(metrics.getAll()).toEqual([
+          {
+            name: 'rate_limit_redis_error_total',
+            value: 1,
+            labels: { route: 'get:_auth_challenge', policy: 'allow' },
+          },
+        ]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('scope=ip'));
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('route=get:_auth_challenge'));
+      },
+    );
+
+    it.each(failures)(
+      'should answer 503 with Retry-After on %s when the policy is deny',
+      async (_name, fail) => {
+        const closedGuard = await makeGuard('deny');
+        fail();
+
+        const { context, response } = mockContext();
+        const rejection = closedGuard.canActivate(context);
+        await expect(rejection).rejects.toBeInstanceOf(HttpException);
+        await expect(rejection).rejects.toMatchObject({
+          status: HttpStatus.SERVICE_UNAVAILABLE,
+          response: expect.objectContaining({ retryAfter: 5 }),
+        });
+
+        expect(response.setHeader).toHaveBeenCalledWith('Retry-After', '5');
+        expect(metrics.getAll()).toEqual([
+          expect.objectContaining({
+            name: 'rate_limit_redis_error_total',
+            labels: { route: 'get:_auth_challenge', policy: 'deny' },
+          }),
+        ]);
+        expect(error).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('should let the route policy override the global default in both directions', async () => {
+      mockRedis.failExec(new Error('connection lost'));
+
+      // Global default is allow (see EnvSchema), so a per-route deny must win over it.
+      const routeDeny = await makeGuard('deny');
+      await expect(routeDeny.canActivate(mockContext().context)).rejects.toMatchObject({
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+      });
+
+      // And with the global default flipped to deny, a per-route allow must win over it.
+      const settings = getConfig() as { RATE_LIMIT_ON_REDIS_ERROR: string };
+      const original = settings.RATE_LIMIT_ON_REDIS_ERROR;
+      settings.RATE_LIMIT_ON_REDIS_ERROR = 'deny';
+      try {
+        const routeAllow = await makeGuard('allow');
+        await expect(routeAllow.canActivate(mockContext().context)).resolves.toBe(true);
+
+        const globalDeny = await makeGuard();
+        await expect(globalDeny.canActivate(mockContext().context)).rejects.toMatchObject({
+          status: HttpStatus.SERVICE_UNAVAILABLE,
+        });
+      } finally {
+        settings.RATE_LIMIT_ON_REDIS_ERROR = original;
+      }
+    });
+
+    it('should log a sustained outage once per interval but count every failure', async () => {
+      const openGuard = await makeGuard();
+      mockRedis.failExec(new Error('connection lost'));
+
+      for (let i = 0; i < 5; i++) {
+        await expect(openGuard.canActivate(mockContext().context)).resolves.toBe(true);
+      }
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(metrics.getAll()[0]).toMatchObject({ value: 5 });
+
+      const later = Date.now() + 31_000;
+      jest.spyOn(Date, 'now').mockReturnValue(later);
+      await expect(openGuard.canActivate(mockContext().context)).resolves.toBe(true);
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('4 similar errors suppressed'));
+    });
+
+    it('should not hold the request while Redis stalls', async () => {
+      const openGuard = await makeGuard();
+      mockRedis.hangExec();
+      // Leave nextTick/setImmediate real so Nest and promise plumbing keep flowing.
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      try {
+        const pending = openGuard.canActivate(mockContext().context);
+        await jest.advanceTimersByTimeAsync(1_000);
+
+        await expect(pending).resolves.toBe(true);
+        expect(metrics.getAll()[0]).toMatchObject({ name: 'rate_limit_redis_error_total' });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('should still surface a genuine 429 as 429, never as an outage', async () => {
+      const closedGuard = await makeGuard('deny');
+      mockRedis.queueResults([[null, [0, 12]]]);
+
+      await expect(closedGuard.canActivate(mockContext().context)).rejects.toMatchObject({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+      });
+      expect(metrics.getAll()).toEqual([]);
     });
   });
 });

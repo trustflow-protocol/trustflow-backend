@@ -91,9 +91,24 @@ REDIS_URL=redis://localhost:6379
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
+RATE_LIMIT_ON_REDIS_ERROR=allow
+REDIS_COMMAND_TIMEOUT_MS=1000
 ```
 
 `/health` and `/metrics` are exempt through `@SkipRateLimit()`.
+
+### Behaviour when Redis is unavailable
+
+The limiter never turns a Redis problem into a generic `500`. When a Redis command fails or does not answer within `REDIS_COMMAND_TIMEOUT_MS`, the request is handled by an explicit policy:
+
+| Policy | Effect | Default for |
+| ------ | ------ | ----------- |
+| `allow` (fail open) | The request proceeds unthrottled. Most routes do not otherwise need Redis, so a Redis blip should not take the API down. | Every route, via `RATE_LIMIT_ON_REDIS_ERROR=allow` |
+| `deny` (fail closed) | The request is rejected with `503 Service Unavailable` and a `Retry-After: 5` header. | `/auth/*` |
+
+`/auth/*` fails closed so that a Redis outage cannot be used to brute-force the login flow. A route overrides the global default with `@RateLimitOnRedisError('deny' | 'allow')` or `@RateLimit(points, duration, { onRedisError: 'deny' })`; the route setting wins over `RATE_LIMIT_ON_REDIS_ERROR`.
+
+Each failure increments the `rate_limit_redis_error_total{route,policy}` counter on `/metrics`. The error is logged with the identity scope and route at most once every 30 seconds, with a count of the suppressed repeats. When `REDIS_URL` is not set at all, rate limiting is disabled and a single warning is logged at startup.
 
 ---
 
@@ -260,6 +275,25 @@ Provides visibility into Stellar RPC endpoint health and failover status. Requir
 | POST   | `/ipfs/pins/:cid/verify` | Re-verify durability and top up replication if degraded |
 | DELETE | `/ipfs/pins/:cid`    | Unpin from every provider currently holding the content      |
 
+A provider entry becomes `UNPINNED` only when that provider confirmed it released the pin (or reports it as already absent); an unregistered provider counts as a failure. If any provider fails, `DELETE` answers `502 Bad Gateway` with `failedProviders` and the per-provider results in `providers`, the record moves to status `UNPINNING` (the failed provider stays `PINNED` with `lastError`), the retained content is kept and `ipfs.pin.removed` is **not** sent. Repeat the `DELETE` to retry only the providers that still hold the pin; once all have released it the record becomes `UNPINNED` and the webhook fires. Failures are counted in `ipfs_unpin_failure_total{provider}`.
+
+### Deliverables
+
+| Method | Endpoint                    | Description                                         |
+| ------ | --------------------------- | --------------------------------------------------- |
+| POST   | `/deliverables`             | Upload a deliverable for a gig and pin it to IPFS   |
+| GET    | `/deliverables/:id`         | Get a deliverable by ID                             |
+| GET    | `/deliverables/gig/:gigId`  | List the deliverables of a gig                      |
+
+`POST /deliverables` is restricted to the freelancer who accepted the gig. Checks run in this order, before the content is decoded or pinned:
+
+| Status | Condition |
+| ------ | --------- |
+| `400`  | `content` is not valid base64 (standard alphabet, whole 4-character groups) or is longer than 14,316,560 characters (10 MB decoded), the same cap as `POST /ipfs/pins` |
+| `404`  | the gig does not exist |
+| `409`  | the gig is not `accepted` (still open, expired or cancelled) |
+| `403`  | `freelancer` is not the gig's accepted freelancer, or the authenticated wallet is not |
+
 ### Admin Analytics
 
 Restricted to wallet addresses listed in `ADMIN_ADDRESSES` (see [Environment Variables](#environment-variables)). All routes require a JWT (`Authorization: Bearer ...`) from an admin address and return `403 Forbidden` for anyone else.
@@ -390,8 +424,18 @@ background re-pin worker) detects it and restores replication via a spare provid
 
 TrustFlow emits events via two independent mechanisms:
 
-1. **Direct Webhook Dispatch**: `dispute.raised` is sent synchronously to registered webhooks immediately after the dispute is created.
-2. **Transactional Outbox**: Other events are persisted atomically with their triggering action in a Redis-backed outbox, then relayed asynchronously by `OutboxRelayService` to webhooks, WebSocket gateway, and workers for at-least-once delivery with deduplication.
+| Event              | Description        | Payload            |
+| ------------------ | ------------------ | ------------------ |
+| `escrow.created`   | New escrow created | Escrow details     |
+| `escrow.released`  | Funds released     | Escrow details     |
+| `dispute.raised`   | Dispute initiated  | Dispute details    |
+| `dispute.resolved` | Dispute resolved   | Resolution details |
+| `ipfs.pin.created`  | Content newly pinned                          | CID, replication factor, pinned providers |
+| `ipfs.pin.degraded` | Pin dropped below its replication factor      | CID                                        |
+| `ipfs.pin.restored` | Replication restored after a loss             | CID, healthy provider count                |
+| `ipfs.pin.lost`      | A provider no longer holds a previously-pinned CID | CID, provider                        |
+| `ipfs.pin.failed`   | Every registered provider failed to pin a CID | CID                                        |
+| `ipfs.pin.removed`  | Content released by **every** provider        | CID                                        |
 
 Events delivered via the outbox include a `dedupKey` for idempotent processing (see [Receiving Webhooks](#receiving-webhooks)).
 
@@ -692,9 +736,11 @@ Swagger UI will be at: `http://localhost:3001/api/docs`
 PORT=3001
 JWT_SECRET=your-secret
 REDIS_URL=redis://localhost:6379
+REDIS_COMMAND_TIMEOUT_MS=1000
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
+RATE_LIMIT_ON_REDIS_ERROR=allow
 IDEMPOTENCY_KEY_TTL_SECONDS=86400
 STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
