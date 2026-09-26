@@ -1,6 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ArrayMaxSize, IsArray, IsOptional, IsString } from 'class-validator';
-import { DriftRecord, DriftType, ReconciliationRun } from './escrow-reconciliation.types';
+import {
+  DriftRecord,
+  DriftType,
+  ReconciliationError,
+  ReconciliationRun,
+} from './escrow-reconciliation.types';
 
 export class RunReconciliationDto {
   @ApiPropertyOptional({
@@ -28,6 +33,12 @@ export class DriftRecordDto implements DriftRecord {
   @ApiProperty() detectedAt: string;
 }
 
+export class ReconciliationErrorDto implements ReconciliationError {
+  @ApiProperty() contractEscrowId: string;
+  @ApiProperty() message: string;
+  @ApiProperty() occurredAt: string;
+}
+
 export class ReconciliationRunResponseDto implements ReconciliationRun {
   @ApiProperty() runId: string;
   @ApiProperty() startedAt: string;
@@ -36,4 +47,6 @@ export class ReconciliationRunResponseDto implements ReconciliationRun {
   @ApiProperty() driftCount: number;
   @ApiProperty() repairedCount: number;
   @ApiProperty({ type: [DriftRecordDto] }) drifts: DriftRecordDto[];
+  @ApiProperty() errorCount: number;
+  @ApiProperty({ type: [ReconciliationErrorDto] }) errors: ReconciliationErrorDto[];
 }

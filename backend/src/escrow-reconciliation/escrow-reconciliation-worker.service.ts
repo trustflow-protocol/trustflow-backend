@@ -1,6 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { DistributedLockService } from '../common/redis/distributed-lock.service';
 import { EscrowReconciliationService } from './escrow-reconciliation.service';
 import { DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS } from './escrow-reconciliation.types';
+
+const LOCK_KEY = 'lock:escrow-reconciliation-sweep';
 
 /**
  * Periodically re-diffs on-chain escrow state against the DB so drift from missed
@@ -13,8 +16,13 @@ import { DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS } from './escrow-reconc
 export class EscrowReconciliationWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EscrowReconciliationWorkerService.name);
   private timer?: NodeJS.Timeout;
+  private currentLockToken?: string;
+  private sweeping = false;
 
-  constructor(private readonly reconciliationService: EscrowReconciliationService) {}
+  constructor(
+    private readonly reconciliationService: EscrowReconciliationService,
+    private readonly lock: DistributedLockService,
+  ) {}
 
   onModuleInit(): void {
     const intervalMs = this.getIntervalMs();
@@ -33,13 +41,42 @@ export class EscrowReconciliationWorkerService implements OnModuleInit, OnModule
     this.logger.log(`Escrow reconciliation worker started — sweeping every ${intervalMs}ms`);
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    if (this.currentLockToken) {
+      await this.lock.release(LOCK_KEY, this.currentLockToken);
+      this.currentLockToken = undefined;
+    }
   }
 
   /** Runs a single sweep. Exposed so it can also be triggered manually (e.g. from tests or an admin endpoint). */
   async runOnce(): Promise<void> {
-    await this.reconciliationService.reconcile();
+    if (this.sweeping) {
+      this.logger.warn('Previous escrow reconciliation sweep still in flight — skipping this tick');
+      return;
+    }
+
+    this.sweeping = true;
+    let token: string | null = null;
+    try {
+      const intervalMs = this.getIntervalMs();
+      token = await this.lock.tryAcquire(LOCK_KEY, Math.ceil(Math.max(intervalMs, 1) * 1.5));
+      if (!token) {
+        this.logger.warn(
+          'Another instance holds the escrow reconciliation lock — skipping this tick',
+        );
+        return;
+      }
+
+      this.currentLockToken = token;
+      await this.reconciliationService.reconcile();
+    } finally {
+      this.sweeping = false;
+      if (token) {
+        await this.lock.release(LOCK_KEY, token);
+        if (this.currentLockToken === token) this.currentLockToken = undefined;
+      }
+    }
   }
 
   private getIntervalMs(): number {
