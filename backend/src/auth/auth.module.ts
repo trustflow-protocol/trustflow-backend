@@ -5,6 +5,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { NonceStoreService } from './nonce-store.service';
+import { RefreshTokenStoreService } from './refresh-token-store.service';
 import { config } from '../config/env.config';
 
 @Module({
@@ -17,12 +18,12 @@ import { config } from '../config/env.config';
     JwtModule.registerAsync({
       useFactory: () => ({
         secret: config.JWT_SECRET,
-        signOptions: { expiresIn: '24h' },
+        signOptions: { expiresIn: '1h' },
       }),
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, NonceStoreService],
+  providers: [AuthService, JwtStrategy, NonceStoreService, RefreshTokenStoreService],
   exports: [AuthService],
 })
 export class AuthModule {}
