@@ -51,6 +51,7 @@ function buildMocks() {
     }),
   };
 
+  return {
     escrow,
     escrowService,
     txBuilderService,

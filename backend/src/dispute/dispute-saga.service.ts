@@ -7,7 +7,9 @@ import {
   ConflictException,
   OnModuleInit,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
@@ -104,6 +106,7 @@ export class DisputeSagaService implements OnModuleInit {
     private readonly notificationService: NotificationService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly metrics: MetricsService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   onModuleInit(): void {
@@ -212,6 +215,18 @@ export class DisputeSagaService implements OnModuleInit {
       this.touch(saga);
 
       await this.createSaga(saga);
+
+      if (this.audit) {
+        await this.audit.logOperation({
+          operation: 'DISPUTE_ESCALATE',
+          user: dto.initiator,
+          entityId: sagaId,
+          entityType: 'dispute_saga',
+          beforeState: null,
+          afterState: saga,
+          metadata: { escrowId, reason: dto.reason }
+        }).catch(err => this.logger.error('Failed to write audit log', err));
+      }
 
       await this.webhookService.dispatch(SAGA_EVENTS.ESCALATED, { sagaId, escrowId });
       await this.notificationService.notifyDisputeEscalated({
@@ -481,6 +496,7 @@ export class DisputeSagaService implements OnModuleInit {
       this.recordStepStart(saga, DisputeStep.PAYOUT);
 
       try {
+        const beforeState = { ...saga };
         await this.applyPayout(saga, dto.splitPercentage);
 
         saga.payoutTxHash = `payout-tx-${sagaId}-${Date.now()}`;
@@ -491,6 +507,18 @@ export class DisputeSagaService implements OnModuleInit {
         saga.completedAt = now;
         this.touch(saga);
         await this.persistSaga(saga);
+
+        if (this.audit) {
+          await this.audit.logOperation({
+            operation: 'DISPUTE_PAYOUT',
+            user: 'admin',
+            entityId: sagaId,
+            entityType: 'dispute_saga',
+            beforeState,
+            afterState: saga,
+            metadata: { verdict: saga.verdict, splitPercentage: dto.splitPercentage }
+          }).catch(err => this.logger.error('Failed to write audit log', err));
+        }
 
         await this.webhookService.dispatch(SAGA_EVENTS.PAYOUT_EXECUTED, {
           sagaId,

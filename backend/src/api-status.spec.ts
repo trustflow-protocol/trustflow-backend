@@ -62,14 +62,14 @@ describe('Controller status codes match OpenAPI responses', () => {
   afterAll(async () => app.close());
 
   const cases = [
-    ['post', '/escrows/test-id/release', '/escrows/{id}/release', undefined, 200],
-    ['post', '/escrows/test-id/dispute', '/escrows/{id}/dispute', { reason: 'test' }, 200],
-    ['post', '/dispute/test-id/assign-jurors', '/dispute/{sagaId}/assign-jurors', {}, 200],
-    ['post', '/dispute/test-id/vote', '/dispute/{sagaId}/vote', {}, 200],
-    ['post', '/dispute/test-id/payout', '/dispute/{sagaId}/payout', {}, 200],
-    ['post', '/gigs/test-id/accept', '/gigs/{id}/accept', { responder: `G${'A'.repeat(55)}` }, 200],
-    ['post', '/gigs/test-id/cancel', '/gigs/{id}/cancel', undefined, 200],
-    ['post', '/ipfs/pins/bafkreitest/verify', '/ipfs/pins/{cid}/verify', undefined, 200],
+    ['post', '/v1/escrows/test-id/release', '/v1/escrows/{id}/release', undefined, 200],
+    ['post', '/v1/escrows/test-id/dispute', '/v1/escrows/{id}/dispute', { reason: 'test' }, 200],
+    ['post', '/v1/dispute/test-id/assign-jurors', '/v1/dispute/{sagaId}/assign-jurors', {}, 200],
+    ['post', '/v1/dispute/test-id/vote', '/v1/dispute/{sagaId}/vote', {}, 200],
+    ['post', '/v1/dispute/test-id/payout', '/v1/dispute/{sagaId}/payout', {}, 200],
+    ['post', '/v1/gigs/test-id/accept', '/v1/gigs/{id}/accept', { responder: `G${'A'.repeat(55)}` }, 200],
+    ['post', '/v1/gigs/test-id/cancel', '/v1/gigs/{id}/cancel', undefined, 200],
+    ['post', '/v1/ipfs/pins/bafkreitest/verify', '/v1/ipfs/pins/{cid}/verify', undefined, 200],
   ] as const;
 
   it.each(cases)(

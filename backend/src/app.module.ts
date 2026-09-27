@@ -26,6 +26,8 @@ import { OutboxModule } from './outbox/outbox.module';
 import { LoggingModule } from './common/logging/logging.module';
 import { CorrelationIdMiddleware } from './common/logging/correlation-id.middleware';
 
+import { AuditModule } from './audit/audit.module';
+
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -53,6 +55,7 @@ import { CorrelationIdMiddleware } from './common/logging/correlation-id.middlew
     MilestoneNotificationsModule,
     SorobanEventIndexerModule,
     OutboxModule,
+    AuditModule,
   ],
 })
 export class AppModule implements NestModule {

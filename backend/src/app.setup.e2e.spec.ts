@@ -61,7 +61,7 @@ describe('configureApp (E2E)', () => {
   describe('body size limit', () => {
     it('accepts a JSON body under the configured limit', async () => {
       await request(app.getHttpServer())
-        .post('/app-setup-test/echo')
+        .post('/v1/app-setup-test/echo')
         .send({ data: 'x'.repeat(1000) })
         .expect(201);
     });
@@ -69,7 +69,7 @@ describe('configureApp (E2E)', () => {
     it('rejects a JSON body over the configured limit with 413', async () => {
       // BODY_LIMIT_MB=1 for this file; comfortably over 1 MB once JSON-encoded.
       await request(app.getHttpServer())
-        .post('/app-setup-test/echo')
+        .post('/v1/app-setup-test/echo')
         .send({ data: 'x'.repeat(2 * 1024 * 1024) })
         .expect(413);
     });
@@ -78,7 +78,7 @@ describe('configureApp (E2E)', () => {
   describe('global exception filter response shape', () => {
     it('renders a thrown HttpException with its own status and message', async () => {
       const res = await request(app.getHttpServer())
-        .get('/app-setup-test/http-exception')
+        .get('/v1/app-setup-test/http-exception')
         .expect(404);
 
       expect(res.body).toMatchObject({
@@ -91,7 +91,7 @@ describe('configureApp (E2E)', () => {
 
     it('renders any other thrown error as a generic 500 without leaking the original message', async () => {
       const res = await request(app.getHttpServer())
-        .get('/app-setup-test/unexpected-error')
+        .get('/v1/app-setup-test/unexpected-error')
         .expect(500);
 
       expect(res.body).toMatchObject({

@@ -107,13 +107,13 @@ describe('Idempotency integration — gig-like endpoint', () => {
     const key = 'gig-idem-uuid-001';
 
     const res1 = await request(app.getHttpServer())
-      .post('/test-gigs')
+      .post('/v1/test-gigs')
       .set('Idempotency-Key', key)
       .send(gigBody)
       .expect(201);
 
     const res2 = await request(app.getHttpServer())
-      .post('/test-gigs')
+      .post('/v1/test-gigs')
       .set('Idempotency-Key', key)
       .send(gigBody)
       .expect(201);
@@ -126,13 +126,13 @@ describe('Idempotency integration — gig-like endpoint', () => {
     const key = 'gig-idem-uuid-002';
 
     await request(app.getHttpServer())
-      .post('/test-gigs')
+      .post('/v1/test-gigs')
       .set('Idempotency-Key', key)
       .send(gigBody)
       .expect(201);
 
     const res = await request(app.getHttpServer())
-      .post('/test-gigs')
+      .post('/v1/test-gigs')
       .set('Idempotency-Key', key)
       .send({ ...gigBody, title: 'DIFFERENT TITLE' })
       .expect(422);
@@ -141,9 +141,9 @@ describe('Idempotency integration — gig-like endpoint', () => {
   });
 
   it('creates separate records when no Idempotency-Key is provided', async () => {
-    const res1 = await request(app.getHttpServer()).post('/test-gigs').send(gigBody).expect(201);
+    const res1 = await request(app.getHttpServer()).post('/v1/test-gigs').send(gigBody).expect(201);
 
-    const res2 = await request(app.getHttpServer()).post('/test-gigs').send(gigBody).expect(201);
+    const res2 = await request(app.getHttpServer()).post('/v1/test-gigs').send(gigBody).expect(201);
 
     expect(res1.body.id).toBe('gig-1');
     expect(res2.body.id).toBe('gig-2');
@@ -183,13 +183,13 @@ describe('Idempotency integration — escrow-like endpoint', () => {
     const key = 'esc-idem-uuid-001';
 
     const res1 = await request(app.getHttpServer())
-      .post('/test-escrows')
+      .post('/v1/test-escrows')
       .set('Idempotency-Key', key)
       .send(escrowBody)
       .expect(201);
 
     const res2 = await request(app.getHttpServer())
-      .post('/test-escrows')
+      .post('/v1/test-escrows')
       .set('Idempotency-Key', key)
       .send(escrowBody)
       .expect(201);
@@ -202,13 +202,13 @@ describe('Idempotency integration — escrow-like endpoint', () => {
     const key = 'esc-idem-uuid-002';
 
     await request(app.getHttpServer())
-      .post('/test-escrows')
+      .post('/v1/test-escrows')
       .set('Idempotency-Key', key)
       .send(escrowBody)
       .expect(201);
 
     await request(app.getHttpServer())
-      .post('/test-escrows')
+      .post('/v1/test-escrows')
       .set('Idempotency-Key', key)
       .send({ ...escrowBody, amountXLM: '999' })
       .expect(422);
@@ -216,12 +216,12 @@ describe('Idempotency integration — escrow-like endpoint', () => {
 
   it('creates separate records when no Idempotency-Key is provided', async () => {
     const res1 = await request(app.getHttpServer())
-      .post('/test-escrows')
+      .post('/v1/test-escrows')
       .send(escrowBody)
       .expect(201);
 
     const res2 = await request(app.getHttpServer())
-      .post('/test-escrows')
+      .post('/v1/test-escrows')
       .send(escrowBody)
       .expect(201);
 
@@ -257,7 +257,7 @@ describe('Idempotency integration — cross-endpoint key namespacing', () => {
     const sharedKey = 'shared-key-across-endpoints';
 
     const gigRes = await request(app.getHttpServer())
-      .post('/test-gigs')
+      .post('/v1/test-gigs')
       .set('Idempotency-Key', sharedKey)
       .send({
         creator: 'GABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF01',
@@ -267,7 +267,7 @@ describe('Idempotency integration — cross-endpoint key namespacing', () => {
       .expect(201);
 
     const escrowRes = await request(app.getHttpServer())
-      .post('/test-escrows')
+      .post('/v1/test-escrows')
       .set('Idempotency-Key', sharedKey)
       .send({
         depositor: 'GDEP0001234567890DEP0001234567890DEP0001234567890DEP0001',
@@ -314,7 +314,7 @@ describe('Idempotency integration — concurrent duplicate requests', () => {
 
     const responses = await Promise.all(
       Array.from({ length: concurrency }, () =>
-        request(app.getHttpServer()).post('/test-slow').set('Idempotency-Key', key).send(body),
+        request(app.getHttpServer()).post('/v1/test-slow').set('Idempotency-Key', key).send(body),
       ),
     );
 
@@ -329,7 +329,7 @@ describe('Idempotency integration — concurrent duplicate requests', () => {
     // Once the winner finishes, a later retry replays the cached result
     // instead of creating a second resource.
     const retry = await request(app.getHttpServer())
-      .post('/test-slow')
+      .post('/v1/test-slow')
       .set('Idempotency-Key', key)
       .send(body)
       .expect(201);

@@ -71,6 +71,8 @@ const ESCROWS_BY_CONTRACT_PREFIX = 'escrows:by-contract:';
 /** Emitted (see `GET /metrics`) every time a call falls back to the in-memory store. */
 export const ESCROW_PERSISTENCE_FALLBACK_METRIC = 'escrow_persistence_fallback_total';
 
+import { AuditService } from '../audit/audit.service';
+
 /**
  * Escrow store. Backed by Redis so escrow state survives restarts and is shared across
  * instances behind a load balancer — see PERSISTENT_STORAGE_SPIKE.md §2 and its "Follow-up
@@ -104,6 +106,7 @@ export class EscrowService implements OnModuleInit {
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly metrics: MetricsService,
     @Optional() private readonly outbox?: OutboxService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -338,15 +341,29 @@ export class EscrowService implements OnModuleInit {
     return escrow;
   }
 
-  async release(id: string): Promise<Escrow> {
+  async release(id: string, user: string = 'system'): Promise<Escrow> {
     const escrow = await this.findById(id);
     if (!escrow) throw new NotFoundException('Escrow not found');
     if (escrow.status === 'released')
       throw new ConflictException('Escrow is already released');
     if (escrow.status !== 'disputed')
       throw new BadRequestException('Only disputed escrows can be released');
+      
+    const beforeState = { ...escrow };
     escrow.status = 'released';
     await this.persist(escrow, ESCROW_EVENTS.ESCROW_RELEASED);
+    
+    if (this.audit) {
+      await this.audit.logOperation({
+        operation: 'ESCROW_RELEASE',
+        user,
+        entityId: id,
+        entityType: 'escrow',
+        beforeState,
+        afterState: escrow
+      }).catch(err => this.logger.error('Failed to write audit log', err));
+    }
+    
     return escrow;
   }
 
@@ -375,17 +392,30 @@ export class EscrowService implements OnModuleInit {
     return escrow;
   }
 
-  async raiseDispute(id: string, reason?: string): Promise<Escrow> {
+  async raiseDispute(id: string, reason?: string, user: string = 'system'): Promise<Escrow> {
     const escrow = await this.findById(id);
     if (!escrow) throw new NotFoundException('Escrow not found');
     if (escrow.status === 'released') throw new BadRequestException('Cannot dispute a released escrow');
     if (escrow.status === 'disputed') throw new ConflictException('Escrow is already disputed');
 
+    const beforeState = { ...escrow };
     escrow.status = 'disputed';
     escrow.disputeReason = reason;
     escrow.disputedAt = new Date().toISOString();
 
     await this.persist(escrow, ESCROW_EVENTS.ESCROW_DISPUTED);
+    
+    if (this.audit) {
+      await this.audit.logOperation({
+        operation: 'ESCROW_DISPUTE',
+        user,
+        entityId: id,
+        entityType: 'escrow',
+        beforeState,
+        afterState: escrow
+      }).catch(err => this.logger.error('Failed to write audit log', err));
+    }
+    
     return escrow;
   }
 

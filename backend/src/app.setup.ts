@@ -1,4 +1,4 @@
-import { INestApplication, Logger, ValidationPipe } from '@nestjs/common';
+import { INestApplication, Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder, OpenAPIObject } from '@nestjs/swagger';
 import * as express from 'express';
 import helmet from 'helmet';
@@ -79,7 +79,7 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
   const nodeEnv = config.NODE_ENV;
 
   // Validate CORS configuration in production
-  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
+  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin.includes('*'))) {
     logger.error(
       'CORS_ORIGIN must be explicitly set in production (cannot use wildcard with credentials: true)',
     );
@@ -87,15 +87,14 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
   }
 
   // Warn if using wildcard in any environment (but only fail in production)
-  if (corsOrigin === '*' && nodeEnv === 'production') {
-    logger.error(
+  if (corsOrigin?.includes('*') && nodeEnv !== 'production') {
+    logger.warn(
       'Using wildcard CORS origin with credentials enabled is a security risk. Set CORS_ORIGIN to a comma-separated list of allowed origins.',
     );
-    process.exit(1);
   }
 
   app.enableCors({
-    origin: corsOrigin || '*',
+    origin: corsOrigin?.includes('*') ? '*' : (corsOrigin || '*'),
     credentials: true,
   });
 
@@ -107,6 +106,12 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
       forbidNonWhitelisted: true,
     }),
   );
+
+  // Enable API Versioning
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: '1',
+  });
 
   const document = buildOpenApiDocument(app);
   setupSwaggerUi(app, document);

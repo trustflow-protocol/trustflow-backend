@@ -22,7 +22,19 @@ export interface ClientEventPayload {
   data: unknown;
 }
 
-@WebSocketGateway({ cors: { origin: process.env.CORS_ORIGIN || '*' } })
+const getCorsOrigin = () => {
+  const origin = process.env.CORS_ORIGIN;
+  if (!origin || !origin.trim()) {
+    return process.env.NODE_ENV === 'production' ? [] : '*';
+  }
+  const parsed = origin.split(',').map(s => s.trim()).filter(Boolean);
+  if (parsed.includes('*')) {
+    return process.env.NODE_ENV === 'production' ? [] : '*';
+  }
+  return parsed;
+};
+
+@WebSocketGateway({ cors: { origin: getCorsOrigin() } })
 export class MilestoneNotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MilestoneNotificationsGateway.name);
   private subscriber: Redis | null = null;

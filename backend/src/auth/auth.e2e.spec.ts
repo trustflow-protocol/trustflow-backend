@@ -50,7 +50,7 @@ describe('Auth (E2E)', () => {
   describe('GET /auth/challenge', () => {
     it('returns a challenge string for a valid address', async () => {
       const res = await request(app.getHttpServer())
-        .get('/auth/challenge')
+        .get('/v1/auth/challenge')
         .query({ address: TEST_ADDRESS })
         .expect(200);
 
@@ -60,7 +60,7 @@ describe('Auth (E2E)', () => {
     });
 
     it('returns 400 or error when address is missing', async () => {
-      const res = await request(app.getHttpServer()).get('/auth/challenge').expect(500);
+      const res = await request(app.getHttpServer()).get('/v1/auth/challenge').expect(500);
 
       // The controller throws a raw Error('address required') which NestJS turns into 500
       expect(res.status).toBe(500);
@@ -71,7 +71,7 @@ describe('Auth (E2E)', () => {
     it('returns a JWT token for a valid signature', async () => {
       // First get a challenge
       const challengeRes = await request(app.getHttpServer())
-        .get('/auth/challenge')
+        .get('/v1/auth/challenge')
         .query({ address: TEST_ADDRESS })
         .expect(200);
 
@@ -82,7 +82,7 @@ describe('Auth (E2E)', () => {
       jest.spyOn(authService, 'generateToken').mockReturnValueOnce('mock-e2e-jwt-token');
 
       const verifyRes = await request(app.getHttpServer())
-        .post('/auth/verify')
+        .post('/v1/auth/verify')
         .send({ address: TEST_ADDRESS, signature: 'SGVsbG8gV29ybGQh' })
         .expect(200);
 
@@ -95,7 +95,7 @@ describe('Auth (E2E)', () => {
     it('returns 500 for an invalid signature', async () => {
       // Get a challenge first
       await request(app.getHttpServer())
-        .get('/auth/challenge')
+        .get('/v1/auth/challenge')
         .query({ address: TEST_ADDRESS })
         .expect(200);
 
@@ -103,7 +103,7 @@ describe('Auth (E2E)', () => {
       jest.spyOn(authService, 'verifySignature').mockResolvedValueOnce(false);
 
       const res = await request(app.getHttpServer())
-        .post('/auth/verify')
+        .post('/v1/auth/verify')
         .send({ address: TEST_ADDRESS, signature: 'invalid-sig' })
         .expect(500);
 
@@ -112,7 +112,7 @@ describe('Auth (E2E)', () => {
 
     it('rejects request with missing address field', async () => {
       const res = await request(app.getHttpServer())
-        .post('/auth/verify')
+        .post('/v1/auth/verify')
         .send({ signature: 'SGVsbG8gV29ybGQh' })
         .expect(400);
 
@@ -121,7 +121,7 @@ describe('Auth (E2E)', () => {
 
     it('rejects request with missing signature field', async () => {
       const res = await request(app.getHttpServer())
-        .post('/auth/verify')
+        .post('/v1/auth/verify')
         .send({ address: TEST_ADDRESS })
         .expect(400);
 
@@ -133,7 +133,7 @@ describe('Auth (E2E)', () => {
     it('challenge → verify → token works end-to-end', async () => {
       // Step 1: Get challenge
       const challengeRes = await request(app.getHttpServer())
-        .get('/auth/challenge')
+        .get('/v1/auth/challenge')
         .query({ address: TEST_ADDRESS })
         .expect(200);
 
@@ -145,7 +145,7 @@ describe('Auth (E2E)', () => {
       jest.spyOn(authService, 'generateToken').mockReturnValueOnce('flow-jwt-token');
 
       const verifyRes = await request(app.getHttpServer())
-        .post('/auth/verify')
+        .post('/v1/auth/verify')
         .send({ address: TEST_ADDRESS, signature: 'dGVzdC1zaWduYXR1cmU=' })
         .expect(200);
 
