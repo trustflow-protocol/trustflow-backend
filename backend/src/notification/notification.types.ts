@@ -14,6 +14,7 @@ export interface NotificationPayload {
   message: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
+  dedupKey?: string;
 }
 
 export interface NotificationChannel {
