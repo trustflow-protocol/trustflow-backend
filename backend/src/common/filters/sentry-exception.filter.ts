@@ -5,8 +5,9 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
-  Logger,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
+import { redactIp, redactUrl } from '../logging/redaction';
 import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
 import { SentryService } from '../../sentry/sentry.service';
@@ -31,7 +32,7 @@ function extractKnownHttpStatus(error: unknown): number | undefined {
 @Injectable()
 @Catch()
 export class SentryExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(SentryExceptionFilter.name);
+  private readonly logger = new SanitizedLogger(SentryExceptionFilter.name);
 
   constructor(
     private readonly sentryService: SentryService,
@@ -80,19 +81,23 @@ export class SentryExceptionFilter implements ExceptionFilter {
     // Send 5xx errors and unexpected/unrecognized exceptions to Sentry — matches an
     // HttpException's own client-vs-server split for the errors above with a known 4xx status.
     const shouldCapture = status >= 500;
+    // `request.url` is the path *and query string*, which is where tokens routinely arrive
+    // (`?token=`, `?api_key=`). Both the Sentry tag and the log line get the query string
+    // removed. The response body keeps the full path for the client's own benefit.
+    const safeUrl = redactUrl(request.url ?? '');
     if (shouldCapture) {
       Sentry.withScope(scope => {
-        scope.setTag('url', request.url);
+        scope.setTag('url', safeUrl);
         scope.setTag('method', request.method);
         if (correlationId) {
           scope.setTag('correlationId', correlationId);
         }
         scope.setExtra('statusCode', status);
-        scope.setUser({ ip_address: request.ip });
+        scope.setUser({ ip_address: redactIp(request.ip) });
         this.sentryService.captureException(exception, 'SentryExceptionFilter');
       });
       this.logger.error(
-        `[${request.method}] ${request.url} correlationId=${correlationId ?? 'n/a'} — ${status}`,
+        `[${request.method}] ${safeUrl} correlationId=${correlationId ?? 'n/a'} — ${status}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     }

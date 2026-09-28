@@ -1,7 +1,9 @@
-import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { SanitizedLogger } from './sanitized-logger';
 import { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import { CorrelationIdStore } from './correlation-id.store';
+import { redactIp, redactUrl, sanitiseCorrelationId } from './redaction';
 
 /** Header name clients can send to propagate an upstream correlation ID. */
 export const CORRELATION_ID_HEADER = 'x-request-id';
@@ -11,17 +13,26 @@ export const CORRELATION_ID_HEADER = 'x-request-id';
  * HTTP request, attaches it to `request.correlationId`, writes it back in the response
  * header, and runs the remainder of the request inside the `CorrelationIdStore` async context
  * so every log line emitted while handling the request can include the same ID.
+ *
+ * The inbound header is entirely client-controlled, so it is validated before use. An
+ * unvalidated value was previously written straight into a log line, which allowed log forging
+ * via embedded newlines and unbounded log inflation via a multi-kilobyte ID, and was also
+ * echoed into a response header. Anything that is not a short, printable, single-line token
+ * is discarded in favour of a fresh UUID.
+ *
+ * The logged URL has its query string removed and the client IP is reduced to a network
+ * prefix, because both routinely carry credentials or personal data.
  */
 @Injectable()
 export class CorrelationIdMiddleware implements NestMiddleware {
-  private readonly logger = new Logger(CorrelationIdMiddleware.name);
+  private readonly logger = new SanitizedLogger(CorrelationIdMiddleware.name);
 
   constructor(private readonly store: CorrelationIdStore) {}
 
   use(req: Request & { correlationId?: string }, res: Response, next: NextFunction): void {
-    // Honour an upstream ID if present; otherwise generate a new one.
-    const correlationId =
-      (req.headers[CORRELATION_ID_HEADER] as string | undefined) || randomUUID();
+    // Honour a well-formed upstream ID if present; otherwise generate a new one.
+    const inbound = req.headers[CORRELATION_ID_HEADER] as string | undefined;
+    const correlationId = sanitiseCorrelationId(inbound) ?? randomUUID();
 
     req.correlationId = correlationId;
 
@@ -33,8 +44,8 @@ export class CorrelationIdMiddleware implements NestMiddleware {
         event: 'request_start',
         correlationId,
         method: req.method,
-        url: req.originalUrl,
-        ip: req.ip,
+        url: redactUrl(req.originalUrl ?? req.url ?? ''),
+        ip: redactIp(req.ip),
       }),
     );
 

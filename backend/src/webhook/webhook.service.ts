@@ -1,4 +1,6 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
+import { redactUrl } from '../common/logging/redaction';
 import * as https from 'https';
 import * as http from 'http';
 import * as crypto from 'crypto';
@@ -171,7 +173,7 @@ export async function validateWebhookUrl(urlString: string): Promise<void> {
 
 @Injectable()
 export class WebhookService {
-  private readonly logger = new Logger(WebhookService.name);
+  private readonly logger = new SanitizedLogger(WebhookService.name);
   private endpoints = new Map<string, WebhookEndpointConfig>();
 
   constructor(
@@ -200,7 +202,9 @@ export class WebhookService {
         validEndpoints.push(endpoint);
       } catch (e) {
         this.logger.warn(
-          `Skipping webhook dispatch to blocked/private URL: ${endpoint.url} - ${(e as Error).message}`,
+          `Skipping webhook dispatch to blocked/private URL: ${redactUrl(
+            endpoint.url,
+          )} - ${(e as Error).message}`,
         );
         continue;
       }

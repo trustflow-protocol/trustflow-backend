@@ -1,4 +1,5 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import * as crypto from 'crypto';
@@ -8,7 +9,7 @@ const ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
 
 @Injectable()
 export class RefreshTokenStoreService {
-  private readonly logger = new Logger(RefreshTokenStoreService.name);
+  private readonly logger = new SanitizedLogger(RefreshTokenStoreService.name);
   private readonly inMemoryTokens = new Map<string, { issuedAt: number; familyId: string }>();
   private readonly inMemoryFamilies = new Map<string, Set<string>>();
 
@@ -26,8 +27,14 @@ export class RefreshTokenStoreService {
 
     if (this.redis) {
       try {
-        await this.redis.multi()
-          .set(key, JSON.stringify({ address, familyId, issuedAt: Date.now() }), 'EX', REFRESH_TOKEN_TTL_SECONDS)
+        await this.redis
+          .multi()
+          .set(
+            key,
+            JSON.stringify({ address, familyId, issuedAt: Date.now() }),
+            'EX',
+            REFRESH_TOKEN_TTL_SECONDS,
+          )
           .sadd(familyKey, token)
           .expire(familyKey, REFRESH_TOKEN_TTL_SECONDS)
           .exec();
@@ -63,7 +70,9 @@ export class RefreshTokenStoreService {
 
         const parsed = JSON.parse(data);
         if (parsed.address !== address) {
-          this.logger.warn(`Address mismatch for token: expected ${this.maskAddress(address)}, got ${this.maskAddress(parsed.address)}`);
+          this.logger.warn(
+            `Address mismatch for token: expected ${this.maskAddress(address)}, got ${this.maskAddress(parsed.address)}`,
+          );
           return { valid: false };
         }
 
@@ -71,8 +80,14 @@ export class RefreshTokenStoreService {
         const newKey = this.tokenKey(newToken);
         const familyKey = this.familyKey(address, parsed.familyId);
 
-        await this.redis.multi()
-          .set(newKey, JSON.stringify({ address, familyId: parsed.familyId, issuedAt: Date.now() }), 'EX', REFRESH_TOKEN_TTL_SECONDS)
+        await this.redis
+          .multi()
+          .set(
+            newKey,
+            JSON.stringify({ address, familyId: parsed.familyId, issuedAt: Date.now() }),
+            'EX',
+            REFRESH_TOKEN_TTL_SECONDS,
+          )
           .sadd(familyKey, newToken)
           .exec();
 
@@ -97,7 +112,8 @@ export class RefreshTokenStoreService {
     const family = this.inMemoryFamilies.get(familyKey);
 
     if (!family) {
-      this.logger.error(`Family not found for token: ${familyKey}`);
+      // The key embeds the raw Stellar address; mask it rather than logging the composed key.
+      this.logger.error(`Refresh-token family not found for address ${this.maskAddress(address)}`);
       return { valid: false };
     }
 
