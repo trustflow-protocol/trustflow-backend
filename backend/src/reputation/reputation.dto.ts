@@ -6,34 +6,34 @@ import {
 } from './reputation.types';
 
 export class ReputationEventLogEntryDto implements ReputationEventLogEntry {
-  @ApiProperty({ enum: ReputationEventType }) type: ReputationEventType;
-  @ApiProperty() counterparty: string;
+  @ApiProperty({ enum: ReputationEventType }) type!: ReputationEventType;
+  @ApiProperty() counterparty!: string;
   @ApiProperty({ description: 'Signed contribution to the score from this single event' })
-  contribution: number;
-  @ApiProperty() occurredAt: string;
+  contribution!: number;
+  @ApiProperty() occurredAt!: string;
 }
 
 export class ReputationScoreResponseDto implements ReputationScoreView {
   @ApiProperty({ example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' })
-  address: string;
+  address!: string;
 
   @ApiProperty({
     description:
       'Time-decayed, Sybil-dampened trust score derived from escrow completion and dispute history',
     example: 42.5,
   })
-  score: number;
+  score!: number;
 
   @ApiProperty({ description: 'Total escrow/dispute events that have contributed to this score' })
-  eventCount: number;
+  eventCount!: number;
 
   @ApiProperty({
     description: 'Number of distinct counterparties this address has interacted with',
   })
-  distinctCounterparties: number;
+  distinctCounterparties!: number;
 
   @ApiProperty({ type: [ReputationEventLogEntryDto] })
-  recentEvents: ReputationEventLogEntryDto[];
+  recentEvents!: ReputationEventLogEntryDto[];
 
-  @ApiProperty() lastUpdatedAt: string;
+  @ApiProperty() lastUpdatedAt!: string;
 }

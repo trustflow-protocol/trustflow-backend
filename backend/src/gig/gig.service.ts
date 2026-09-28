@@ -162,12 +162,10 @@ export class GigService implements OnModuleInit {
       gigs = gigs.filter(g => g.status === options.status);
     }
     if (options?.minBudgetXLM !== undefined) {
-      const min = parseFloat(options.minBudgetXLM);
-      gigs = gigs.filter(g => parseFloat(g.budgetXLM) >= min);
+      gigs = gigs.filter(g => amountGreaterThanOrEqual(g.budgetXLM, options.minBudgetXLM));
     }
     if (options?.maxBudgetXLM !== undefined) {
-      const max = parseFloat(options.maxBudgetXLM);
-      gigs = gigs.filter(g => parseFloat(g.budgetXLM) <= max);
+      gigs = gigs.filter(g => amountLessThanOrEqual(g.budgetXLM, options.maxBudgetXLM));
     }
 
     const total = gigs.length;
@@ -220,12 +218,10 @@ export class GigService implements OnModuleInit {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     if (query.minBudgetXLM !== undefined) {
-      const min = parseFloat(query.minBudgetXLM);
-      filtered = filtered.filter(g => parseFloat(g.budgetXLM) >= min);
+      filtered = filtered.filter(g => amountGreaterThanOrEqual(g.budgetXLM, query.minBudgetXLM));
     }
     if (query.maxBudgetXLM !== undefined) {
-      const max = parseFloat(query.maxBudgetXLM);
-      filtered = filtered.filter(g => parseFloat(g.budgetXLM) <= max);
+      filtered = filtered.filter(g => amountLessThanOrEqual(g.budgetXLM, query.maxBudgetXLM));
     }
 
     const total = filtered.length;

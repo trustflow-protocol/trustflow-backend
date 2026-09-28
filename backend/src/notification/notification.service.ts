@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { NotificationType, NotificationPayload, NotificationChannel } from './notification.types';
+import { NotificationDeduplicationService } from './notification-deduplication.service';
 
 /**
  * Dispatches dispute-resolution notifications to the right parties via pluggable channels.
@@ -7,11 +8,17 @@ import { NotificationType, NotificationPayload, NotificationChannel } from './no
  * Channels (email, in-app, push) are registered at startup — the service fans out each
  * notification to every registered channel. Adding a new delivery mechanism means writing
  * a small adapter that implements NotificationChannel and registering it; nothing else changes.
+ *
+ * Notifications are deduplicated by (type, disputeId, recipientAddress) — duplicate notifications
+ * within 24 hours are suppressed. Dedup keys are claimed atomically before fanning out, and
+ * released on complete failure (if all channels fail) so retries can still deliver.
  */
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
   private readonly channels: NotificationChannel[] = [];
+
+  constructor(private readonly deduplicationService: NotificationDeduplicationService) {}
 
   registerChannel(channel: NotificationChannel): void {
     this.channels.push(channel);
@@ -26,7 +33,7 @@ export class NotificationService {
   }): Promise<void> {
     const message = `A dispute has been raised on escrow ${data.escrowId}. Reason: ${data.reason}`;
     await Promise.allSettled([
-      this.sendToAddress(data.depositor, {
+      this.sendToAddress({
         type: NotificationType.DISPUTE_ESCALATED,
         recipientAddress: data.depositor,
         disputeId: data.disputeId,
@@ -35,7 +42,7 @@ export class NotificationService {
         metadata: { reason: data.reason, counterpart: data.beneficiary },
         createdAt: new Date().toISOString(),
       }),
-      this.sendToAddress(data.beneficiary, {
+      this.sendToAddress({
         type: NotificationType.DISPUTE_ESCALATED,
         recipientAddress: data.beneficiary,
         disputeId: data.disputeId,
@@ -55,7 +62,7 @@ export class NotificationService {
     const message = `You have been assigned as a juror for dispute ${data.disputeId} (escrow ${data.escrowId}). Please review and cast your vote.`;
     await Promise.allSettled(
       data.jurors.map(juror =>
-        this.sendToAddress(juror, {
+        this.sendToAddress({
           type: NotificationType.JURORS_ASSIGNED,
           recipientAddress: juror,
           disputeId: data.disputeId,
@@ -85,7 +92,7 @@ export class NotificationService {
     }`;
 
     await Promise.allSettled([
-      this.sendToAddress(data.depositor, {
+      this.sendToAddress({
         type: NotificationType.DISPUTE_VERDICT_REACHED,
         recipientAddress: data.depositor,
         disputeId: data.disputeId,
@@ -94,7 +101,7 @@ export class NotificationService {
         metadata: { verdict: data.verdict },
         createdAt: new Date().toISOString(),
       }),
-      this.sendToAddress(data.beneficiary, {
+      this.sendToAddress({
         type: NotificationType.DISPUTE_VERDICT_REACHED,
         recipientAddress: data.beneficiary,
         disputeId: data.disputeId,
@@ -115,7 +122,7 @@ export class NotificationService {
   }): Promise<void> {
     const message = `Payout for dispute ${data.disputeId} has been executed (${data.verdict}).`;
     await Promise.allSettled([
-      this.sendToAddress(data.depositor, {
+      this.sendToAddress({
         type: NotificationType.DISPUTE_PAYOUT_EXECUTED,
         recipientAddress: data.depositor,
         disputeId: data.disputeId,
@@ -124,7 +131,7 @@ export class NotificationService {
         metadata: { verdict: data.verdict },
         createdAt: new Date().toISOString(),
       }),
-      this.sendToAddress(data.beneficiary, {
+      this.sendToAddress({
         type: NotificationType.DISPUTE_PAYOUT_EXECUTED,
         recipientAddress: data.beneficiary,
         disputeId: data.disputeId,
@@ -136,23 +143,49 @@ export class NotificationService {
     ]);
   }
 
-  private async sendToAddress(address: string, payload: NotificationPayload): Promise<void> {
-    if (this.channels.length === 0) {
-      this.logger.warn(
-        `No notification channels registered — dropping notification for ${this.maskAddress(address)}`,
+  private async sendToAddress(payload: NotificationPayload): Promise<void> {
+    const dedupKey = this.deduplicationService.generateDedupKey(
+      payload.type,
+      payload.disputeId,
+      payload.recipientAddress,
+    );
+
+    const claimed = await this.deduplicationService.claimKey(dedupKey);
+    if (!claimed) {
+      this.logger.debug(
+        `Notification deduplicated for ${this.maskAddress(payload.recipientAddress)} (key: ${dedupKey.slice(0, 8)})`,
       );
       return;
     }
 
-    await Promise.allSettled(
+    payload.dedupKey = dedupKey;
+
+    if (this.channels.length === 0) {
+      this.logger.warn(
+        `No notification channels registered — dropping notification for ${this.maskAddress(payload.recipientAddress)}`,
+      );
+      await this.deduplicationService.releaseKey(dedupKey);
+      return;
+    }
+
+    const results = await Promise.allSettled(
       this.channels.map(channel =>
         channel.send(payload).catch(err => {
           this.logger.error(
-            `Channel failed to notify ${this.maskAddress(address)}: ${err.message}`,
+            `Channel failed to notify ${this.maskAddress(payload.recipientAddress)}: ${err.message}`,
           );
+          throw err;
         }),
       ),
     );
+
+    const allFailed = results.every(r => r.status === 'rejected');
+    if (allFailed) {
+      this.logger.warn(
+        `All channels failed for ${this.maskAddress(payload.recipientAddress)}, releasing dedup key for retry`,
+      );
+      await this.deduplicationService.releaseKey(dedupKey);
+    }
   }
 
   private maskAddress(address: string): string {

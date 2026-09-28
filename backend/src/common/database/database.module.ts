@@ -12,6 +12,8 @@ const DEFAULT_POOL_MAX = 10;
 const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_PORT = 5432;
+const DEFAULT_RETRY_ATTEMPTS = 5;
+const DEFAULT_RETRY_BACKOFF_BASE_MS = 1000;
 
 function positiveIntOr(raw: string | undefined, fallback: number): number {
   const value = Number(raw);
@@ -22,6 +24,38 @@ function positiveIntOr(raw: string | undefined, fallback: number): number {
 function readPem(value: string | undefined): string | undefined {
   if (!value || value.trim() === '') return undefined;
   return value.includes('-----BEGIN') ? value : readFileSync(value, 'utf8');
+}
+
+/** Sleep for the given number of milliseconds. */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Retries a function with exponential backoff. */
+async function retryWithExponentialBackoff<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number,
+  baseDelayMs: number,
+  logger: Pick<Logger, 'log' | 'warn'>,
+): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt === maxAttempts) break;
+
+      const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+      logger.warn(
+        `Database connection attempt ${attempt}/${maxAttempts} failed: ${lastError.message}. ` +
+          `Retrying in ${delayMs}ms...`,
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError || new Error('Database connection failed after all retries');
 }
 
 /**
@@ -122,12 +156,32 @@ export function buildPoolConfig(env?: NodeJS.ProcessEnv): PoolConfig | null {
   providers: [
     {
       provide: PG_POOL,
-      useFactory: () => {
+      useFactory: async () => {
         const config = buildPoolConfig();
         if (!config) return null;
 
-        const pool = new Pool(config);
         const logger = new Logger('DatabaseModule');
+        const maxRetries = positiveIntOr(process.env.DB_RETRY_ATTEMPTS, DEFAULT_RETRY_ATTEMPTS);
+        const backoffBase = positiveIntOr(
+          process.env.DB_RETRY_BACKOFF_MS,
+          DEFAULT_RETRY_BACKOFF_BASE_MS,
+        );
+
+        const pool = await retryWithExponentialBackoff(
+          async () => {
+            const newPool = new Pool(config);
+            // Test the connection to ensure it works
+            const client = await newPool.connect();
+            client.release();
+            return newPool;
+          },
+          maxRetries,
+          backoffBase,
+          logger,
+        );
+
+        logger.log('✓ Database connection established successfully');
+
         // A pool-level client can emit 'error' while idle (e.g. the server restarts) —
         // without this listener, that would crash the process via an unhandled 'error' event.
         pool.on('error', error => {

@@ -67,7 +67,7 @@ describe('UserProfile (E2E) — POST /profiles auth', () => {
 
   it('rejects an unauthenticated request', async () => {
     const res = await request(app.getHttpServer())
-      .post('/profiles')
+      .post('/v1/profiles')
       .send(payload(OWNER_ADDRESS))
       .expect(401);
 
@@ -78,7 +78,7 @@ describe('UserProfile (E2E) — POST /profiles auth', () => {
     const token = authService.generateToken(OWNER_ADDRESS);
 
     const res = await request(app.getHttpServer())
-      .post('/profiles')
+      .post('/v1/profiles')
       .set('Authorization', `Bearer ${token}`)
       .send(payload(OTHER_ADDRESS))
       .expect(403);
@@ -90,7 +90,7 @@ describe('UserProfile (E2E) — POST /profiles auth', () => {
     const token = authService.generateToken(OWNER_ADDRESS);
 
     const res = await request(app.getHttpServer())
-      .post('/profiles')
+      .post('/v1/profiles')
       .set('Authorization', `Bearer ${token}`)
       .send(payload(OWNER_ADDRESS))
       .expect(201);
@@ -106,14 +106,14 @@ describe('UserProfile (E2E) — POST /profiles auth', () => {
     // place, so the real owner's own authenticated attempt succeeds.
     const attackerToken = authService.generateToken(OWNER_ADDRESS);
     await request(app.getHttpServer())
-      .post('/profiles')
+      .post('/v1/profiles')
       .set('Authorization', `Bearer ${attackerToken}`)
       .send(payload(OTHER_ADDRESS))
       .expect(403);
 
     const realOwnerToken = authService.generateToken(OTHER_ADDRESS);
     const res = await request(app.getHttpServer())
-      .post('/profiles')
+      .post('/v1/profiles')
       .set('Authorization', `Bearer ${realOwnerToken}`)
       .send(payload(OTHER_ADDRESS))
       .expect(201);
@@ -152,7 +152,7 @@ describe('UserProfile (E2E) — email privacy', () => {
     authService = moduleFixture.get<AuthService>(AuthService);
 
     const created = await request(app.getHttpServer())
-      .post('/profiles')
+      .post('/v1/profiles')
       .set('Authorization', `Bearer ${authService.generateToken(OWNER_ADDRESS)}`)
       .send({
         walletAddress: OWNER_ADDRESS,
@@ -172,7 +172,7 @@ describe('UserProfile (E2E) — email privacy', () => {
 
   it('returns the email to the owner when they create their profile', async () => {
     const res = await request(app.getHttpServer())
-      .post('/profiles')
+      .post('/v1/profiles')
       .set('Authorization', `Bearer ${authService.generateToken(OTHER_ADDRESS)}`)
       .send({
         walletAddress: OTHER_ADDRESS,
@@ -186,7 +186,7 @@ describe('UserProfile (E2E) — email privacy', () => {
   });
 
   it('omits the email from the unauthenticated list', async () => {
-    const res = await request(app.getHttpServer()).get('/profiles').expect(200);
+    const res = await request(app.getHttpServer()).get('/v1/profiles').expect(200);
 
     expect(res.body.data.length).toBeGreaterThan(0);
     expect(JSON.stringify(res.body)).not.toContain('@example.com');
@@ -195,7 +195,7 @@ describe('UserProfile (E2E) — email privacy', () => {
 
   it('omits the email from search results', async () => {
     const res = await request(app.getHttpServer())
-      .get('/profiles/search')
+      .get('/v1/profiles/search')
       .query({ q: 'Privacy Probe' })
       .expect(200);
 
@@ -231,7 +231,7 @@ describe('UserProfile (E2E) — email privacy', () => {
 
   it('lets the owner read their own email through GET /profiles/me', async () => {
     const res = await request(app.getHttpServer())
-      .get('/profiles/me')
+      .get('/v1/profiles/me')
       .set('Authorization', ownerToken())
       .expect(200);
 
@@ -240,13 +240,13 @@ describe('UserProfile (E2E) — email privacy', () => {
   });
 
   it('requires authentication for GET /profiles/me', async () => {
-    await request(app.getHttpServer()).get('/profiles/me').expect(401);
+    await request(app.getHttpServer()).get('/v1/profiles/me').expect(401);
   });
 
   it('answers 404 on GET /profiles/me for a wallet without a profile', async () => {
     const stranger = 'G' + 'E'.repeat(55);
     await request(app.getHttpServer())
-      .get('/profiles/me')
+      .get('/v1/profiles/me')
       .set('Authorization', `Bearer ${authService.generateToken(stranger)}`)
       .expect(404);
   });

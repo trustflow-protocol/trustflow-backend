@@ -13,6 +13,15 @@ end
 return 0
 `;
 
+// Compare-and-extend: only renew a lock if still held by the token.
+// Returns 1 if renewed, 0 if lost or token mismatch.
+const RENEW_LUA = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+`;
+
 /**
  * Redis-backed distributed lock (`SET key token NX PX ttl`) used so that
  * only one backend instance runs a given background sweep tick.
@@ -52,6 +61,27 @@ export class DistributedLockService {
     } catch (error) {
       this.logger.warn(
         `Failed to release lock "${key}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Renews the lock on `key` if still held by `token`, extending its TTL.
+   * Returns true if renewed, false if lock is lost (held by another token or expired).
+   * Throws if Redis is unavailable or there's a command error.
+   */
+  async renewIfOwned(key: string, token: string, ttlMs: number): Promise<boolean> {
+    if (!this.redis) {
+      // No Redis: always succeed (single-instance deployments don't lose locks)
+      return true;
+    }
+
+    try {
+      const result = await this.redis.eval(RENEW_LUA, 1, key, token, ttlMs);
+      return result === 1;
+    } catch (error) {
+      throw new Error(
+        `Failed to renew lock "${key}": ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

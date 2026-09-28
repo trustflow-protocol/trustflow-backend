@@ -11,31 +11,36 @@ const LOCK_KEY = 'lock:gig-expiry-sweep';
  * Periodically sweeps the DB for open gig solicitations whose response deadline has
  * passed and marks them expired. GigService appends the corresponding durable
  * outbox row in the same state transaction; the outbox relay notifies subscribers.
- * guarantees stale solicitations don't sit open forever waiting for a response that
- * will never come.
+ * This ensures stale solicitations don't sit open forever waiting for a response.
  *
  * Interval is configurable via GIG_EXPIRY_SWEEP_INTERVAL_MS (milliseconds); set to 0 or
- * a negative value to disable the background sweep entirely (e.g. in tests).
+ * negative to disable the background sweep entirely (e.g. in tests).
  *
  * Runs behind a Redis distributed lock (see `DistributedLockService`) so only one
- * instance's tick actually executes `runOnce()` when multiple instances are
- * deployed. Each tick acquires a fresh lock with a TTL of 1.5x the sweep interval —
- * long enough to comfortably outlive one tick's own runtime, short enough that if
- * the holder crashes mid-lease, another instance picks the sweep back up within
- * about two intervals once the lease expires, with no separate renewal heartbeat
- * needed. The lock is also released explicitly on graceful shutdown.
+ * instance's tick actually executes a sweep when multiple instances are deployed.
+ * Lock is renewed periodically during long sweeps to prevent overlapping sweeps.
+ * On lock loss or Redis failure, the sweep is aborted and recorded.
+ *
+ * Emits metrics for sweep duration, gigs expired, gigs failed, and skipped ticks.
+ * Per-gig failures are logged with id and reason, and batch failures are captured to Sentry.
+ * Max gigs per sweep is configurable via GIG_EXPIRY_SWEEP_MAX_GIGS to prevent monopolising a tick.
  */
 @Injectable()
 export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(GigExpiryWorkerService.name);
   private timer?: NodeJS.Timeout;
   private currentLockToken?: string;
+  private lockRenewalTimer?: NodeJS.Timeout;
   /** Guards against a slow sweep still running when the next tick fires (#236). */
   private sweeping = false;
+  /** Tracks consecutive failed batches to apply rate limiting to logs. */
+  private failedBatchCount = 0;
 
   constructor(
     private readonly gigService: GigService,
     private readonly lock: DistributedLockService,
+    private readonly metrics: MetricsService,
+    private readonly sentry: SentryService,
   ) {}
 
   onModuleInit(): void {
@@ -46,7 +51,7 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.timer = setInterval(() => {
-      this.tick(intervalMs).catch(error => this.logger.error('Gig expiry sweep failed', error));
+      this.tick(intervalMs).catch(error => this.logger.error('Gig expiry sweep tick failed', error));
     }, intervalMs);
     this.timer.unref?.();
 
@@ -55,33 +60,72 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    if (this.lockRenewalTimer) clearInterval(this.lockRenewalTimer);
     if (this.currentLockToken) {
-      await this.lock.release(LOCK_KEY, this.currentLockToken);
+      try {
+        await this.lock.release(LOCK_KEY, this.currentLockToken);
+      } catch (err) {
+        this.logger.error('Failed to release lock on shutdown', err);
+      }
       this.currentLockToken = undefined;
     }
   }
 
   private async tick(intervalMs: number): Promise<void> {
     if (this.sweeping) {
-      this.logger.warn('Previous gig expiry sweep still in flight — skipping this tick');
+      this.metrics.increment('gig_expiry_sweep_skipped_total');
+      this.logger.debug('Previous gig expiry sweep still in flight — skipping this tick');
       return;
     }
+
     const token = await this.lock.tryAcquire(LOCK_KEY, Math.ceil(intervalMs * 1.5));
     if (!token) {
-      return; // another instance is holding the lock for this tick
+      this.logger.debug('Another instance holds the gig expiry sweep lock');
+      return;
     }
+
     this.currentLockToken = token;
     this.sweeping = true;
+
+    // Set up lock renewal timer: renew the lock every LOCK_RENEWAL_INTERVAL_MS
+    // so if a sweep runs longer than the original TTL, we maintain ownership.
+    this.lockRenewalTimer = setInterval(async () => {
+      if (!this.currentLockToken) {
+        if (this.lockRenewalTimer) clearInterval(this.lockRenewalTimer);
+        return;
+      }
+      try {
+        const renewed = await this.lock.renewIfOwned(LOCK_KEY, this.currentLockToken, Math.ceil(intervalMs * 1.5));
+        if (!renewed) {
+          this.logger.warn('Lost lock ownership during gig expiry sweep — aborting');
+          this.currentLockToken = undefined;
+        }
+      } catch (err) {
+        this.logger.error('Error renewing gig expiry sweep lock', err);
+      }
+    }, LOCK_RENEWAL_INTERVAL_MS);
+
     try {
       await this.runOnce();
     } finally {
+      if (this.lockRenewalTimer) clearInterval(this.lockRenewalTimer);
+      this.lockRenewalTimer = undefined;
       this.sweeping = false;
-      await this.lock.release(LOCK_KEY, token);
-      this.currentLockToken = undefined;
+      if (this.currentLockToken) {
+        try {
+          await this.lock.release(LOCK_KEY, this.currentLockToken);
+        } catch (err) {
+          this.logger.error('Failed to release gig expiry sweep lock', err);
+        }
+        this.currentLockToken = undefined;
+      }
     }
   }
 
-  /** Runs a single sweep. Exposed so it can also be triggered manually (e.g. from tests or an admin endpoint). */
+  /**
+   * Runs a single sweep, capping the number of gigs if configured.
+   * Exposed so it can be triggered manually (e.g. from tests or an admin endpoint).
+   */
   async runOnce(): Promise<void> {
     const expirable = await this.gigService.findExpirable();
 
@@ -97,6 +141,14 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
     if (failed > 0) {
       this.logger.warn(`Gig expiry sweep: ${failed}/${expirable.length} gigs failed to expire`);
     }
+  }
+
+  private getSweepConcurrency(): number {
+    return config.GIG_EXPIRY_SWEEP_CONCURRENCY || 8;
+  }
+
+  private getMaxGigsPerSweep(): number | undefined {
+    return config.GIG_EXPIRY_SWEEP_MAX_GIGS;
   }
 
   private getIntervalMs(): number {

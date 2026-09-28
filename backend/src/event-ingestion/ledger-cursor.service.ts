@@ -75,6 +75,17 @@ export class LedgerCursorService implements OnModuleInit {
     networkHash: string,
   ): Promise<void> {
     const key = this.cursorKey(contractId);
+
+    // Ensure cursor updates are monotonic — never move backward (#408)
+    const existing = await this.getCursor(contractId);
+    if (existing && existing.lastProcessedLedger >= ledgerSequence) {
+      this.logger.warn(
+        `Ignoring cursor update for contract ${contractId}: ` +
+          `existing ledger ${existing.lastProcessedLedger} >= new ledger ${ledgerSequence}`,
+      );
+      return;
+    }
+
     const checkpoint: LedgerCheckpoint = {
       ledgerSequence,
       lastProcessedLedger: ledgerSequence,

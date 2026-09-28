@@ -45,7 +45,7 @@ describe('Security Headers (Helmet)', () => {
   });
 
   it('returns standard Helmet security headers on API responses', async () => {
-    const res = await request(app.getHttpServer()).get('/health').expect(200);
+    const res = await request(app.getHttpServer()).get('/v1/health').expect(200);
 
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['strict-transport-security']).toBeDefined();
@@ -56,7 +56,7 @@ describe('Security Headers (Helmet)', () => {
   });
 
   it('applies a strict CSP to API responses', async () => {
-    const res = await request(app.getHttpServer()).get('/health').expect(200);
+    const res = await request(app.getHttpServer()).get('/v1/health').expect(200);
 
     const csp = res.headers['content-security-policy'];
     expect(csp).toContain("default-src 'none'");
@@ -65,7 +65,7 @@ describe('Security Headers (Helmet)', () => {
   });
 
   it('applies the relaxed Swagger CSP only on /api/docs', async () => {
-    const res = await request(app.getHttpServer()).get('/api/docs/').expect(200);
+    const res = await request(app.getHttpServer()).get('/v1/api/docs/').expect(200);
 
     expect(res.text).toContain('swagger-ui');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
@@ -90,8 +90,8 @@ describe('docs availability and protection', () => {
     }).compile();
     const app = moduleFixture.createNestApplication();
     await app.init();
-    await request(app.getHttpServer()).get('/api/docs').expect(404);
-    await request(app.getHttpServer()).get('/api/docs-json').expect(404);
+    await request(app.getHttpServer()).get('/v1/api/docs').expect(404);
+    await request(app.getHttpServer()).get('/v1/api/docs-json').expect(404);
     await app.close();
   });
 
@@ -107,9 +107,9 @@ describe('docs availability and protection', () => {
     SwaggerModule.setup('api/docs', app, document, { jsonDocumentUrl: '/api/docs-json' });
     await app.init();
     const server = app.getHttpServer();
-    await request(server).get('/api/docs-json').expect(401);
-    await request(server).get('/api/docs-json').auth('u', 'wrong').expect(401);
-    await request(server).get('/api/docs-json').auth('u', 'p').expect(200);
+    await request(server).get('/v1/api/docs-json').expect(401);
+    await request(server).get('/v1/api/docs-json').auth('u', 'wrong').expect(401);
+    await request(server).get('/v1/api/docs-json').auth('u', 'p').expect(200);
     await app.close();
   });
 

@@ -90,8 +90,8 @@ export class ExecutePayoutDto {
 }
 
 export class SagaStepRecordDto implements SagaStepRecord {
-  @ApiProperty({ enum: DisputeStep }) step: DisputeStep;
-  @ApiProperty() startedAt: string;
+  @ApiProperty({ enum: DisputeStep }) step!: DisputeStep;
+  @ApiProperty() startedAt!: string;
   @ApiPropertyOptional() completedAt?: string;
   @ApiPropertyOptional() failedAt?: string;
   @ApiPropertyOptional() compensatedAt?: string;
@@ -99,19 +99,19 @@ export class SagaStepRecordDto implements SagaStepRecord {
 }
 
 export class DisputeSagaResponseDto {
-  @ApiProperty() sagaId: string;
-  @ApiProperty() escrowId: string;
-  @ApiProperty() initiator: string;
-  @ApiProperty() reason: string;
-  @ApiProperty({ enum: DisputeStep }) currentStep: DisputeStep;
+  @ApiProperty() sagaId!: string;
+  @ApiProperty() escrowId!: string;
+  @ApiProperty() initiator!: string;
+  @ApiProperty() reason!: string;
+  @ApiProperty({ enum: DisputeStep }) currentStep!: DisputeStep;
   @ApiPropertyOptional() escalationTxHash?: string;
   @ApiPropertyOptional({ type: [String] }) assignedJurors?: string[];
   @ApiPropertyOptional() votes?: JurorVote[];
   @ApiPropertyOptional({ enum: DisputeVerdict }) verdict?: DisputeVerdict;
   @ApiPropertyOptional() payoutTxHash?: string;
-  @ApiProperty({ type: [SagaStepRecordDto] }) stepHistory: SagaStepRecordDto[];
-  @ApiProperty() createdAt: string;
-  @ApiProperty() updatedAt: string;
+  @ApiProperty({ type: [SagaStepRecordDto] }) stepHistory!: SagaStepRecordDto[];
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
   @ApiPropertyOptional() completedAt?: string;
   @ApiPropertyOptional() failedAt?: string;
   @ApiPropertyOptional() compensationReason?: string;

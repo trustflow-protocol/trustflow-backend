@@ -1,6 +1,7 @@
 import { ESCROW_STATUSES, EscrowStatus } from '../escrow/escrow.service';
 import { STELLAR_ADDRESS_REGEX } from '../escrow/escrow.dto';
 import { ChainEscrowRecord } from './escrow-reconciliation.types';
+import { stroopsToXLM } from '../common/amount';
 
 /** Thrown when a value decoded from the escrow contract is not a well-formed escrow record. */
 export class InvalidChainStateError extends Error {
@@ -53,9 +54,15 @@ export function parseChainEscrow(contractEscrowId: string, native: unknown): Cha
   const record = native as Record<string, unknown>;
 
   const rawAmount = record.amount;
-  const amount =
-    typeof rawAmount === 'bigint' || typeof rawAmount === 'number' ? String(rawAmount) : rawAmount;
-  if (typeof amount !== 'string' || !DECIMAL.test(amount)) {
+  let amount: string;
+  if (typeof rawAmount === 'bigint' || typeof rawAmount === 'number') {
+    amount = stroopsToXLM(rawAmount);
+  } else if (typeof rawAmount === 'string' && DECIMAL.test(rawAmount)) {
+    amount = rawAmount;
+  } else {
+    throw new InvalidChainStateError(contractEscrowId, 'amount is not a valid number or decimal string');
+  }
+  if (!DECIMAL.test(amount)) {
     throw new InvalidChainStateError(contractEscrowId, 'amount is not a decimal string');
   }
 

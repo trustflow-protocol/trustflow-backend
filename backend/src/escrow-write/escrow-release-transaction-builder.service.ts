@@ -7,6 +7,7 @@ import {
   nativeToScVal,
 } from '@stellar/stellar-sdk';
 import { StellarConfig } from '../stellar/stellar.config';
+import { config } from '../config/env.config';
 
 export const SOROBAN_RPC_SERVER = 'SOROBAN_RPC_SERVER';
 export const ESCROW_WRITE_STELLAR_CONFIG = 'ESCROW_WRITE_STELLAR_CONFIG';
@@ -70,7 +71,7 @@ export class EscrowReleaseTransactionBuilderService {
       .addOperation(
         contract.call(RELEASE_ENTRYPOINT, nativeToScVal(contractEscrowId, { type: 'string' })),
       )
-      .setTimeout(60)
+      .setTimeout(config.STELLAR_TX_VALIDITY_SECONDS)
       .build();
 
     const prepared = await this.rpcServer.prepareTransaction(tx);

@@ -116,7 +116,7 @@ export class EscrowReconciliationService {
           ),
         );
       }
-      if (escrow && chainEscrow && chainEscrow.amountXLM !== escrow.amountXLM) {
+      if (escrow && chainEscrow && !amountsEqual(chainEscrow.amountXLM, escrow.amountXLM)) {
         fieldDrifts.push(
           this.recordDrift(
             DriftType.AMOUNT_MISMATCH,

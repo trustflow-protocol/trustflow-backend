@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Horizon } from '@stellar/stellar-sdk';
 import { RpcFailoverService } from './rpc-failover.service';
+import { buildHorizonServer } from './horizon.helper';
 
 /**
  * Thrown by `getBalance` when Horizon reports the account does not exist
@@ -81,7 +82,7 @@ export class StellarService {
       try {
         // Get current endpoint (may have changed due to failover)
         const endpoint = this.rpcFailoverService.getCurrentHorizonEndpoint();
-        const server = new Horizon.Server(endpoint);
+        const server = buildHorizonServer(endpoint);
         return await operation(server);
       } catch (error) {
         lastError = error as Error;

@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { getJwtVerificationSecrets } from '../config/env.config';
 import { NonceStoreService } from './nonce-store.service';
 import { JWT_ALGORITHM } from '../config/env.config';
 
@@ -14,6 +15,7 @@ export class AuthService {
   constructor(
     private jwtService: JwtService,
     private nonceStore: NonceStoreService,
+    private refreshTokenStore: RefreshTokenStoreService,
   ) {}
 
   async generateChallenge(address: string): Promise<string> {
@@ -60,9 +62,34 @@ export class AuthService {
     }
   }
 
-  generateToken(address: string): string {
+  generateToken(address: string, ttlSeconds?: number): string {
     const payload = { address, sub: address };
-    return this.jwtService.sign(payload);
+    const options = ttlSeconds ? { expiresIn: ttlSeconds } : {};
+    return this.jwtService.sign(payload, options);
+  }
+
+  async generateRefreshToken(address: string): Promise<string> {
+    return this.refreshTokenStore.issueRefreshToken(address);
+  }
+
+  async refreshAccessToken(
+    refreshToken: string,
+    address: string,
+  ): Promise<{ token: string; refreshToken: string } | null> {
+    const result = await this.refreshTokenStore.validateAndRotateRefreshToken(refreshToken, address);
+    if (!result.valid || !result.newToken) {
+      return null;
+    }
+
+    const newAccessToken = this.generateToken(address, ACCESS_TOKEN_TTL_SECONDS);
+    return {
+      token: newAccessToken,
+      refreshToken: result.newToken,
+    };
+  }
+
+  async revokeRefreshToken(address: string, token: string): Promise<void> {
+    return this.refreshTokenStore.revokeRefreshToken(address, token);
   }
 
   validateToken(token: string): unknown {
@@ -71,6 +98,8 @@ export class AuthService {
     } catch (error) {
       throw new UnauthorizedException('Invalid token');
     }
+
+    throw new UnauthorizedException('Invalid token');
   }
 
   private extractNonce(challenge: string): string | null {

@@ -5,6 +5,7 @@ import { EventProcessorService, SorobanEvent, ProcessedEvent } from './event-pro
 import { getStellarConfig } from '../stellar/stellar.config';
 import { mapWithConcurrency } from '../common/concurrency';
 import { config } from '../config/env.config';
+import { buildSorobanServer } from '../stellar/soroban.helper';
 
 @Injectable()
 export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
@@ -12,6 +13,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
   private rpcServer: SorobanRpc.Server;
   private pollingInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private isIngestingInFlight = false;
   private readonly POLL_INTERVAL_MS = 5000;
   private readonly MAX_LEDGER_RANGE = 100;
   /** How many independent escrows to process in parallel per ingestion batch (#238). */
@@ -23,7 +25,7 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    this.rpcServer = new SorobanRpc.Server(getStellarConfig().sorobanRpcUrl);
+    this.rpcServer = buildSorobanServer(getStellarConfig().sorobanRpcUrl);
     this.logger.log('EventIngestionService initialized');
   }
 
@@ -44,6 +46,11 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
 
     this.pollingInterval = setInterval(async () => {
       try {
+        // Skip this tick if a previous ingestion is still in-flight (#408)
+        if (this.isIngestingInFlight) {
+          this.logger.debug('Previous ingestion still in-flight, skipping this polling tick');
+          return;
+        }
         await this.ingestEvents(targetContract);
       } catch (error) {
         this.logger.error('Error during polling:', error);
@@ -63,51 +70,62 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
   }
 
   async ingestEvents(contractId: string): Promise<ProcessedEvent[]> {
-    const checkpoint = await this.ledgerCursorService.getCursor(contractId);
-    const bounds = await this.getLedgerBounds();
-    const currentLedger = bounds.latestLedger;
-    const oldestLedger = bounds.oldestLedger;
-
-    let startLedger: number;
-    if (checkpoint) {
-      startLedger = checkpoint.lastProcessedLedger + 1;
-      if (startLedger < oldestLedger) {
-        this.logger.warn(`Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`);
-        startLedger = oldestLedger;
-      }
-    } else {
-      if (config.SOROBAN_START_LEDGER !== undefined) {
-        startLedger = Math.max(config.SOROBAN_START_LEDGER, oldestLedger);
-        this.logger.log(`No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`);
-      } else {
-        startLedger = Math.max(currentLedger - 1000, oldestLedger);
-        this.logger.log(`No checkpoint found and no config, starting from latest - 1000: ${startLedger}`);
-      }
-    }
-
-    const endLedger = Math.min(currentLedger, startLedger + this.MAX_LEDGER_RANGE - 1);
-
-    if (startLedger > endLedger) {
-      this.logger.debug('No new ledgers to process');
+    // Guard against overlapping ingestions (#408)
+    if (this.isIngestingInFlight) {
+      this.logger.debug('Ingestion already in-flight, skipping');
       return [];
     }
 
-    this.logger.log(`Ingesting events from ledger ${startLedger} to ${endLedger}`);
+    this.isIngestingInFlight = true;
+    try {
+      const checkpoint = await this.ledgerCursorService.getCursor(contractId);
+      const bounds = await this.getLedgerBounds();
+      const currentLedger = bounds.latestLedger;
+      const oldestLedger = bounds.oldestLedger;
 
-    const events = await this.fetchEvents(contractId, startLedger, endLedger);
-    const processedEvents = await this.processEventBatch(events);
+      let startLedger: number;
+      if (checkpoint) {
+        startLedger = checkpoint.lastProcessedLedger + 1;
+        if (startLedger < oldestLedger) {
+          this.logger.warn(`Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`);
+          startLedger = oldestLedger;
+        }
+      } else {
+        if (config.SOROBAN_START_LEDGER !== undefined) {
+          startLedger = Math.max(config.SOROBAN_START_LEDGER, oldestLedger);
+          this.logger.log(`No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`);
+        } else {
+          startLedger = Math.max(currentLedger - 1000, oldestLedger);
+          this.logger.log(`No checkpoint found and no config, starting from latest - 1000: ${startLedger}`);
+        }
+      }
 
-    const latestProcessedLedger = events.length > 0 ? events[events.length - 1].ledger : endLedger;
-    const networkHash = await this.getNetworkHash();
+      const endLedger = Math.min(currentLedger, startLedger + this.MAX_LEDGER_RANGE - 1);
 
-    await this.ledgerCursorService.updateCursor(
-      contractId,
-      latestProcessedLedger,
-      `${startLedger}-${endLedger}`,
-      networkHash,
-    );
+      if (startLedger > endLedger) {
+        this.logger.debug('No new ledgers to process');
+        return [];
+      }
 
-    return processedEvents;
+      this.logger.log(`Ingesting events from ledger ${startLedger} to ${endLedger}`);
+
+      const events = await this.fetchEvents(contractId, startLedger, endLedger);
+      const processedEvents = await this.processEventBatch(events);
+
+      const latestProcessedLedger = events.length > 0 ? events[events.length - 1].ledger : endLedger;
+      const networkHash = await this.getNetworkHash();
+
+      await this.ledgerCursorService.updateCursor(
+        contractId,
+        latestProcessedLedger,
+        `${startLedger}-${endLedger}`,
+        networkHash,
+      );
+
+      return processedEvents;
+    } finally {
+      this.isIngestingInFlight = false;
+    }
   }
 
   async ingestSingleLedger(contractId: string, ledger: number): Promise<ProcessedEvent[]> {
@@ -149,10 +167,16 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
    * from this array).
    */
   async processEventBatch(events: SorobanEvent[]): Promise<ProcessedEvent[]> {
+    // Sort by (ledger, event id) to ensure processing order never depends on RPC page order (#408)
+    const sortedEvents = [...events].sort((a, b) => {
+      if (a.ledger !== b.ledger) return a.ledger - b.ledger;
+      return a.id.localeCompare(b.id);
+    });
+
     const unkeyed: SorobanEvent[] = [];
     const keyed = new Map<string, SorobanEvent[]>();
 
-    for (const event of events) {
+    for (const event of sortedEvents) {
       const key = event.topic[1];
       if (key === undefined || key === '') {
         unkeyed.push(event);
@@ -322,7 +346,8 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
   async handleReorg(contractId: string, fromLedger: number): Promise<void> {
     this.logger.warn(`Handling reorg from ledger ${fromLedger}`);
 
-    await this.eventProcessorService.clearEventsBeforeLedger(fromLedger);
+    // Clear events from fromLedger onward (not before), so reprocessing includes the reorg point (#408)
+    await this.eventProcessorService.clearEventsFromLedger(fromLedger);
     await this.ledgerCursorService.updateCursor(
       contractId,
       fromLedger - 1,

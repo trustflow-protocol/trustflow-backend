@@ -8,6 +8,7 @@ module.exports = {
   plugins: ["@typescript-eslint/eslint-plugin"],
   extends: [
     "plugin:@typescript-eslint/recommended",
+    "plugin:@typescript-eslint/recommended-requiring-type-checking",
     "plugin:prettier/recommended",
   ],
   root: true,
@@ -20,7 +21,11 @@ module.exports = {
     "@typescript-eslint/interface-name-prefix": "off",
     "@typescript-eslint/explicit-function-return-type": "off",
     "@typescript-eslint/explicit-module-boundary-types": "off",
-    "@typescript-eslint/no-explicit-any": ["warn", { ignoreRestArgs: false }],
-    "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+    "@typescript-eslint/no-explicit-any": ["error", { ignoreRestArgs: false }],
+    "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+    "@typescript-eslint/no-floating-promises": "error",
+    "@typescript-eslint/no-misused-promises": "error",
+    "no-console": "error",
+    "eqeqeq": ["error", "always"],
   },
 };

@@ -36,8 +36,12 @@ Edit `.env` and set your values:
 STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_PLATFORM_ADDRESS=your_platform_xlm_account  # Optional — platform account address for balance monitoring
+STELLAR_LOW_BALANCE_THRESHOLD=1  # Optional — XLM balance warning threshold (default: 1 XLM)
+STELLAR_CRITICAL_BALANCE_THRESHOLD=0.5  # Optional — XLM balance critical threshold (default: 0.5 XLM)
 TRUSTFLOW_CONTRACT_ID=your_contract_id
-JWT_SECRET=your_secure_secret_here
+JWT_SECRET=change-me-before-production
+# ProductionJWT_SECRET must be at least 32 characters, random, and not a placeholder.
 PORT=3001
 DISCORD_WEBHOOK_URL=your_discord_webhook_url  # Optional
 PINATA_JWT=your_pinata_jwt  # Optional — unconfigured providers use an in-memory simulated store
@@ -287,6 +291,23 @@ Always run the local CI check:
 ```
 
 This catches issues before they reach CI, saving time and CI minutes.
+
+## TypeScript Strictness
+
+This project enforces strict TypeScript mode (`strict: true` in `tsconfig.json`). All new code must compile cleanly under strict mode. This includes:
+
+- **strictNullChecks**: No null/undefined access without checks
+- **noImplicitAny**: Type all parameters and return values
+- **strictBindCallApply**: Strict typing for `.bind()`, `.call()`, and `.apply()`
+- **strictFunctionTypes**: Strict function type checking
+- **strictPropertyInitialization**: All class properties must be initialized or optional
+- **noImplicitThis**: Explicit `this` type required
+- **alwaysStrict**: "use strict" added to all files
+- **useUnknownInCatchVariables**: Catch variables typed as unknown
+- **noFallthroughCasesInSwitch**: Switch statements must have break statements
+- **forceConsistentCasingInFileNames**: File names must match imports
+
+When adding new types or modifying existing ones, ensure they pass strict type checking before pushing. If needed, use definite-assignment assertions (`!`) or optional properties (`?`) for DTO fields populated by framework deserialization.
 
 ## Next Steps
 

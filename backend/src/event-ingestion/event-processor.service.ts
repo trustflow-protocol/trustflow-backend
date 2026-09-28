@@ -220,6 +220,68 @@ export class EventProcessorService implements OnModuleInit {
     return toClear.length;
   }
 
+  async clearEventsFromLedger(ledger: number): Promise<number> {
+    const all = await this.fetchAll();
+    const toClear = all.filter(e => e.ledger >= ledger);
+    if (toClear.length === 0) return 0;
+
+    if (this.redis) {
+      try {
+        await this.redis
+          .multi()
+          .del(...toClear.map(e => this.eventKey(e.eventId)))
+          .srem(EVENTS_INDEX_KEY, ...toClear.map(e => e.eventId))
+          .exec();
+        return toClear.length;
+      } catch (err) {
+        this.logFallback('clearEventsFromLedger', err);
+      }
+    }
+
+    for (const event of toClear) {
+      this.processedEvents.delete(event.eventId);
+    }
+    return toClear.length;
+  }
+
+  async retryFailedEvents(): Promise<ProcessedEvent[]> {
+    const failed = await this.getFailedEvents();
+    const results: ProcessedEvent[] = [];
+
+    for (const failedRecord of failed) {
+      if (!failedRecord.originalEvent) {
+        this.logger.warn(`Failed event ${failedRecord.eventId} has no originalEvent, skipping retry`);
+        continue;
+      }
+
+      // Clear the failed record so it's not considered already processed
+      await this.clearEventById(failedRecord.eventId);
+
+      // Re-run the event handler
+      const retried = await this.processEvent(failedRecord.originalEvent);
+      results.push(retried);
+    }
+
+    return results;
+  }
+
+  private async clearEventById(eventId: string): Promise<void> {
+    if (this.redis) {
+      try {
+        await this.redis
+          .multi()
+          .del(this.eventKey(eventId))
+          .srem(EVENTS_INDEX_KEY, eventId)
+          .exec();
+        return;
+      } catch (err) {
+        this.logFallback('clearEventById', err);
+      }
+    }
+
+    this.processedEvents.delete(eventId);
+  }
+
   // ─── Persistence helpers ────────────────────────────────────────────
 
   private async persist(result: ProcessedEvent): Promise<void> {

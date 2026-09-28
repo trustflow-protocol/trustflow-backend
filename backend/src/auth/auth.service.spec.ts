@@ -17,6 +17,10 @@ describe('AuthService', () => {
   const TEST_SIGNATURE = 'SGVsbG8gV29ybGQh';
 
   beforeEach(async () => {
+    process.env.JWT_SECRET = 'test-secret-at-least-16-chars';
+    process.env.JWT_SECRET_PREVIOUS = 'previous-secret-at-least-16-chars';
+    validateEnv();
+
     mockNonceStore = {
       store: jest.fn(),
       consume: jest.fn(),

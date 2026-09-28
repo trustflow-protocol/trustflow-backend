@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { HealthService } from './health.service';
 import { MetricsService } from './metrics.service';
@@ -12,27 +12,48 @@ export class HealthController {
     private metrics: MetricsService,
   ) {}
 
+  @Get('health/live')
+  @SkipRateLimit()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Liveness probe',
+    description: 'Returns 200 if the process is up. Does not check external dependencies. Used for Kubernetes liveness probes.',
+  })
+  @ApiResponse({ status: 200, description: 'Process is alive' })
+  async getLiveness(): Promise<import('./health.service').LivenessProbe> {
+    return this.health.liveness();
+  }
+
+  @Get('health/ready')
+  @SkipRateLimit()
+  @ApiOperation({
+    summary: 'Readiness probe',
+    description: 'Returns 200 if ready to handle traffic, 503 if critical dependencies are down.',
+  })
+  @ApiResponse({ status: 200, description: 'Service is ready' })
+  @ApiResponse({ status: 503, description: 'Service is not ready' })
+  async getReadiness(): Promise<import('./health.service').ReadinessProbe> {
+    const result = await this.health.readiness();
+    if (result.status === 'down') {
+      throw new ServiceUnavailableException(result);
+    }
+    return result;
+  }
+
   @Get('health')
   @SkipRateLimit()
   @ApiOperation({
-    summary: 'Health check',
-    description: 'Returns the health status of the API. Used for liveness and readiness probes.',
+    summary: 'Health check (use /health/live or /health/ready instead)',
+    description: 'Returns the health status of the API. Returns 503 if down or degraded.',
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Service is healthy',
-    schema: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', example: 'ok' },
-        timestamp: { type: 'string', format: 'date-time' },
-        uptime: { type: 'number', example: 12345 },
-      },
-    },
-  })
+  @ApiResponse({ status: 200, description: 'Service is healthy' })
   @ApiResponse({ status: 503, description: 'Service is unhealthy' })
   async getHealth(): Promise<import('./health.service').HealthStatus> {
-    return this.health.check();
+    const result = await this.health.check();
+    if (result.status === 'down') {
+      throw new ServiceUnavailableException(result);
+    }
+    return result;
   }
 
   @Get('metrics')

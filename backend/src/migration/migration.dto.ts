@@ -38,41 +38,41 @@ export class RunMigrationDto {
 }
 
 export class BackfillProgressDto implements BackfillProgress {
-  @ApiProperty() totalRows: number;
-  @ApiProperty() processedRows: number;
-  @ApiProperty() failedRows: number;
+  @ApiProperty() totalRows!: number;
+  @ApiProperty() processedRows!: number;
+  @ApiProperty() failedRows!: number;
   @ApiPropertyOptional() cursor?: string;
-  @ApiProperty() batchSize: number;
+  @ApiProperty() batchSize!: number;
   @ApiPropertyOptional() startedAt?: string;
   @ApiPropertyOptional() updatedAt?: string;
   @ApiPropertyOptional() completedAt?: string;
 }
 
 export class MigrationStepRecordDto implements MigrationStepRecord {
-  @ApiProperty({ enum: MigrationPhase }) phase: MigrationPhase;
-  @ApiProperty() startedAt: string;
+  @ApiProperty({ enum: MigrationPhase }) phase!: MigrationPhase;
+  @ApiProperty() startedAt!: string;
   @ApiPropertyOptional() completedAt?: string;
   @ApiPropertyOptional() failedAt?: string;
   @ApiPropertyOptional() error?: string;
 }
 
 export class MigrationRunResponseDto {
-  @ApiProperty() runId: string;
-  @ApiProperty() migrationName: string;
-  @ApiProperty() targetTable: string;
-  @ApiProperty({ enum: MigrationStatus }) status: MigrationStatus;
+  @ApiProperty() runId!: string;
+  @ApiProperty() migrationName!: string;
+  @ApiProperty() targetTable!: string;
+  @ApiProperty({ enum: MigrationStatus }) status!: MigrationStatus;
   @ApiPropertyOptional({ enum: MigrationPhase }) currentPhase?: MigrationPhase;
-  @ApiProperty({ type: BackfillProgressDto }) progress: BackfillProgressDto;
-  @ApiProperty({ type: [MigrationStepRecordDto] }) stepHistory: MigrationStepRecordDto[];
-  @ApiProperty() createdAt: string;
-  @ApiProperty() updatedAt: string;
+  @ApiProperty({ type: BackfillProgressDto }) progress!: BackfillProgressDto;
+  @ApiProperty({ type: [MigrationStepRecordDto] }) stepHistory!: MigrationStepRecordDto[];
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
   @ApiPropertyOptional() completedAt?: string;
   @ApiPropertyOptional() failedAt?: string;
   @ApiPropertyOptional() rollbackReason?: string;
 }
 
 export class MigrationDefinitionResponseDto {
-  @ApiProperty() name: string;
-  @ApiProperty() targetTable: string;
-  @ApiProperty() description: string;
+  @ApiProperty() name!: string;
+  @ApiProperty() targetTable!: string;
+  @ApiProperty() description!: string;
 }

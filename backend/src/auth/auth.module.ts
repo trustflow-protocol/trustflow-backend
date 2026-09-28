@@ -22,7 +22,7 @@ import { config, JWT_ALGORITHM } from '../config/env.config';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, NonceStoreService],
+  providers: [AuthService, JwtStrategy, NonceStoreService, RefreshTokenStoreService],
   exports: [AuthService],
 })
 export class AuthModule {}

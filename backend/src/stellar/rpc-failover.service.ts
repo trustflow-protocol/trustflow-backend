@@ -21,7 +21,6 @@ export class RpcFailoverService {
   private healthCheckInterval: NodeJS.Timeout;
   private readonly HEALTH_CHECK_INTERVAL_MS = 30000; // 30 seconds
   private readonly MAX_FAILURES_BEFORE_UNHEALTHY = 3;
-  private readonly HEALTH_CHECK_TIMEOUT_MS = 5000;
 
   constructor() {
     this.initializeEndpoints();
@@ -78,7 +77,7 @@ export class RpcFailoverService {
   private async checkHorizonEndpoint(endpoint: EndpointStatus): Promise<void> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.HEALTH_CHECK_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => controller.abort(), config.STELLAR_HEALTH_CHECK_TIMEOUT_MS);
 
       const response = await fetch(`${endpoint.url}/ledgers?order=desc&limit=1`, {
         signal: controller.signal,
@@ -115,7 +114,7 @@ export class RpcFailoverService {
   private async checkSorobanEndpoint(endpoint: EndpointStatus): Promise<void> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.HEALTH_CHECK_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => controller.abort(), config.STELLAR_HEALTH_CHECK_TIMEOUT_MS);
 
       const response = await fetch(endpoint.url, {
         method: 'POST',

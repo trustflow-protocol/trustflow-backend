@@ -646,13 +646,13 @@ describe('RateLimitGuard Supertest integration', () => {
   it('should allow HTTP requests while shared Redis bucket allows them', async () => {
     mockRedis.queueResults([[null, [1, 0]]]);
 
-    await request(app.getHttpServer()).get('/rate-limit-test/limited').expect(200, { ok: true });
+    await request(app.getHttpServer()).get('/v1/rate-limit-test/limited').expect(200, { ok: true });
   });
 
   it('should return 429 with retry details when shared Redis bucket rejects', async () => {
     mockRedis.queueResults([[null, [0, 7]]]);
 
-    const response = await request(app.getHttpServer()).get('/rate-limit-test/limited').expect(429);
+    const response = await request(app.getHttpServer()).get('/v1/rate-limit-test/limited').expect(429);
 
     expect(response.body).toMatchObject({
       statusCode: 429,
@@ -670,7 +670,7 @@ describe('RateLimitGuard Supertest integration', () => {
 
     const token = signToken({ address: 'GABC123', sub: 'GABC123' });
     await request(app.getHttpServer())
-      .post('/rate-limit-test/wallet')
+      .post('/v1/rate-limit-test/wallet')
       .set('Authorization', `Bearer ${token}`)
       .send({})
       .expect(201, { ok: true });
@@ -695,13 +695,13 @@ describe('RateLimitGuard Supertest integration', () => {
   it('should not create a new wallet-scoped bucket when a client rotates an unverified walletAddress in the request body', async () => {
     mockRedis.queueResults([[null, [1, 0]]]);
     await request(app.getHttpServer())
-      .post('/rate-limit-test/wallet')
+      .post('/v1/rate-limit-test/wallet')
       .send({ walletAddress: 'ROTATED-1' })
       .expect(201, { ok: true });
 
     mockRedis.queueResults([[null, [1, 0]]]);
     await request(app.getHttpServer())
-      .post('/rate-limit-test/wallet')
+      .post('/v1/rate-limit-test/wallet')
       .send({ walletAddress: 'ROTATED-2' })
       .expect(201, { ok: true });
 

@@ -47,7 +47,7 @@ describe('OutboxController', () => {
   it('returns an event and its consumer deduplication key', async () => {
     outbox.findById.mockResolvedValue(event);
 
-    const response = await request(app.getHttpServer()).get('/outbox/event-1').expect(200);
+    const response = await request(app.getHttpServer()).get('/v1/outbox/event-1').expect(200);
 
     expect(response.body).toEqual(event);
     expect(outbox.findById).toHaveBeenCalledWith('event-1');
@@ -55,12 +55,12 @@ describe('OutboxController', () => {
 
   it('returns 404 for an unknown event', async () => {
     outbox.findById.mockResolvedValue(undefined);
-    await request(app.getHttpServer()).get('/outbox/missing').expect(404);
+    await request(app.getHttpServer()).get('/v1/outbox/missing').expect(404);
   });
 
   it('runs a relay batch through the operational endpoint', async () => {
     relay.runOnce.mockResolvedValue(3);
 
-    await request(app.getHttpServer()).post('/outbox/relay').expect(202).expect({ processed: 3 });
+    await request(app.getHttpServer()).post('/v1/outbox/relay').expect(202).expect({ processed: 3 });
   });
 });

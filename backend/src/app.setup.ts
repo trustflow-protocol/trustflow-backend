@@ -1,4 +1,4 @@
-import { INestApplication, Logger, ValidationPipe } from '@nestjs/common';
+import { INestApplication, Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder, OpenAPIObject } from '@nestjs/swagger';
 import * as express from 'express';
 import helmet from 'helmet';
@@ -6,6 +6,7 @@ import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
 import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
 import { MetricsHttpInterceptor } from './monitoring/metrics-http.interceptor';
+import { RequestTimeoutInterceptor } from './common/http/request-timeout.interceptor';
 import { CorrelationIdStore } from './common/logging/correlation-id.store';
 import { config } from './config/env.config';
 
@@ -70,6 +71,10 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
   const correlationIdStore = app.get(CorrelationIdStore);
   app.useGlobalFilters(new SentryExceptionFilter(sentryService, correlationIdStore));
 
+  // Register global request timeout interceptor (runs before metrics so timeout errors are recorded)
+  const requestTimeoutInterceptor = app.get(RequestTimeoutInterceptor);
+  app.useGlobalInterceptors(requestTimeoutInterceptor);
+
   // Register global metrics interceptor
   const metricsInterceptor = app.get(MetricsHttpInterceptor);
   app.useGlobalInterceptors(metricsInterceptor);
@@ -79,7 +84,7 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
   const nodeEnv = config.NODE_ENV;
 
   // Validate CORS configuration in production
-  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
+  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin.includes('*'))) {
     logger.error(
       'CORS_ORIGIN must be explicitly set in production (cannot use wildcard with credentials: true)',
     );
@@ -87,15 +92,14 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
   }
 
   // Warn if using wildcard in any environment (but only fail in production)
-  if (corsOrigin === '*' && nodeEnv === 'production') {
-    logger.error(
+  if (corsOrigin?.includes('*') && nodeEnv !== 'production') {
+    logger.warn(
       'Using wildcard CORS origin with credentials enabled is a security risk. Set CORS_ORIGIN to a comma-separated list of allowed origins.',
     );
-    process.exit(1);
   }
 
   app.enableCors({
-    origin: corsOrigin || '*',
+    origin: corsOrigin?.includes('*') ? '*' : (corsOrigin || '*'),
     credentials: true,
   });
 
@@ -107,6 +111,12 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
       forbidNonWhitelisted: true,
     }),
   );
+
+  // Enable API Versioning
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: '1',
+  });
 
   const document = buildOpenApiDocument(app);
   setupSwaggerUi(app, document);

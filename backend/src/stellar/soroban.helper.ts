@@ -1,12 +1,18 @@
 import { rpc as SorobanRpc, Transaction, Networks } from '@stellar/stellar-sdk';
 import { config } from '../config/env.config';
 
+export function buildSorobanServer(url: string): SorobanRpc.Server {
+  return new SorobanRpc.Server(url, {
+    timeout: config.STELLAR_RPC_TIMEOUT_MS,
+  });
+}
+
 export async function simulateTransaction(
   rpcUrl: string,
   xdr: string,
 ): Promise<SorobanRpc.Api.SimulateTransactionResponse> {
   return withSorobanFailover(async endpoint => {
-    const server = new SorobanRpc.Server(endpoint);
+    const server = buildSorobanServer(endpoint);
     const tx = new Transaction(xdr, Networks.TESTNET);
     return server.simulateTransaction(tx);
   }, rpcUrl);

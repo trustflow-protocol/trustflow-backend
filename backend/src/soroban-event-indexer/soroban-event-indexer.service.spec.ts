@@ -83,11 +83,32 @@ describe('SorobanEventIndexerService (Unit)', () => {
       value: val,
     };
     rpcServerMock.getEvents.mockResolvedValue({ events: [rawEvent] });
-    
+
     const events = await service.poll();
     expect(events).toHaveLength(1);
     expect(events[0].eventId).toBe('event-1');
     expect(events[0].eventType).toBe('EVENT_TOPIC');
+  });
+
+  it('clamps unsafe limit values to the safe range', async () => {
+    const redisMock = {
+      zrevrange: jest.fn().mockResolvedValue(['event-1', 'event-2']),
+      mget: jest.fn().mockResolvedValue(['{"eventId":"event-1"}', '{"eventId":"event-2"}']),
+    };
+
+    const localService = new SorobanEventIndexerService(redisMock as any);
+
+    await localService.getEvents(0);
+    expect(redisMock.zrevrange).toHaveBeenLastCalledWith('soroban:events:index', 0, 49);
+
+    await localService.getEvents(-5);
+    expect(redisMock.zrevrange).toHaveBeenLastCalledWith('soroban:events:index', 0, 49);
+
+    await localService.getEvents(Number.MAX_SAFE_INTEGER);
+    expect(redisMock.zrevrange).toHaveBeenLastCalledWith('soroban:events:index', 0, 199);
+
+    await localService.getEvents();
+    expect(redisMock.zrevrange).toHaveBeenLastCalledWith('soroban:events:index', 0, 49);
   });
 });
 

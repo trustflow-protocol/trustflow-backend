@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { CircuitBreakerService } from '../common/circuit-breaker';
 import { MetricsService } from '../monitoring/metrics.service';
 import { config } from '../config/env.config';
 import { computeCidV1Raw } from './cid.util';
@@ -43,16 +44,12 @@ export const IPFS_UNPIN_FAILURE_METRIC = 'ipfs_unpin_failure_total';
  * Pin registry. Backed by Redis so pin metadata survives restarts and is shared across
  * instances — see PERSISTENT_STORAGE_SPIKE.md and its "Follow-up decisions" addendum (#189).
  *
- * Decision on the raw-content `Buffer` map: it stays in-memory only, exactly as before this
- * migration, rather than moving to Redis or to object storage. A per-record size x expected
- * volume estimate (spike §7) would be needed before treating Redis as general-purpose blob
- * storage, and this backend has no S3-compatible client wired up today the way it has no SQL
- * driver for the Escrow decision (#187) — adopting one is new infrastructure, not a drop-in
- * swap. Consequence: the re-pin worker's retry-without-refetch behavior (topping up replication
- * from bytes already in memory) only works within a single process's uptime, same as before
- * this PR; after a restart, a re-pin for a CID whose content isn't held by any other still-
- * healthy provider requires the original caller to resupply it. A follow-up issue tracks
- * resolving this properly (object storage vs. requiring resupply on every re-pin).
+ * Decision: drop retry-without-refetch entirely. The service no longer retains original bytes
+ * for a pinned CID after the initial upload, so a later re-pin can only succeed if the caller
+ * provides the content again. This keeps the system operational without introducing object-
+ * storage infrastructure or a hidden per-process memory dependency. Reconcile/replicate now fail
+ * explicitly when the content is missing instead of silently no-op'ing and leaving the pin
+ * degraded indefinitely.
  *
  * Falls back to a process-local Map for pin metadata when Redis is unavailable, logged at
  * `error` level and counted via `IPFS_PINNING_PERSISTENCE_FALLBACK_METRIC`.
@@ -63,13 +60,11 @@ export class IpfsPinningService implements OnModuleInit {
 
   /** Fallback pin-record store, only used while Redis is unavailable. */
   private readonly pins = new Map<string, PinRecord>();
-  /** Original bytes for each pinned CID, retained so the re-pin worker can top up replication
-   * later. In-memory only by design — see the class doc comment. */
-  private readonly content = new Map<string, Buffer>();
 
   constructor(
     @Inject(PIN_PROVIDERS) private readonly providers: IpfsPinProvider[],
     private readonly webhookService: WebhookService,
+    private readonly circuitBreakerService: CircuitBreakerService,
     @Optional() @Inject(REDIS_CLIENT) private readonly redis: Redis | null = null,
     @Optional() private readonly metrics?: MetricsService,
   ) {
@@ -84,6 +79,18 @@ export class IpfsPinningService implements OnModuleInit {
         'IpfsPinningService requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',
       );
+    }
+
+    // Guard against production deployments with unconfigured providers running in simulated mode (#409).
+    // This prevents POST /ipfs/pins from returning 201 with HEALTHY status while nothing is actually pinned.
+    if (process.env.NODE_ENV === 'production') {
+      const simulatedProviders = this.providers.filter(p => !p.isConfigured).map(p => p.name);
+      if (simulatedProviders.length > 0) {
+        throw new Error(
+          `IpfsPinningService: providers running in simulated mode in production: ${simulatedProviders.join(', ')}. ` +
+          'Set the required credentials (IPFS_PINATA_JWT, IPFS_WEB3_STORAGE_TOKEN, IPFS_INFURA_*) before deploying.',
+        );
+      }
     }
   }
 
@@ -159,7 +166,6 @@ export class IpfsPinningService implements OnModuleInit {
     // A fresh pin request supersedes a half-finished unpin; let replicate() recompute the status.
     if (record.status === PinStatus.UNPINNING) record.status = PinStatus.FAILED;
     record.replicationFactor = Math.max(record.replicationFactor, replicationFactor);
-    this.content.set(cid, buffer);
     await this.persist(record);
 
     await this.replicate(record, buffer);
@@ -212,6 +218,7 @@ export class IpfsPinningService implements OnModuleInit {
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        throw error;
       });
     } else {
       this.finalizeStatus(record);
@@ -294,7 +301,17 @@ export class IpfsPinningService implements OnModuleInit {
   // ─── Internal helpers ─────────────────────────────────────────────
 
   /** Attempts to pin `content` to enough not-yet-healthy providers to reach the replication factor. */
-  private async replicate(record: PinRecord, content: Buffer): Promise<void> {
+  private async replicate(record: PinRecord, content?: Buffer): Promise<void> {
+    if (!content) {
+      const message =
+        `Cannot retry replication for ${record.cid}: original content is no longer retained. ` +
+        'The caller must re-upload the content to retry this pin.';
+      record.status = PinStatus.DEGRADED;
+      record.updatedAt = new Date().toISOString();
+      await this.persist(record);
+      throw new ServiceUnavailableException(message);
+    }
+
     const healthyNames = new Set(this.healthyProviders(record));
     const candidates = this.providers.filter(p => !healthyNames.has(p.name));
 
@@ -331,8 +348,28 @@ export class IpfsPinningService implements OnModuleInit {
     entry.attempts += 1;
 
     try {
-      await provider.pin(record.cid, content);
-      const verified = await provider.verify(record.cid);
+      await this.circuitBreakerService.execute(
+        `ipfs-pin-${provider.name}`,
+        async () => provider.pin(record.cid, content),
+        {
+          name: `ipfs-pin-${provider.name}`,
+          timeout: 60000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      );
+
+      const verified = await this.circuitBreakerService.execute(
+        `ipfs-verify-${provider.name}`,
+        async () => provider.verify(record.cid),
+        {
+          name: `ipfs-verify-${provider.name}`,
+          timeout: 30000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      );
+
       if (!verified) throw new Error('Provider did not confirm the pin after upload');
 
       entry.status = ProviderPinStatus.PINNED;
@@ -358,9 +395,28 @@ export class IpfsPinningService implements OnModuleInit {
     if (!provider) throw new Error(`Provider ${name} is not registered`);
 
     try {
-      await provider.unpin(cid);
+      await this.circuitBreakerService.execute(
+        `ipfs-unpin-${name}`,
+        async () => provider.unpin(cid),
+        {
+          name: `ipfs-unpin-${name}`,
+          timeout: 60000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      );
     } catch (unpinError) {
-      const stillPinned = await provider.verify(cid).catch(() => true);
+      const stillPinned = await this.circuitBreakerService.execute(
+        `ipfs-verify-${name}`,
+        async () => provider.verify(cid),
+        {
+          name: `ipfs-verify-${name}`,
+          timeout: 30000,
+          errorThresholdPercentage: 50,
+          resetTimeout: 30000,
+        },
+      ).catch(() => true);
+
       if (stillPinned) throw unpinError;
     }
   }

@@ -4,6 +4,7 @@ import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { ChainEscrowRecord } from './escrow-reconciliation.types';
 import { InvalidChainStateError, parseChainEscrow } from './chain-escrow.validation';
 import { getStellarConfig } from '../stellar/stellar.config';
+import { buildSorobanServer } from '../stellar/soroban.helper';
 
 /**
  * Storage-key convention assumed for the TrustFlow escrow contract: each escrow is a
@@ -28,7 +29,7 @@ export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
 
   constructor() {
     super();
-    this.rpcServer = new SorobanRpc.Server(getStellarConfig().sorobanRpcUrl);
+    this.rpcServer = buildSorobanServer(getStellarConfig().sorobanRpcUrl);
   }
 
   get isConfigured(): boolean {
