@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { randomUUID } from 'crypto';
 import { Escrow, EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
@@ -17,12 +18,15 @@ import {
 import { InvalidChainStateError } from './chain-escrow.validation';
 import { amountsEqual } from '../common/amount';
 
-const INVALID = Symbol('invalid-chain-state');
-
 interface ReconciliationTarget {
   contractEscrowId: string;
   escrow?: Escrow;
 }
+
+/** Outcome of a single chain read: valid (possibly absent), or failed validation. */
+type ChainReadResult =
+  | { kind: 'ok'; record: ChainEscrowRecord | undefined }
+  | { kind: 'invalid'; reason: string };
 
 /**
  * Deterministically diffs on-chain escrow state against the DB and repairs drift
@@ -36,7 +40,7 @@ interface ReconciliationTarget {
  */
 @Injectable()
 export class EscrowReconciliationService {
-  private readonly logger = new Logger(EscrowReconciliationService.name);
+  private readonly logger = new SanitizedLogger(EscrowReconciliationService.name);
 
   constructor(
     private readonly escrowService: EscrowService,
@@ -72,8 +76,11 @@ export class EscrowReconciliationService {
         .filter(contractEscrowId => !knownIds.has(contractEscrowId))
         .map(contractEscrowId => ({ contractEscrowId })),
     ];
+    // One bounded-concurrency read per target. `mapWithConcurrency` never rejects, so an
+    // unexpected read failure comes back as a `rejected` result and is recorded against that
+    // escrow below rather than aborting the whole sweep.
     const chainReads = await mapWithConcurrency(targets, this.getReadConcurrency(), target =>
-      this.chainClient.getEscrow(target.contractEscrowId),
+      this.fetchChainEscrow(target.contractEscrowId),
     );
 
     for (let index = 0; index < targets.length; index++) {
@@ -86,78 +93,88 @@ export class EscrowReconciliationService {
 
       const chainEscrow = result.value;
       const escrow = target.escrow;
-    for (const escrow of linked) {
-      checked++;
-      const contractEscrowId = escrow.contractEscrowId as string;
-      const fetched = await this.fetchChainEscrow(contractEscrowId, drifts);
-      if (fetched === INVALID) continue;
-      const chainEscrow = fetched;
 
-      if (escrow && !chainEscrow) {
-        drifts.push(
-          this.recordDrift(
-            DriftType.MISSING_ON_CHAIN,
-            target.contractEscrowId,
-            { status: escrow.status, amountXLM: escrow.amountXLM },
-            undefined,
-          ),
+      // The chain returned data that failed validation: recorded as an unrepaired drift,
+      // and deliberately never written to the database.
+      if (chainEscrow.kind === 'invalid') {
+        const drift = this.recordDrift(
+          DriftType.INVALID_CHAIN_DATA,
+          target.contractEscrowId,
+          undefined,
+          undefined,
         );
+        drift.repairError = chainEscrow.reason;
+        drifts.push(drift);
+        continue;
+      }
+
+      // A DB row with no on-chain counterpart. Never auto-repaired — the chain is the source
+      // of truth and the escrow is genuinely gone, so only a human can decide.
+      if (!chainEscrow.record) {
+        if (escrow) {
+          drifts.push(
+            this.recordDrift(
+              DriftType.MISSING_ON_CHAIN,
+              target.contractEscrowId,
+              { status: escrow.status, amountXLM: escrow.amountXLM },
+              undefined,
+            ),
+          );
+        }
+        // Neither side knows about it — nothing to report.
+        continue;
+      }
+
+      // On chain but untracked in the DB: backfill the missing row.
+      if (!escrow) {
+        const drift = this.recordDrift(
+          DriftType.MISSING_IN_DB,
+          target.contractEscrowId,
+          undefined,
+          chainEscrow.record,
+        );
+        await this.repairMissingInDb(drift, chainEscrow.record);
+        drifts.push(drift);
         continue;
       }
 
       const fieldDrifts: DriftRecord[] = [];
-      if (escrow && chainEscrow && chainEscrow.status !== escrow.status) {
+      if (chainEscrow.record.status !== escrow.status) {
         fieldDrifts.push(
           this.recordDrift(
             DriftType.STATUS_MISMATCH,
             target.contractEscrowId,
             { status: escrow.status },
-            { status: chainEscrow.status },
+            { status: chainEscrow.record.status },
           ),
         );
       }
-      if (escrow && chainEscrow && !amountsEqual(chainEscrow.amountXLM, escrow.amountXLM)) {
+      if (!amountsEqual(chainEscrow.record.amountXLM, escrow.amountXLM)) {
         fieldDrifts.push(
           this.recordDrift(
             DriftType.AMOUNT_MISMATCH,
             target.contractEscrowId,
             { amountXLM: escrow.amountXLM },
-            { amountXLM: chainEscrow.amountXLM },
+            { amountXLM: chainEscrow.record.amountXLM },
           ),
         );
       }
 
-      if (escrow && chainEscrow && fieldDrifts.length > 0) {
-        await this.repair(fieldDrifts, escrow.id, chainEscrow);
+      if (fieldDrifts.length > 0) {
+        await this.repair(fieldDrifts, escrow.id, chainEscrow.record);
         drifts.push(...fieldDrifts);
       }
     }
 
-    for (const contractEscrowId of extraContractEscrowIds) {
-      if (knownIds.has(contractEscrowId)) continue;
-      checked++;
-
-      const fetched = await this.fetchChainEscrow(contractEscrowId, drifts);
-      if (fetched === INVALID || !fetched) continue;
-      const chainEscrow = fetched;
-
-      if (!escrow && chainEscrow) {
-        const drift = this.recordDrift(
-          DriftType.MISSING_IN_DB,
-          target.contractEscrowId,
-          undefined,
-          chainEscrow,
-        );
-        await this.repairMissingInDb(drift, chainEscrow);
-        drifts.push(drift);
-      }
-    }
+    // Every target was read and diffed above, including the ones whose read failed — a
+    // failed read is still an escrow that was checked, and the error is reported separately.
+    const checked = targets.length;
 
     const run: ReconciliationRun = {
       runId,
       startedAt,
       completedAt: new Date().toISOString(),
-      checked: targets.length,
+      checked,
       driftCount: drifts.length,
       repairedCount: drifts.filter(d => d.repaired).length,
       drifts,
@@ -216,27 +233,17 @@ export class EscrowReconciliationService {
   }
 
   /**
-   * Reads chain state, converting a validation failure into a recorded, unrepaired drift for that
-   * escrow (so one malformed record neither aborts the run nor is ever written to the database).
+   * Reads chain state, converting a validation failure into a distinguishable result (so one
+   * malformed record neither aborts the run nor is ever written to the database). Any other
+   * error propagates to the caller, where it is recorded against this escrow alone.
    */
-  private async fetchChainEscrow(
-    contractEscrowId: string,
-    drifts: DriftRecord[],
-  ): Promise<ChainEscrowRecord | undefined | typeof INVALID> {
+  private async fetchChainEscrow(contractEscrowId: string): Promise<ChainReadResult> {
     try {
-      return await this.chainClient.getEscrow(contractEscrowId);
+      return { kind: 'ok', record: await this.chainClient.getEscrow(contractEscrowId) };
     } catch (error) {
       if (!(error instanceof InvalidChainStateError)) throw error;
       this.logger.error(`Invalid chain state for escrow ${contractEscrowId}: ${error.message}`);
-      const drift = this.recordDrift(
-        DriftType.INVALID_CHAIN_DATA,
-        contractEscrowId,
-        undefined,
-        undefined,
-      );
-      drift.repairError = error.message;
-      drifts.push(drift);
-      return INVALID;
+      return { kind: 'invalid', reason: error.message };
     }
   }
 

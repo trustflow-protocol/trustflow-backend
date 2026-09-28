@@ -45,7 +45,11 @@ export function validateAmount(value: unknown): string {
  */
 export function normalizeAmount(value: unknown): string {
   const bn = parseAmount(value);
-  if (bn.decimalPlaces() > MAX_DECIMAL_PLACES) {
+  // bignumber.js types `decimalPlaces()` as `number | null` (null only for NaN). `parseAmount`
+  // has already rejected NaN, so the null case is unreachable here — but the guard is kept so
+  // the comparison stays type-safe, and it costs nothing if that ever changes upstream.
+  const decimalPlaces = bn.decimalPlaces() ?? 0;
+  if (decimalPlaces > MAX_DECIMAL_PLACES) {
     return bn.decimalPlaces(MAX_DECIMAL_PLACES, BigNumber.ROUND_DOWN).toFixed();
   }
   return bn.toFixed();

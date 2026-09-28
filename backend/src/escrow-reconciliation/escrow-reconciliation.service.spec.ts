@@ -314,10 +314,20 @@ describe('EscrowReconciliationService', () => {
       expect(run.drifts[0].repairError).toContain('unrecognised status');
     });
 
-    it('rethrows unexpected errors', async () => {
+    it('records an unexpected read error against that escrow instead of aborting the run', async () => {
       escrowService.findAll.mockResolvedValue([makeEscrow()]);
       chainClient.getEscrow.mockRejectedValue(new Error('network'));
-      await expect(service.reconcile()).rejects.toThrow('network');
+
+      const run = await service.reconcile();
+
+      // A single bad read must not discard drift detection for every other escrow, so the
+      // failure is captured on the run record instead of thrown out of reconcile().
+      expect(run.errorCount).toBe(1);
+      expect(run.errors[0]).toMatchObject({
+        contractEscrowId: 'chain-esc-1',
+        message: 'network',
+      });
+      expect(run.checked).toBe(1);
     });
   });
 });
