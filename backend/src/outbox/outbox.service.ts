@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { randomUUID } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -46,7 +47,7 @@ export const OUTBOX_PERSISTENCE_FALLBACK_METRIC = 'outbox_persistence_fallback_t
  */
 @Injectable()
 export class OutboxService implements OnModuleInit {
-  private readonly logger = new Logger(OutboxService.name);
+  private readonly logger = new SanitizedLogger(OutboxService.name);
   private readonly memory = new Map<string, OutboxEvent>();
   private readonly pending = new Set<string>();
   private readonly processing = new Map<string, number>();

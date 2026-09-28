@@ -1,4 +1,5 @@
-import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
@@ -10,7 +11,7 @@ const CHALLENGE_PREFIX = 'Sign this message to authenticate with TrustFlow: ';
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
+  private readonly logger = new SanitizedLogger(AuthService.name);
 
   constructor(
     private jwtService: JwtService,
@@ -76,7 +77,10 @@ export class AuthService {
     refreshToken: string,
     address: string,
   ): Promise<{ token: string; refreshToken: string } | null> {
-    const result = await this.refreshTokenStore.validateAndRotateRefreshToken(refreshToken, address);
+    const result = await this.refreshTokenStore.validateAndRotateRefreshToken(
+      refreshToken,
+      address,
+    );
     if (!result.valid || !result.newToken) {
       return null;
     }

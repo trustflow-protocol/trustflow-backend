@@ -1,11 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { StellarService } from './stellar.service';
 import { WebhookService } from '../webhook/webhook.service';
 
 @Injectable()
 export class PlatformBalanceService {
-  private readonly logger = new Logger(PlatformBalanceService.name);
+  private readonly logger = new SanitizedLogger(PlatformBalanceService.name);
   private lastAlertTime = 0;
   private readonly alertCooldownMs = 3600000; // 1 hour cooldown between alerts
 
@@ -57,7 +58,12 @@ export class PlatformBalanceService {
     }
   }
 
-  private triggerAlert(address: string, balance: number, level: 'WARNING' | 'CRITICAL', message: string): void {
+  private triggerAlert(
+    address: string,
+    balance: number,
+    level: 'WARNING' | 'CRITICAL',
+    message: string,
+  ): void {
     const now = Date.now();
     if (now - this.lastAlertTime < this.alertCooldownMs) {
       this.logger.debug(
@@ -69,16 +75,18 @@ export class PlatformBalanceService {
     this.lastAlertTime = now;
     this.logger.warn(message);
 
-    this.webhookService.dispatch('platform.balance_alert', {
-      level,
-      address,
-      balance,
-      message,
-      timestamp: new Date().toISOString(),
-    }).catch(err => {
-      this.logger.error(
-        `Failed to dispatch platform balance alert: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
+    this.webhookService
+      .dispatch('platform.balance_alert', {
+        level,
+        address,
+        balance,
+        message,
+        timestamp: new Date().toISOString(),
+      })
+      .catch(err => {
+        this.logger.error(
+          `Failed to dispatch platform balance alert: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 }

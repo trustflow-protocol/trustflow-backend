@@ -1,4 +1,5 @@
 import { Global, Logger, Module } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { readFileSync } from 'fs';
 import { ConnectionOptions } from 'tls';
 import { Pool, PoolConfig } from 'pg';
@@ -65,7 +66,7 @@ async function retryWithExponentialBackoff<T>(
  */
 export function buildSslConfig(
   env: NodeJS.ProcessEnv,
-  logger: Pick<Logger, 'warn'> = new Logger('DatabaseModule'),
+  logger: Pick<Logger, 'warn'> = new SanitizedLogger('DatabaseModule'),
 ): ConnectionOptions | undefined {
   if (env.DB_SSL !== 'true') return undefined;
 
@@ -160,7 +161,7 @@ export function buildPoolConfig(env?: NodeJS.ProcessEnv): PoolConfig | null {
         const config = buildPoolConfig();
         if (!config) return null;
 
-        const logger = new Logger('DatabaseModule');
+        const logger = new SanitizedLogger('DatabaseModule');
         const maxRetries = positiveIntOr(process.env.DB_RETRY_ATTEMPTS, DEFAULT_RETRY_ATTEMPTS);
         const backoffBase = positiveIntOr(
           process.env.DB_RETRY_BACKOFF_MS,

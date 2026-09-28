@@ -1,4 +1,5 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import * as crypto from 'crypto';
@@ -7,7 +8,7 @@ const DEDUP_KEY_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 
 @Injectable()
 export class NotificationDeduplicationService {
-  private readonly logger = new Logger(NotificationDeduplicationService.name);
+  private readonly logger = new SanitizedLogger(NotificationDeduplicationService.name);
   private readonly inMemoryKeys = new Map<string, number>();
 
   private get redis(): Redis | null {

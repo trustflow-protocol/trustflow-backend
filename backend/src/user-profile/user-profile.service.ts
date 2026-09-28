@@ -1,12 +1,12 @@
 import {
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   ConflictException,
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import BigNumber from 'bignumber.js';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -65,7 +65,7 @@ export const USER_PROFILE_PERSISTENCE_FALLBACK_METRIC = 'user_profile_persistenc
  */
 @Injectable()
 export class UserProfileService implements OnModuleInit {
-  private readonly logger = new Logger(UserProfileService.name);
+  private readonly logger = new SanitizedLogger(UserProfileService.name);
 
   /** Fallback stores, only used while Redis is unavailable. */
   private profiles: Map<string, UserProfile> = new Map();

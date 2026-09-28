@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -25,7 +26,7 @@ const MAX_EVENT_LIMIT = 200;
 
 @Injectable()
 export class SorobanEventIndexerService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(SorobanEventIndexerService.name);
+  private readonly logger = new SanitizedLogger(SorobanEventIndexerService.name);
   private rpcServer!: SorobanRpc.Server;
   private pollingInterval: NodeJS.Timeout | null = null;
   private isRunning = false;

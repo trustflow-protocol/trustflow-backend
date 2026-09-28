@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { NotificationType, NotificationPayload, NotificationChannel } from './notification.types';
 import { NotificationDeduplicationService } from './notification-deduplication.service';
 
@@ -15,7 +16,7 @@ import { NotificationDeduplicationService } from './notification-deduplication.s
  */
 @Injectable()
 export class NotificationService {
-  private readonly logger = new Logger(NotificationService.name);
+  private readonly logger = new SanitizedLogger(NotificationService.name);
   private readonly channels: NotificationChannel[] = [];
 
   constructor(private readonly deduplicationService: NotificationDeduplicationService) {}

@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
 import { EscrowReconciliationService } from './escrow-reconciliation.service';
 import { DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS } from './escrow-reconciliation.types';
@@ -14,7 +15,7 @@ const LOCK_KEY = 'lock:escrow-reconciliation-sweep';
  */
 @Injectable()
 export class EscrowReconciliationWorkerService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(EscrowReconciliationWorkerService.name);
+  private readonly logger = new SanitizedLogger(EscrowReconciliationWorkerService.name);
   private timer?: NodeJS.Timeout;
   private currentLockToken?: string;
   private sweeping = false;

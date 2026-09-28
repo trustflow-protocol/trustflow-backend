@@ -1,11 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { OutboxEvent } from './outbox.types';
 
 export type OutboxEventHandler = (event: OutboxEvent) => Promise<void>;
 
 @Injectable()
 export class OutboxEventDispatcher {
-  private readonly logger = new Logger(OutboxEventDispatcher.name);
+  private readonly logger = new SanitizedLogger(OutboxEventDispatcher.name);
   private readonly handlers = new Map<string, OutboxEventHandler[]>();
 
   register(pattern: string, handler: OutboxEventHandler): void {
@@ -16,7 +17,7 @@ export class OutboxEventDispatcher {
 
   async dispatch(event: OutboxEvent): Promise<void> {
     const matchedHandlers: OutboxEventHandler[] = [];
-    
+
     for (const [pattern, list] of this.handlers.entries()) {
       if (pattern === '*' || pattern === event.type) {
         matchedHandlers.push(...list);

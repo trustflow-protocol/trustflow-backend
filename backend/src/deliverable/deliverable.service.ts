@@ -3,9 +3,9 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { IpfsPinningService } from '../ipfs-pinning/ipfs-pinning.service';
@@ -19,7 +19,7 @@ const DELIVERABLES_BY_GIG_PREFIX = 'deliverables:gig:';
 
 @Injectable()
 export class DeliverableService {
-  private readonly logger = new Logger(DeliverableService.name);
+  private readonly logger = new SanitizedLogger(DeliverableService.name);
   private readonly deliverables = new Map<string, Deliverable>();
 
   constructor(

@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
@@ -21,7 +22,7 @@ export const REPUTATION_PERSISTENCE_FALLBACK_METRIC = 'reputation_persistence_fa
  */
 @Injectable()
 export class ReputationScoreStore implements OnModuleInit {
-  private readonly logger = new Logger(ReputationScoreStore.name);
+  private readonly logger = new SanitizedLogger(ReputationScoreStore.name);
   /** Fallback store, only used while Redis is unavailable. */
   private readonly records: Map<string, ReputationScoreRecord> = new Map();
 

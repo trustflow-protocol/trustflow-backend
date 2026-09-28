@@ -1,4 +1,11 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, RequestTimeoutException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  RequestTimeoutException,
+} from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { Observable } from 'rxjs';
 import { timeout, catchError } from 'rxjs/operators';
 import { Request } from 'express';
@@ -20,7 +27,7 @@ import { SKIP_TIMEOUT_KEY } from './skip-timeout.decorator';
  */
 @Injectable()
 export class RequestTimeoutInterceptor implements NestInterceptor {
-  private readonly logger = new Logger(RequestTimeoutInterceptor.name);
+  private readonly logger = new SanitizedLogger(RequestTimeoutInterceptor.name);
   private readonly defaultTimeoutMs = config.REQUEST_TIMEOUT_MS;
   private readonly exemptPaths = ['/health', '/metrics', '/api/docs', '/api-docs-json'];
 
@@ -30,10 +37,10 @@ export class RequestTimeoutInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest<Request>();
 
     // Check if route is exempted by decorator
-    const skipTimeout = this.reflector.getAllAndOverride<number | boolean | undefined>(SKIP_TIMEOUT_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const skipTimeout = this.reflector.getAllAndOverride<number | boolean | undefined>(
+      SKIP_TIMEOUT_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
     if (skipTimeout === true) {
       // Fully exempt from timeout
@@ -53,12 +60,8 @@ export class RequestTimeoutInterceptor implements NestInterceptor {
       catchError(error => {
         // RxJS timeout error is a TimeoutError that we convert to 408
         if (error.name === 'TimeoutError') {
-          this.logger.warn(
-            `[${request.method}] ${request.path} exceeded ${timeoutMs}ms timeout`,
-          );
-          throw new RequestTimeoutException(
-            `Request timeout after ${timeoutMs}ms`,
-          );
+          this.logger.warn(`[${request.method}] ${request.path} exceeded ${timeoutMs}ms timeout`);
+          throw new RequestTimeoutException(`Request timeout after ${timeoutMs}ms`);
         }
         throw error;
       }),

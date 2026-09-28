@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
@@ -46,7 +47,7 @@ export const EVENT_PROCESSOR_PERSISTENCE_FALLBACK_METRIC =
  */
 @Injectable()
 export class EventProcessorService implements OnModuleInit {
-  private readonly logger = new Logger(EventProcessorService.name);
+  private readonly logger = new SanitizedLogger(EventProcessorService.name);
   /** Fallback store, only used while Redis is unavailable. */
   private processedEvents: Map<string, ProcessedEvent> = new Map();
 
@@ -218,7 +219,9 @@ export class EventProcessorService implements OnModuleInit {
 
     for (const failedRecord of failed) {
       if (!failedRecord.originalEvent) {
-        this.logger.warn(`Failed event ${failedRecord.eventId} has no originalEvent, skipping retry`);
+        this.logger.warn(
+          `Failed event ${failedRecord.eventId} has no originalEvent, skipping retry`,
+        );
         continue;
       }
 
@@ -236,11 +239,7 @@ export class EventProcessorService implements OnModuleInit {
   private async clearEventById(eventId: string): Promise<void> {
     if (this.redis) {
       try {
-        await this.redis
-          .multi()
-          .del(this.eventKey(eventId))
-          .srem(EVENTS_INDEX_KEY, eventId)
-          .exec();
+        await this.redis.multi().del(this.eventKey(eventId)).srem(EVENTS_INDEX_KEY, eventId).exec();
         return;
       } catch (err) {
         this.logFallback('clearEventById', err);

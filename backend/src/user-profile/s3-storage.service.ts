@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import * as https from 'https';
 import * as http from 'http';
 
@@ -23,7 +24,7 @@ export interface StorageProvider {
  */
 @Injectable()
 export class S3StorageService {
-  private readonly logger = new Logger(S3StorageService.name);
+  private readonly logger = new SanitizedLogger(S3StorageService.name);
   private provider: StorageProvider | null = null;
 
   registerProvider(provider: StorageProvider): void {

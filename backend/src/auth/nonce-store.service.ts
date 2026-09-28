@@ -1,4 +1,5 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 
@@ -15,7 +16,7 @@ return val
 
 @Injectable()
 export class NonceStoreService {
-  private readonly logger = new Logger(NonceStoreService.name);
+  private readonly logger = new SanitizedLogger(NonceStoreService.name);
 
   private readonly inMemoryChallenges = new Map<string, { challenge: string; expiresAt: number }>();
   private readonly inMemoryConsumed = new Map<string, number>();

@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { MigrationRegistryService } from './migration-registry.service';
 import { MigrationRunnerService } from './migration-runner.service';
 
@@ -14,7 +15,7 @@ import { MigrationRunnerService } from './migration-runner.service';
  */
 @Injectable()
 export class MigrationStartupService implements OnApplicationBootstrap {
-  private readonly logger = new Logger(MigrationStartupService.name);
+  private readonly logger = new SanitizedLogger(MigrationStartupService.name);
 
   constructor(
     private readonly registry: MigrationRegistryService,

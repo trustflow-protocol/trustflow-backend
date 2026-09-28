@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { GigService } from './gig.service';
 import { DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS } from './gig.entity';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
@@ -30,7 +31,7 @@ const LOCK_RENEWAL_INTERVAL_MS = 5000; // Renew lock every 5s during long sweeps
  */
 @Injectable()
 export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(GigExpiryWorkerService.name);
+  private readonly logger = new SanitizedLogger(GigExpiryWorkerService.name);
   private timer?: NodeJS.Timeout;
   private currentLockToken?: string;
   private lockRenewalTimer?: NodeJS.Timeout;
@@ -54,7 +55,9 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.timer = setInterval(() => {
-      this.tick(intervalMs).catch(error => this.logger.error('Gig expiry sweep tick failed', error));
+      this.tick(intervalMs).catch(error =>
+        this.logger.error('Gig expiry sweep tick failed', error),
+      );
     }, intervalMs);
     this.timer.unref?.();
 
@@ -98,7 +101,11 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       try {
-        const renewed = await this.lock.renewIfOwned(LOCK_KEY, this.currentLockToken, Math.ceil(intervalMs * 1.5));
+        const renewed = await this.lock.renewIfOwned(
+          LOCK_KEY,
+          this.currentLockToken,
+          Math.ceil(intervalMs * 1.5),
+        );
         if (!renewed) {
           this.logger.warn('Lost lock ownership during gig expiry sweep — aborting');
           this.currentLockToken = undefined;
@@ -185,9 +192,14 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
         // Rate-limit logs: log every nth batch or every 1000ms, whichever comes first
         const shouldLog = this.failedBatchCount % 10 === 1 || duration > 1000;
         if (shouldLog && failedGigs.length > 0) {
-          const failedIds = failedGigs.slice(0, 5).map(g => `${g.id} (${g.error})`).join(', ');
+          const failedIds = failedGigs
+            .slice(0, 5)
+            .map(g => `${g.id} (${g.error})`)
+            .join(', ');
           const more = failedGigs.length > 5 ? `, +${failedGigs.length - 5} more` : '';
-          this.logger.warn(`Gig expiry sweep: ${failed}/${toExpire.length} failed: ${failedIds}${more}`);
+          this.logger.warn(
+            `Gig expiry sweep: ${failed}/${toExpire.length} failed: ${failedIds}${more}`,
+          );
         }
         // Capture batch failure to Sentry
         const error = new Error(

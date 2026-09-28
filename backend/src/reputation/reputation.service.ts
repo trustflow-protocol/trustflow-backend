@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { ReputationScoreStore } from './reputation-score.store';
 import {
   EscrowParties,
@@ -45,7 +46,7 @@ import { parseAmount } from '../common/amount';
  */
 @Injectable()
 export class ReputationService {
-  private readonly logger = new Logger(ReputationService.name);
+  private readonly logger = new SanitizedLogger(ReputationService.name);
 
   /**
    * `ReputationScoreStore` may now be Redis-backed (real I/O), so `applyContribution`'s

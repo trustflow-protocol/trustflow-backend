@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
@@ -33,7 +34,7 @@ export const LEDGER_CURSOR_PERSISTENCE_FALLBACK_METRIC = 'ledger_cursor_persiste
  */
 @Injectable()
 export class LedgerCursorService implements OnModuleInit {
-  private readonly logger = new Logger(LedgerCursorService.name);
+  private readonly logger = new SanitizedLogger(LedgerCursorService.name);
   /** Fallback store, only used while Redis is unavailable. */
   private checkpoints: Map<string, LedgerCheckpoint> = new Map();
 

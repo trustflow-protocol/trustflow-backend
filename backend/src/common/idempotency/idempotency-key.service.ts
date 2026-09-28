@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { MetricsService } from '../../monitoring/metrics.service';
@@ -34,7 +35,7 @@ export type ClaimResult = { claimed: true } | { claimed: false; record: Idempote
 
 @Injectable()
 export class IdempotencyKeyService {
-  private readonly logger = new Logger(IdempotencyKeyService.name);
+  private readonly logger = new SanitizedLogger(IdempotencyKeyService.name);
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,

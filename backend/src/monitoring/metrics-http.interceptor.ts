@@ -1,4 +1,5 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Observable } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { Request, Response } from 'express';
@@ -14,7 +15,7 @@ import { MetricsService } from './metrics.service';
  */
 @Injectable()
 export class MetricsHttpInterceptor implements NestInterceptor {
-  private readonly logger = new Logger(MetricsHttpInterceptor.name);
+  private readonly logger = new SanitizedLogger(MetricsHttpInterceptor.name);
 
   constructor(private readonly metrics: MetricsService) {}
 

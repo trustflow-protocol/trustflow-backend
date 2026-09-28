@@ -1,4 +1,5 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { randomUUID } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from './redis.constants';
@@ -35,7 +36,7 @@ return 0
  */
 @Injectable()
 export class DistributedLockService {
-  private readonly logger = new Logger(DistributedLockService.name);
+  private readonly logger = new SanitizedLogger(DistributedLockService.name);
 
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis | null) {}
 

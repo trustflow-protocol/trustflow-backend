@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
@@ -23,7 +24,7 @@ export const MIGRATION_STATE_PERSISTENCE_FALLBACK_METRIC =
  */
 @Injectable()
 export class MigrationStateStore implements OnModuleInit {
-  private readonly logger = new Logger(MigrationStateStore.name);
+  private readonly logger = new SanitizedLogger(MigrationStateStore.name);
   /** Fallback stores, only used while Redis is unavailable. */
   private readonly runs: Map<string, MigrationRun> = new Map();
   /** migrationName -> runId of the run currently in progress, if any. */

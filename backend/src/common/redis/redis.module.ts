@@ -1,4 +1,5 @@
 import { Module, Global, Logger } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { DistributedLockService } from './distributed-lock.service';
 import { config } from '../../config/env.config';
@@ -21,7 +22,9 @@ export { REDIS_CLIENT } from './redis.constants';
  * logged, ioredis keeps retrying per `retryStrategy`, and Redis-backed
  * features degrade until it recovers.
  */
-export function createRedisClient(logger: Logger = new Logger('RedisModule')): Redis | null {
+export function createRedisClient(
+  logger: Pick<Logger, 'warn' | 'error' | 'log'> = new SanitizedLogger('RedisModule'),
+): Redis | null {
   const url = config.REDIS_URL;
   if (!url) {
     logger.warn(

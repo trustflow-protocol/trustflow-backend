@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { rpc as SorobanRpc, xdr, nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { ChainEscrowRecord } from './escrow-reconciliation.types';
@@ -23,7 +24,7 @@ import { buildSorobanServer } from '../stellar/soroban.helper';
  */
 @Injectable()
 export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
-  private readonly logger = new Logger(SorobanEscrowChainStateClient.name);
+  private readonly logger = new SanitizedLogger(SorobanEscrowChainStateClient.name);
   private readonly rpcServer: SorobanRpc.Server;
   private readonly simulatedStore = new Map<string, ChainEscrowRecord>();
 

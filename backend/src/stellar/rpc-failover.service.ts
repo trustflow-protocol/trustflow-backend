@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Horizon } from '@stellar/stellar-sdk';
 import { getStellarConfig } from './stellar.config';
 import { config } from '../config/env.config';
@@ -13,7 +14,7 @@ interface EndpointStatus {
 
 @Injectable()
 export class RpcFailoverService {
-  private readonly logger = new Logger(RpcFailoverService.name);
+  private readonly logger = new SanitizedLogger(RpcFailoverService.name);
   private horizonEndpoints: EndpointStatus[] = [];
   private sorobanEndpoints: EndpointStatus[] = [];
   private currentHorizonEndpoint: string;
@@ -77,7 +78,10 @@ export class RpcFailoverService {
   private async checkHorizonEndpoint(endpoint: EndpointStatus): Promise<void> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), config.STELLAR_HEALTH_CHECK_TIMEOUT_MS);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        config.STELLAR_HEALTH_CHECK_TIMEOUT_MS,
+      );
 
       const response = await fetch(`${endpoint.url}/ledgers?order=desc&limit=1`, {
         signal: controller.signal,
@@ -114,7 +118,10 @@ export class RpcFailoverService {
   private async checkSorobanEndpoint(endpoint: EndpointStatus): Promise<void> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), config.STELLAR_HEALTH_CHECK_TIMEOUT_MS);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        config.STELLAR_HEALTH_CHECK_TIMEOUT_MS,
+      );
 
       const response = await fetch(endpoint.url, {
         method: 'POST',

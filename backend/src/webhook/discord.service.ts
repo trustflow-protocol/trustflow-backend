@@ -1,4 +1,5 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import * as https from 'https';
 import { config } from '../config/env.config';
 import { MetricsService } from '../monitoring/metrics.service';
@@ -19,7 +20,7 @@ interface DiscordWebhookPayload {
 
 @Injectable()
 export class DiscordService {
-  private readonly logger = new Logger(DiscordService.name);
+  private readonly logger = new SanitizedLogger(DiscordService.name);
   private readonly webhookUrl: string;
   /** Permanent failures that should not be retried. */
   private readonly failedNotifications = new Map<string, { error: string; timestamp: string }>();
@@ -102,7 +103,10 @@ export class DiscordService {
       this.metrics?.increment('discord_notifications_sent_total');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.failedNotifications.set(disputeId, { error: message, timestamp: new Date().toISOString() });
+      this.failedNotifications.set(disputeId, {
+        error: message,
+        timestamp: new Date().toISOString(),
+      });
       this.metrics?.increment('discord_notifications_failed_total', { reason: 'permanent' });
       throw error; // Re-throw so caller knows delivery ultimately failed
     }

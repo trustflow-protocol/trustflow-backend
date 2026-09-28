@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { MetricsService } from '../monitoring/metrics.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { OutboxPublisherService } from './outbox-publisher.service';
@@ -12,7 +13,7 @@ const DEFAULT_LEASE_MS = 30_000;
 /** Background relay for at-least-once outbox delivery. */
 @Injectable()
 export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(OutboxRelayService.name);
+  private readonly logger = new SanitizedLogger(OutboxRelayService.name);
   private timer?: NodeJS.Timeout;
 
   constructor(

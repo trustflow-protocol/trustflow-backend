@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { rpc as SorobanRpc, xdr } from '@stellar/stellar-sdk';
 import { LedgerCursorService, LedgerCheckpoint } from './ledger-cursor.service';
 import { EventProcessorService, SorobanEvent, ProcessedEvent } from './event-processor.service';
@@ -9,7 +10,7 @@ import { buildSorobanServer } from '../stellar/soroban.helper';
 
 @Injectable()
 export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(EventIngestionService.name);
+  private readonly logger = new SanitizedLogger(EventIngestionService.name);
   private rpcServer: SorobanRpc.Server;
   private pollingInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
@@ -87,16 +88,22 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
       if (checkpoint) {
         startLedger = checkpoint.lastProcessedLedger + 1;
         if (startLedger < oldestLedger) {
-          this.logger.warn(`Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`);
+          this.logger.warn(
+            `Cursor ${startLedger} is behind oldest available ledger ${oldestLedger}. Fast-forwarding.`,
+          );
           startLedger = oldestLedger;
         }
       } else {
         if (config.SOROBAN_START_LEDGER !== undefined) {
           startLedger = Math.max(config.SOROBAN_START_LEDGER, oldestLedger);
-          this.logger.log(`No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`);
+          this.logger.log(
+            `No checkpoint found, starting from configured SOROBAN_START_LEDGER clamped to oldest: ${startLedger}`,
+          );
         } else {
           startLedger = Math.max(currentLedger - 1000, oldestLedger);
-          this.logger.log(`No checkpoint found and no config, starting from latest - 1000: ${startLedger}`);
+          this.logger.log(
+            `No checkpoint found and no config, starting from latest - 1000: ${startLedger}`,
+          );
         }
       }
 
@@ -112,7 +119,8 @@ export class EventIngestionService implements OnModuleInit, OnModuleDestroy {
       const events = await this.fetchEvents(contractId, startLedger, endLedger);
       const processedEvents = await this.processEventBatch(events);
 
-      const latestProcessedLedger = events.length > 0 ? events[events.length - 1].ledger : endLedger;
+      const latestProcessedLedger =
+        events.length > 0 ? events[events.length - 1].ledger : endLedger;
       const networkHash = await this.getNetworkHash();
 
       await this.ledgerCursorService.updateCursor(

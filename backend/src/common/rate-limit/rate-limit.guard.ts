@@ -5,9 +5,9 @@ import {
   HttpException,
   HttpStatus,
   Inject,
-  Logger,
   Optional,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Redis, Result } from 'ioredis';
@@ -146,7 +146,7 @@ type RateLimitIdentity = {
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
-  private readonly logger = new Logger(RateLimitGuard.name);
+  private readonly logger = new SanitizedLogger(RateLimitGuard.name);
   // Not DI-managed: verify() takes the secret per call, so no module wiring is needed,
   // and this guard runs as a global APP_GUARD before route-level JwtAuthGuard populates
   // request.user, so it must be able to verify the bearer token itself.

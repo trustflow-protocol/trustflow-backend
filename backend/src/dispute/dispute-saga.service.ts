@@ -1,7 +1,6 @@
 import {
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
@@ -9,6 +8,7 @@ import {
   ForbiddenException,
   Optional,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { AuditService } from '../audit/audit.service';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -34,7 +34,10 @@ class KeyedMutex {
   async lock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const current = this.locks.get(key) ?? Promise.resolve();
     const next = current.then(fn);
-    this.locks.set(key, next.catch(() => {}));
+    this.locks.set(
+      key,
+      next.catch(() => {}),
+    );
     return next;
   }
 }
@@ -91,7 +94,7 @@ export const DISPUTE_SAGA_PERSISTENCE_FALLBACK_METRIC = 'dispute_saga_persistenc
  */
 @Injectable()
 export class DisputeSagaService implements OnModuleInit {
-  private readonly logger = new Logger(DisputeSagaService.name);
+  private readonly logger = new SanitizedLogger(DisputeSagaService.name);
   /** Fallback saga store, only used while Redis is unavailable. */
   private readonly sagas: Map<string, DisputeSaga> = new Map();
   /** Fallback secondary index: escrowId → sagaId (one active saga per escrow). */
@@ -174,75 +177,77 @@ export class DisputeSagaService implements OnModuleInit {
         throw new ConflictException(`An active dispute saga already exists for escrow ${escrowId}`);
       }
 
-    const escrow = await this.escrowService.findById(escrowId);
-    if (!escrow) throw new NotFoundException(`Escrow ${escrowId} not found`);
-    if (escrow.status === 'released') {
-      throw new BadRequestException('Cannot dispute a released escrow');
-    }
-
-    // Verify that initiator is either depositor or beneficiary
-    if (dto.initiator !== escrow.depositor && dto.initiator !== escrow.beneficiary) {
-      throw new ForbiddenException(
-        'Only the depositor or beneficiary can escalate a dispute for this escrow',
-      );
-    }
-
-    const sagaId = `saga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const now = toUtcIsoString(getCurrentUtcDate());
-
-    const saga: DisputeSaga = {
-      sagaId,
-      escrowId,
-      initiator: dto.initiator,
-      reason: dto.reason,
-      currentStep: DisputeStep.ESCALATION,
-      votes: [],
-      stepHistory: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.recordStepStart(saga, DisputeStep.ESCALATION);
-
-    try {
-      // Freeze the escrow by marking it disputed
-      await this.escrowService.raiseDispute(escrowId, dto.reason);
-
-      // Simulate on-chain escalation tx hash
-      saga.escalationTxHash = `escalation-tx-${sagaId}`;
-      this.recordStepComplete(saga, DisputeStep.ESCALATION);
-      saga.currentStep = DisputeStep.JUROR_ASSIGNMENT;
-      this.touch(saga);
-
-      await this.createSaga(saga);
-
-      if (this.audit) {
-        await this.audit.logOperation({
-          operation: 'DISPUTE_ESCALATE',
-          user: dto.initiator,
-          entityId: sagaId,
-          entityType: 'dispute_saga',
-          beforeState: null,
-          afterState: saga,
-          metadata: { escrowId, reason: dto.reason }
-        }).catch(err => this.logger.error('Failed to write audit log', err));
+      const escrow = await this.escrowService.findById(escrowId);
+      if (!escrow) throw new NotFoundException(`Escrow ${escrowId} not found`);
+      if (escrow.status === 'released') {
+        throw new BadRequestException('Cannot dispute a released escrow');
       }
 
-      await this.webhookService.dispatch(SAGA_EVENTS.ESCALATED, { sagaId, escrowId });
-      await this.notificationService.notifyDisputeEscalated({
-        escrowId,
-        disputeId: sagaId,
-        depositor: escrow.depositor,
-        beneficiary: escrow.beneficiary,
-        reason: dto.reason,
-      });
+      // Verify that initiator is either depositor or beneficiary
+      if (dto.initiator !== escrow.depositor && dto.initiator !== escrow.beneficiary) {
+        throw new ForbiddenException(
+          'Only the depositor or beneficiary can escalate a dispute for this escrow',
+        );
+      }
 
-      this.logger.log(`Saga ${sagaId}: escalation complete for escrow ${escrowId}`);
-      return saga;
-    } catch (error) {
-      await this.compensateEscalation(saga, error);
-      throw error;
-    }
+      const sagaId = `saga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const now = toUtcIsoString(getCurrentUtcDate());
+
+      const saga: DisputeSaga = {
+        sagaId,
+        escrowId,
+        initiator: dto.initiator,
+        reason: dto.reason,
+        currentStep: DisputeStep.ESCALATION,
+        votes: [],
+        stepHistory: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      this.recordStepStart(saga, DisputeStep.ESCALATION);
+
+      try {
+        // Freeze the escrow by marking it disputed
+        await this.escrowService.raiseDispute(escrowId, dto.reason);
+
+        // Simulate on-chain escalation tx hash
+        saga.escalationTxHash = `escalation-tx-${sagaId}`;
+        this.recordStepComplete(saga, DisputeStep.ESCALATION);
+        saga.currentStep = DisputeStep.JUROR_ASSIGNMENT;
+        this.touch(saga);
+
+        await this.createSaga(saga);
+
+        if (this.audit) {
+          await this.audit
+            .logOperation({
+              operation: 'DISPUTE_ESCALATE',
+              user: dto.initiator,
+              entityId: sagaId,
+              entityType: 'dispute_saga',
+              beforeState: null,
+              afterState: saga,
+              metadata: { escrowId, reason: dto.reason },
+            })
+            .catch(err => this.logger.error('Failed to write audit log', err));
+        }
+
+        await this.webhookService.dispatch(SAGA_EVENTS.ESCALATED, { sagaId, escrowId });
+        await this.notificationService.notifyDisputeEscalated({
+          escrowId,
+          disputeId: sagaId,
+          depositor: escrow.depositor,
+          beneficiary: escrow.beneficiary,
+          reason: dto.reason,
+        });
+
+        this.logger.log(`Saga ${sagaId}: escalation complete for escrow ${escrowId}`);
+        return saga;
+      } catch (error) {
+        await this.compensateEscalation(saga, error);
+        throw error;
+      }
     });
   }
 
@@ -288,49 +293,49 @@ export class DisputeSagaService implements OnModuleInit {
       const saga = await this.findById(sagaId);
       this.assertStep(saga, DisputeStep.JUROR_ASSIGNMENT);
 
-    // Validate input before initializing the step to avoid treating input errors as infrastructure failures
-    const unique = [...new Set(dto.jurors)];
-    if (unique.length < 3) {
-      throw new BadRequestException('At least 3 distinct juror addresses are required');
-    }
+      // Validate input before initializing the step to avoid treating input errors as infrastructure failures
+      const unique = [...new Set(dto.jurors)];
+      if (unique.length < 3) {
+        throw new BadRequestException('At least 3 distinct juror addresses are required');
+      }
 
-    // Prevent escrow parties from being assigned as jurors to avoid conflicts of interest
-    const escrow = await this.escrowService.findById(saga.escrowId);
-    if (escrow) {
-      for (const juror of unique) {
-        if (juror === escrow.depositor || juror === escrow.beneficiary) {
-          throw new BadRequestException(
-            'Escrow parties (depositor and beneficiary) cannot be assigned as jurors',
-          );
+      // Prevent escrow parties from being assigned as jurors to avoid conflicts of interest
+      const escrow = await this.escrowService.findById(saga.escrowId);
+      if (escrow) {
+        for (const juror of unique) {
+          if (juror === escrow.depositor || juror === escrow.beneficiary) {
+            throw new BadRequestException(
+              'Escrow parties (depositor and beneficiary) cannot be assigned as jurors',
+            );
+          }
         }
       }
-    }
 
-    this.recordStepStart(saga, DisputeStep.JUROR_ASSIGNMENT);
+      this.recordStepStart(saga, DisputeStep.JUROR_ASSIGNMENT);
 
-    try {
-      saga.assignedJurors = unique;
-      this.recordStepComplete(saga, DisputeStep.JUROR_ASSIGNMENT);
-      saga.currentStep = DisputeStep.VOTING;
-      this.touch(saga);
-      await this.persistSaga(saga);
+      try {
+        saga.assignedJurors = unique;
+        this.recordStepComplete(saga, DisputeStep.JUROR_ASSIGNMENT);
+        saga.currentStep = DisputeStep.VOTING;
+        this.touch(saga);
+        await this.persistSaga(saga);
 
-      await this.webhookService.dispatch(SAGA_EVENTS.JURORS_ASSIGNED, {
-        sagaId,
-        jurors: unique,
-      });
-      await this.notificationService.notifyJurorsAssigned({
-        disputeId: sagaId,
-        escrowId: saga.escrowId,
-        jurors: unique,
-      });
+        await this.webhookService.dispatch(SAGA_EVENTS.JURORS_ASSIGNED, {
+          sagaId,
+          jurors: unique,
+        });
+        await this.notificationService.notifyJurorsAssigned({
+          disputeId: sagaId,
+          escrowId: saga.escrowId,
+          jurors: unique,
+        });
 
-      this.logger.log(`Saga ${sagaId}: ${unique.length} jurors assigned`);
-      return saga;
-    } catch (error) {
-      await this.compensateJurorAssignment(saga, error);
-      throw error;
-    }
+        this.logger.log(`Saga ${sagaId}: ${unique.length} jurors assigned`);
+        return saga;
+      } catch (error) {
+        await this.compensateJurorAssignment(saga, error);
+        throw error;
+      }
     });
   }
 
@@ -509,15 +514,17 @@ export class DisputeSagaService implements OnModuleInit {
         await this.persistSaga(saga);
 
         if (this.audit) {
-          await this.audit.logOperation({
-            operation: 'DISPUTE_PAYOUT',
-            user: 'admin',
-            entityId: sagaId,
-            entityType: 'dispute_saga',
-            beforeState,
-            afterState: saga,
-            metadata: { verdict: saga.verdict, splitPercentage: dto.splitPercentage }
-          }).catch(err => this.logger.error('Failed to write audit log', err));
+          await this.audit
+            .logOperation({
+              operation: 'DISPUTE_PAYOUT',
+              user: 'admin',
+              entityId: sagaId,
+              entityType: 'dispute_saga',
+              beforeState,
+              afterState: saga,
+              metadata: { verdict: saga.verdict, splitPercentage: dto.splitPercentage },
+            })
+            .catch(err => this.logger.error('Failed to write audit log', err));
         }
 
         await this.webhookService.dispatch(SAGA_EVENTS.PAYOUT_EXECUTED, {

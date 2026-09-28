@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import {
   rpc as SorobanRpc,
   Contract,
@@ -40,7 +41,7 @@ export interface UnsignedReleaseTransaction {
  */
 @Injectable()
 export class EscrowReleaseTransactionBuilderService {
-  private readonly logger = new Logger(EscrowReleaseTransactionBuilderService.name);
+  private readonly logger = new SanitizedLogger(EscrowReleaseTransactionBuilderService.name);
 
   constructor(
     @Inject(SOROBAN_RPC_SERVER) private readonly rpcServer: SorobanRpc.Server,

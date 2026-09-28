@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { DatabaseService } from '../common/database/database.service';
 
 export interface AuditLogEntry {
@@ -13,7 +14,7 @@ export interface AuditLogEntry {
 
 @Injectable()
 export class AuditService implements OnModuleInit {
-  private readonly logger = new Logger(AuditService.name);
+  private readonly logger = new SanitizedLogger(AuditService.name);
 
   constructor(private readonly db: DatabaseService) {}
 
@@ -33,9 +34,14 @@ export class AuditService implements OnModuleInit {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
           );
         `);
-        await this.db.query(`CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_id, entity_type);`);
+        await this.db.query(
+          `CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_id, entity_type);`,
+        );
       } catch (err) {
-        this.logger.error('Failed to initialize audit_logs table', err instanceof Error ? err.stack : String(err));
+        this.logger.error(
+          'Failed to initialize audit_logs table',
+          err instanceof Error ? err.stack : String(err),
+        );
       }
     }
   }
@@ -57,10 +63,13 @@ export class AuditService implements OnModuleInit {
           entry.beforeState ? JSON.stringify(entry.beforeState) : null,
           entry.afterState ? JSON.stringify(entry.afterState) : null,
           entry.metadata ? JSON.stringify(entry.metadata) : null,
-        ]
+        ],
       );
     } catch (error) {
-      this.logger.error('Failed to write audit log', error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        'Failed to write audit log',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -69,11 +78,14 @@ export class AuditService implements OnModuleInit {
     try {
       const result = await this.db.query(
         `SELECT * FROM audit_logs WHERE entity_id = $1 AND entity_type = $2 ORDER BY created_at DESC`,
-        [entityId, entityType]
+        [entityId, entityType],
       );
       return result.rows;
     } catch (error) {
-      this.logger.error('Failed to query audit logs', error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        'Failed to query audit logs',
+        error instanceof Error ? error.stack : String(error),
+      );
       return [];
     }
   }

@@ -1,10 +1,5 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { config } from '../config/env.config';
 
 /**
@@ -18,7 +13,7 @@ import { config } from '../config/env.config';
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
-  private readonly logger = new Logger(AdminGuard.name);
+  private readonly logger = new SanitizedLogger(AdminGuard.name);
   private readonly adminAddresses: Set<string>;
 
   constructor() {

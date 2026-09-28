@@ -1,10 +1,10 @@
 import {
   Injectable,
-  Logger,
   ConflictException,
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { randomUUID } from 'crypto';
 import { MigrationRegistryService } from './migration-registry.service';
 import { MigrationStateStore } from './migration-state.store';
@@ -40,7 +40,7 @@ export interface RunMigrationOptions {
  */
 @Injectable()
 export class MigrationRunnerService {
-  private readonly logger = new Logger(MigrationRunnerService.name);
+  private readonly logger = new SanitizedLogger(MigrationRunnerService.name);
 
   constructor(
     private readonly registry: MigrationRegistryService,

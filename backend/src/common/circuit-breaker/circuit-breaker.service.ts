@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import Breaker from 'opossum';
 
 export interface CircuitBreakerOptions {
@@ -13,7 +14,7 @@ export interface CircuitBreakerOptions {
 
 @Injectable()
 export class CircuitBreakerService {
-  private readonly logger = new Logger(CircuitBreakerService.name);
+  private readonly logger = new SanitizedLogger(CircuitBreakerService.name);
   private readonly breakers = new Map<string, Breaker>();
 
   getBreaker<T>(
@@ -51,11 +52,7 @@ export class CircuitBreakerService {
     return breaker;
   }
 
-  async execute<T>(
-    name: string,
-    fn: () => Promise<T>,
-    options: CircuitBreakerOptions,
-  ): Promise<T> {
+  async execute<T>(name: string, fn: () => Promise<T>, options: CircuitBreakerOptions): Promise<T> {
     const breaker = this.getBreaker(
       name,
       async function (this: Breaker) {
