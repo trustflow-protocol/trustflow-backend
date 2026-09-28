@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { Logger } from '@nestjs/common';
-import { EscrowService, ESCROW_PERSISTENCE_FALLBACK_METRIC } from './escrow.service';
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  EscrowService,
+  ESCROW_PERSISTENCE_FALLBACK_METRIC,
+  ESCROW_TRANSACTION_INCONSISTENT_METRIC,
+} from './escrow.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { makeFakeRedisClient } from '../testing/fake-redis-client';
@@ -468,7 +472,10 @@ describe('EscrowService', () => {
       });
     });
 
-    it('falls back to memory when a queued MULTI command fails without exec() itself rejecting', async () => {
+    it('refuses to report success when a queued MULTI command fails', async () => {
+      // Redis does NOT roll back the commands that already ran, so a per-command failure
+      // means part of the write is already durable. Reporting success here (and falling back
+      // to memory) is what produced inconsistent state.
       const redis = makeFakeRedisClient();
       redis.mockNextExecResult(async () => [
         [null, 'OK'],
@@ -476,17 +483,46 @@ describe('EscrowService', () => {
       ]);
       service = await buildService(redis);
 
-      const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
-
-      expect(escrow.status).toBe('pending');
-      expect(metrics.increment).toHaveBeenCalledWith(ESCROW_PERSISTENCE_FALLBACK_METRIC, {
+      await expect(service.create(DEPOSITOR, BENEFICIARY, AMOUNT)).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+      expect(metrics.increment).toHaveBeenCalledWith(ESCROW_TRANSACTION_INCONSISTENT_METRIC, {
         operation: 'create',
+        reason: 'command-failed',
       });
+      // The in-memory fallback must NOT have been used for an integrity failure.
+      expect(metrics.increment).not.toHaveBeenCalledWith(
+        ESCROW_PERSISTENCE_FALLBACK_METRIC,
+        expect.anything(),
+      );
     });
 
-    it('falls back to memory when exec() resolves null (e.g. an aborted WATCH)', async () => {
+    it('refuses to report success when exec() resolves null (an aborted transaction)', async () => {
       const redis = makeFakeRedisClient();
       redis.mockNextExecResult(async () => null);
+      service = await buildService(redis);
+
+      await expect(service.create(DEPOSITOR, BENEFICIARY, AMOUNT)).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+      expect(metrics.increment).toHaveBeenCalledWith(ESCROW_TRANSACTION_INCONSISTENT_METRIC, {
+        operation: 'create',
+        reason: 'aborted',
+      });
+      expect(metrics.increment).not.toHaveBeenCalledWith(
+        ESCROW_PERSISTENCE_FALLBACK_METRIC,
+        expect.anything(),
+      );
+    });
+
+    it('still falls back to memory for a genuine connectivity failure', async () => {
+      // A connection error means nothing was applied, so degrading is safe and keeps the
+      // app available. This is deliberately different from the two cases above.
+      const redis = makeFakeRedisClient();
+      redis.get.mockRejectedValue(new Error('Redis down'));
+      redis.multi.mockImplementation(() => {
+        throw new Error('Redis down');
+      });
       service = await buildService(redis);
 
       const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);

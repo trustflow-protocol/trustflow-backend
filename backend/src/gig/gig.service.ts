@@ -3,14 +3,18 @@ import {
   ConflictException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { createHash } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import {
+  assertTransactionApplied,
+  isTransactionIntegrityError,
+} from '../common/redis/redis-transaction';
 import { MetricsService } from '../monitoring/metrics.service';
 import { CreateGigDto, SearchGigsQuery, UpdateGigDto } from './gig.dto';
 import {
@@ -48,7 +52,7 @@ export const GIG_PERSISTENCE_FALLBACK_METRIC = 'gig_persistence_fallback_total';
  */
 @Injectable()
 export class GigService implements OnModuleInit {
-  private readonly logger = new Logger(GigService.name);
+  private readonly logger = new SanitizedLogger(GigService.name);
 
   /** Fallback store, only used while Redis is unavailable. */
   private readonly gigs = new Map<string, Gig>();
@@ -102,7 +106,7 @@ export class GigService implements OnModuleInit {
           .sadd(this.creatorKey(gig.creator), id);
         if (event) this.outbox!.appendToTransaction(transaction, event);
         const results = await transaction.exec();
-        this.assertTransactionOk(results);
+        assertTransactionApplied(results);
         await this.invalidateSearchCache();
         return gig;
       } catch (err) {
@@ -237,10 +241,7 @@ export class GigService implements OnModuleInit {
     return result;
   }
 
-  private async mutateWithRetry<T>(
-    id: string,
-    operation: (gig: Gig) => Promise<T>,
-  ): Promise<T> {
+  private async mutateWithRetry<T>(id: string, operation: (gig: Gig) => Promise<T>): Promise<T> {
     const maxRetries = 3;
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -255,7 +256,11 @@ export class GigService implements OnModuleInit {
       const gig = await this.tryFindById(id);
       if (!gig) {
         if (this.redis) {
-          try { await this.redis.unwatch(); } catch (err) { /* ignore */ }
+          try {
+            await this.redis.unwatch();
+          } catch (err) {
+            /* ignore */
+          }
         }
         throw new NotFoundException(`Gig ${id} not found`);
       }
@@ -267,15 +272,22 @@ export class GigService implements OnModuleInit {
         if (!this.redis) {
           const inMem = this.gigs.get(id);
           if (inMem && inMem.version !== currentVersion + 1) {
-             throw new Error('In-memory transaction aborted');
+            throw new Error('In-memory transaction aborted');
           }
         }
         return result;
       } catch (err: any) {
         if (this.redis) {
-          try { await this.redis.unwatch(); } catch (e) { /* ignore */ }
+          try {
+            await this.redis.unwatch();
+          } catch (e) {
+            /* ignore */
+          }
         }
-        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed') || err.message?.includes('In-memory transaction aborted')) {
+        if (
+          isTransactionIntegrityError(err) ||
+          err.message?.includes('In-memory transaction aborted')
+        ) {
           lastError = err;
           continue;
         }
@@ -286,7 +298,7 @@ export class GigService implements OnModuleInit {
   }
 
   async accept(id: string, responder: string): Promise<Gig> {
-    return this.mutateWithRetry(id, async (gig) => {
+    return this.mutateWithRetry(id, async gig => {
       if (gig.status !== GigStatus.OPEN) {
         throw new ConflictException(`Cannot accept a gig with status "${gig.status}"`);
       }
@@ -300,7 +312,7 @@ export class GigService implements OnModuleInit {
   }
 
   async cancel(id: string): Promise<Gig> {
-    return this.mutateWithRetry(id, async (gig) => {
+    return this.mutateWithRetry(id, async gig => {
       if (gig.status !== GigStatus.OPEN) {
         throw new ConflictException(`Cannot cancel a gig with status "${gig.status}"`);
       }
@@ -313,14 +325,16 @@ export class GigService implements OnModuleInit {
   }
 
   async update(id: string, dto: UpdateGigDto): Promise<Gig> {
-    return this.mutateWithRetry(id, async (gig) => {
+    return this.mutateWithRetry(id, async gig => {
       if (gig.status !== GigStatus.OPEN) {
         throw new ConflictException(`Cannot update a gig with status "${gig.status}"`);
       }
       if (dto.title !== undefined) gig.title = dto.title;
       if (dto.budgetXLM !== undefined) gig.budgetXLM = dto.budgetXLM;
       if (dto.responseWindowHours !== undefined) {
-        gig.respondBy = new Date(Date.now() + dto.responseWindowHours * 60 * 60 * 1000).toISOString();
+        gig.respondBy = new Date(
+          Date.now() + dto.responseWindowHours * 60 * 60 * 1000,
+        ).toISOString();
       }
       gig.version = (gig.version || 1) + 1;
       await this.persistGig(gig);
@@ -329,7 +343,7 @@ export class GigService implements OnModuleInit {
   }
 
   async remove(id: string): Promise<void> {
-    return this.mutateWithRetry(id, async (gig) => {
+    return this.mutateWithRetry(id, async gig => {
       if (gig.status === GigStatus.ACCEPTED) {
         throw new ConflictException('Cannot delete an accepted gig');
       }
@@ -342,11 +356,11 @@ export class GigService implements OnModuleInit {
             .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, id)
             .srem(this.creatorKey(gig.creator), id);
           const results = await transaction.exec();
-          this.assertTransactionOk(results);
+          assertTransactionApplied(results);
           await this.invalidateSearchCache();
           return;
         } catch (err: any) {
-          if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+          if (isTransactionIntegrityError(err)) {
             throw err;
           }
           this.logFallback('remove', err);
@@ -362,7 +376,7 @@ export class GigService implements OnModuleInit {
    * resolved by the time the sweep reached it. Used by the expiry sweep worker.
    */
   async expire(id: string): Promise<Gig | undefined> {
-    return this.mutateWithRetry(id, async (gig) => {
+    return this.mutateWithRetry(id, async gig => {
       if (gig.status !== GigStatus.OPEN) return undefined;
       gig.status = GigStatus.EXPIRED;
       gig.expiredAt = new Date().toISOString();
@@ -383,11 +397,11 @@ export class GigService implements OnModuleInit {
           .zrem(GIGS_OPEN_BY_RESPOND_BY_KEY, gig.id);
         if (event) this.outbox!.appendToTransaction(transaction, event);
         const results = await transaction.exec();
-        this.assertTransactionOk(results);
+        assertTransactionApplied(results);
         await this.invalidateSearchCache();
         return;
       } catch (err: any) {
-        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+        if (isTransactionIntegrityError(err)) {
           throw err;
         }
         this.logFallback('persistResolved', err);
@@ -413,11 +427,11 @@ export class GigService implements OnModuleInit {
           .set(this.gigKey(gig.id), JSON.stringify(gig))
           .zadd(GIGS_OPEN_BY_RESPOND_BY_KEY, new Date(gig.respondBy).getTime(), gig.id)
           .exec();
-        this.assertTransactionOk(results);
+        assertTransactionApplied(results);
         await this.invalidateSearchCache();
         return;
       } catch (err: any) {
-        if (err.message?.includes('transaction aborted') || err.message?.includes('transaction command failed')) {
+        if (isTransactionIntegrityError(err)) {
           throw err;
         }
         this.logFallback('persistGig', err);
@@ -444,23 +458,6 @@ export class GigService implements OnModuleInit {
     if (ids.length === 0) return [];
     const raw = await this.redis!.mget(...ids.map(id => this.gigKey(id)));
     return raw.filter((r): r is string => r !== null).map(r => JSON.parse(r) as Gig);
-  }
-
-  /**
-   * `MULTI`/`EXEC` only rejects the whole batch on a queue-time error (e.g. a malformed
-   * command); a runtime failure in one queued command instead surfaces as a per-command
-   * `[Error, null]` entry in the results array while `exec()` itself still resolves. Without
-   * this check a partially-applied transaction (e.g. the entity written but an index update
-   * silently dropped) would be treated as a full success.
-   */
-  private assertTransactionOk(results: Array<[Error | null, unknown]> | null): void {
-    if (!results) {
-      throw new Error('Redis transaction aborted (exec() returned null, e.g. a WATCH conflict)');
-    }
-    const failed = results.find(([err]) => err);
-    if (failed) {
-      throw new Error(`Redis transaction command failed: ${failed[0]!.message}`);
-    }
   }
 
   private gigKey(id: string): string {
