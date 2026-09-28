@@ -25,6 +25,8 @@ import { SorobanEventIndexerModule } from './soroban-event-indexer/soroban-event
 import { OutboxModule } from './outbox/outbox.module';
 import { LoggingModule } from './common/logging/logging.module';
 import { CorrelationIdMiddleware } from './common/logging/correlation-id.middleware';
+import { ShutdownModule } from './common/shutdown/shutdown.module';
+import { DrainMiddleware } from './common/shutdown/drain.middleware';
 
 import { AuditModule } from './audit/audit.module';
 
@@ -32,6 +34,7 @@ import { AuditModule } from './audit/audit.module';
   imports: [
     ScheduleModule.forRoot(),
     LoggingModule,
+    ShutdownModule,
     SentryModule,
     RedisModule,
     DatabaseModule,
@@ -60,6 +63,11 @@ import { AuditModule } from './audit/audit.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
+    // Correlation ID first so every later log line — including the drain middleware's own —
+    // can be attributed to a request. DrainMiddleware must run after it but before the
+    // route handlers, so that a request rejected with 503 during a shutdown is still logged
+    // with its correlation ID rather than silently shed.
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+    consumer.apply(DrainMiddleware).forRoutes('*');
   }
 }

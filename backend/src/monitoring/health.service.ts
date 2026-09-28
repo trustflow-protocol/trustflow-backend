@@ -2,6 +2,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import { DatabaseService } from '../common/database/database.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { DrainStateService } from '../common/shutdown/drain-state.service';
 import { config } from '../config/env.config';
 
 export interface HealthStatus {
@@ -26,13 +27,26 @@ export class HealthService {
   constructor(
     @Optional() private readonly database?: DatabaseService,
     @Optional() @Inject(REDIS_CLIENT) private readonly redis?: Redis | null,
+    @Optional() private readonly drainState?: DrainStateService,
   ) {}
 
   async liveness(): Promise<LivenessProbe> {
     return { status: 'up' };
   }
 
+  /**
+   * Reports `down` as soon as a shutdown has begun, regardless of dependency health.
+   *
+   * This is the signal that removes the instance from the load balancer's rotation. Without
+   * it, readiness keeps returning 200 until the process has already exited, so the balancer
+   * keeps sending requests into a closing socket — which is how a deploy turns into a burst of
+   * failed transactions.
+   */
   async readiness(): Promise<ReadinessProbe> {
+    if (this.drainState?.isDraining()) {
+      return { status: 'down', checks: { draining: false } };
+    }
+
     const checks = await this.runAllChecks();
     const failing = Object.values(checks).filter(v => !v).length;
     return {
@@ -101,7 +115,10 @@ export class HealthService {
   private async checkStellar(): Promise<boolean> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), config.STELLAR_HEALTH_CHECK_TIMEOUT_MS);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        config.STELLAR_HEALTH_CHECK_TIMEOUT_MS,
+      );
       const url = config.STELLAR_HORIZON_URL;
       const r = await fetch(`${url}/`, { signal: controller.signal });
       clearTimeout(timeoutId);

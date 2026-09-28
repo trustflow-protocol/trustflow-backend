@@ -35,13 +35,20 @@ const EnvSchema = z
     // Server configuration
     PORT: z.coerce.number().int().positive().default(3001),
     CORS_ORIGIN: z.preprocess(
-      (val) => {
+      val => {
         if (typeof val !== 'string') return undefined;
         if (!val.trim()) return undefined;
-        const origins = Array.from(new Set(val.split(',').map(s => s.trim()).filter(Boolean)));
+        const origins = Array.from(
+          new Set(
+            val
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean),
+          ),
+        );
         return origins.length > 0 ? origins : undefined;
       },
-      z.array(z.string().url().or(z.literal('*'))).optional()
+      z.array(z.string().url().or(z.literal('*'))).optional(),
     ),
     API_URL: z.string().url().optional().default('http://localhost:3001'),
     BODY_LIMIT_MB: z.coerce.number().int().positive().default(15),
@@ -199,8 +206,9 @@ const EnvSchema = z
       .int()
       .optional()
       .describe('Interval between IPFS repin sweeps in milliseconds'),
-    IPFS_REPIN_SWEEP_CONCURRENCY: optionalPositiveInt()
-      .describe('Max concurrent CID reconciliations per IPFS repin sweep. Default 8.'),
+    IPFS_REPIN_SWEEP_CONCURRENCY: optionalPositiveInt().describe(
+      'Max concurrent CID reconciliations per IPFS repin sweep. Default 8.',
+    ),
 
     // Reputation System Configuration
     REPUTATION_DECAY_HALF_LIFE_MS: z.coerce.number().int().positive().optional(),
@@ -211,7 +219,22 @@ const EnvSchema = z
       .int()
       .positive()
       .default(30000)
-      .describe('Global inbound request timeout in milliseconds (408 Request Timeout returned on timeout). Default 30s.'),
+      .describe(
+        'Global inbound request timeout in milliseconds (408 Request Timeout returned on timeout). Default 30s.',
+      ),
+
+    // Graceful Shutdown Configuration
+    SHUTDOWN_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(30_000)
+      .describe(
+        'How long to wait for in-flight requests to complete after SIGTERM before forcing exit',
+      ),
+    SHUTDOWN_FORCE_EXIT: optionalBool().describe(
+      'Set to false to skip the process.exit() after a clean shutdown (e.g. under a test runner that owns the event loop)',
+    ),
 
     // Gig Expiry Worker Configuration
     GIG_EXPIRY_SWEEP_INTERVAL_MS: z.coerce
@@ -219,10 +242,12 @@ const EnvSchema = z
       .int()
       .optional()
       .describe('Gig expiry sweep interval in milliseconds. 0 or negative disables the sweep.'),
-    GIG_EXPIRY_SWEEP_CONCURRENCY: optionalPositiveInt()
-      .describe('Max concurrent gig expirations per sweep. Default 8.'),
-    GIG_EXPIRY_SWEEP_MAX_GIGS: optionalPositiveInt()
-      .describe('Cap on gigs to expire per sweep; continuing on next tick if more remain. Prevents monopolising a tick. Default unlimited.'),
+    GIG_EXPIRY_SWEEP_CONCURRENCY: optionalPositiveInt().describe(
+      'Max concurrent gig expirations per sweep. Default 8.',
+    ),
+    GIG_EXPIRY_SWEEP_MAX_GIGS: optionalPositiveInt().describe(
+      'Cap on gigs to expire per sweep; continuing on next tick if more remain. Prevents monopolising a tick. Default unlimited.',
+    ),
   })
   .superRefine((data, ctx) => {
     const issue = (path: string, message: string) =>
@@ -252,7 +277,11 @@ const EnvSchema = z
       issue('SWAGGER_USER', 'protect production Swagger with SWAGGER_USER and SWAGGER_PASSWORD');
     }
 
-    if (isProduction && (!data.REDIS_URL || data.REDIS_URL.trim() === '') && data.ALLOW_NO_REDIS !== 'true') {
+    if (
+      isProduction &&
+      (!data.REDIS_URL || data.REDIS_URL.trim() === '') &&
+      data.ALLOW_NO_REDIS !== 'true'
+    ) {
       issue(
         'REDIS_URL',
         'REDIS_URL is required in production unless ALLOW_NO_REDIS=true is set for a deliberate single-node opt-out',

@@ -1,7 +1,9 @@
-import { INestApplication, Logger, ValidationPipe, VersioningType } from '@nestjs/common';
+import { INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
+import { SanitizedLogger } from './common/logging/sanitized-logger';
 import { SwaggerModule, DocumentBuilder, OpenAPIObject } from '@nestjs/swagger';
 import * as express from 'express';
-import helmet from 'helmet';
+import type { RequestHandler } from 'express';
+import { createSecurityHeadersMiddleware } from './common/http/docs-security';
 import { SentryService } from './sentry/sentry.service';
 import { SentryExceptionFilter } from './common/filters/sentry-exception.filter';
 import { SorobanEventIndexerService } from './soroban-event-indexer/soroban-event-indexer.service';
@@ -10,7 +12,7 @@ import { RequestTimeoutInterceptor } from './common/http/request-timeout.interce
 import { CorrelationIdStore } from './common/logging/correlation-id.store';
 import { config } from './config/env.config';
 
-const logger = new Logger('AppSetup');
+const logger = new SanitizedLogger('AppSetup');
 
 export interface ConfigureAppOptions {
   /**
@@ -24,6 +26,17 @@ export interface ConfigureAppOptions {
    * don't want a real network poller running against the test process. Default: false.
    */
   skipIndexerStart?: boolean;
+  /**
+   * Skip building and mounting the Swagger UI. Use to keep the documentation endpoints
+   * absent in production. Default: false.
+   */
+  skipSwagger?: boolean;
+  /**
+   * Middleware mounted in front of `/api/docs*` — in practice HTTP basic auth. Mounting it
+   * here rather than in `main.ts` keeps protection attached to the routes it guards, so a
+   * test that calls `configureApp` cannot end up serving public docs.
+   */
+  docsAuth?: RequestHandler;
 }
 
 /**
@@ -35,22 +48,15 @@ export interface ConfigureAppOptions {
  * hand-rolling a partial copy.
  */
 export function configureApp(app: INestApplication, options: ConfigureAppOptions = {}): void {
-  // Apply Helmet security headers middleware before other middleware.
-  // Content Security Policy is configured to allow Swagger UI at /api/docs to render
-  // correctly with inline scripts, styles, and external favicon/images.
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: [`'self'`],
-          styleSrc: [`'self'`, `'unsafe-inline'`],
-          imgSrc: [`'self'`, 'data:', 'https:'],
-          scriptSrc: [`'self'`, `'unsafe-inline'`],
-        },
-      },
-      crossOriginEmbedderPolicy: false,
-    }),
-  );
+  // Security headers before any other middleware. `createSecurityHeadersMiddleware()` applies
+  // the strict API CSP (`default-src 'none'`, no `unsafe-inline`) to every route and the
+  // relaxed one only to `/api/docs*`, which is what Swagger needs to render.
+  //
+  // A single blanket `helmet({ ...relaxed... })` used to be applied to all routes here, which
+  // meant every JSON API response shipped a policy allowing inline script — and
+  // `security-headers.spec.ts`, which asserts the strict per-path behavior, never exercised
+  // this function so the regression went unnoticed.
+  app.use(createSecurityHeadersMiddleware());
 
   // Explicit body-size limit for JSON payloads.
   // The IPFS pin endpoint accepts base64-encoded deliverable content; 10 MB decoded
@@ -99,7 +105,7 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
   }
 
   app.enableCors({
-    origin: corsOrigin?.includes('*') ? '*' : (corsOrigin || '*'),
+    origin: corsOrigin?.includes('*') ? '*' : corsOrigin || '*',
     credentials: true,
   });
 
@@ -118,8 +124,12 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
     defaultVersion: '1',
   });
 
-  const document = buildOpenApiDocument(app);
-  setupSwaggerUi(app, document);
+  if (!options.skipSwagger) {
+    if (options.docsAuth) {
+      app.use(['/api/docs', '/api/docs-json'], options.docsAuth);
+    }
+    setupSwaggerUi(app, buildOpenApiDocument(app));
+  }
 
   if (!options.skipIndexerStart) {
     const indexer = app.get(SorobanEventIndexerService);
