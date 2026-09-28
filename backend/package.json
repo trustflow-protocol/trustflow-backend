@@ -19,7 +19,10 @@
     "format:check": "prettier --check \"src/**/*.ts\"",
     "check:cycles": "madge --circular --extensions ts src",
     "export-openapi": "ts-node --transpile-only scripts/export-openapi.ts",
-    "prepare": "cd .. && husky backend/.husky || true"
+    "prepare": "cd .. && husky backend/.husky || true",
+    "backup:postgres": "bash scripts/backup-postgres.sh",
+    "backup:redis": "bash scripts/backup-redis.sh",
+    "restore:postgres": "bash scripts/restore-postgres.sh"
   },
   "lint-staged": {
     "src/**/*.ts": [
