@@ -104,7 +104,7 @@ describe('ReputationController Supertest integration', () => {
       { address: 'GLOW', score: 10 },
     ]);
 
-    const response = await request(app.getHttpServer()).get('/reputation/leaderboard').expect(200);
+    const response = await request(app.getHttpServer()).get('/v1/reputation/leaderboard').expect(200);
 
     expect(response.body).toEqual([
       { address: 'GHIGH', score: 90 },
@@ -116,7 +116,7 @@ describe('ReputationController Supertest integration', () => {
   it('GET /reputation/leaderboard?limit=1 forwards the parsed limit', async () => {
     mockService.getLeaderboard.mockReturnValue([{ address: 'GHIGH', score: 90 }]);
 
-    await request(app.getHttpServer()).get('/reputation/leaderboard?limit=1').expect(200);
+    await request(app.getHttpServer()).get('/v1/reputation/leaderboard?limit=1').expect(200);
 
     expect(mockService.getLeaderboard).toHaveBeenCalledWith(1);
   });
@@ -131,7 +131,7 @@ describe('ReputationController Supertest integration', () => {
       lastUpdatedAt: '2026-01-01T00:00:00.000Z',
     });
 
-    const response = await request(app.getHttpServer()).get('/reputation/GABC').expect(200);
+    const response = await request(app.getHttpServer()).get('/v1/reputation/GABC').expect(200);
 
     expect(response.body).toMatchObject({ address: 'GABC', score: 42.5 });
     expect(mockService.getScore).toHaveBeenCalledWith('GABC');
@@ -140,7 +140,7 @@ describe('ReputationController Supertest integration', () => {
   it('routes /reputation/leaderboard to the leaderboard handler, not :address', async () => {
     mockService.getLeaderboard.mockReturnValue([]);
 
-    await request(app.getHttpServer()).get('/reputation/leaderboard').expect(200);
+    await request(app.getHttpServer()).get('/v1/reputation/leaderboard').expect(200);
 
     expect(mockService.getScore).not.toHaveBeenCalled();
     expect(mockService.getLeaderboard).toHaveBeenCalled();

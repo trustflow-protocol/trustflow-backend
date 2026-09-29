@@ -84,7 +84,7 @@ describe('IdempotencyKeyInterceptor', () => {
 
     it('passes through when no Idempotency-Key header is present', async () => {
       const res = await request(app.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .send({ foo: 'bar' })
         .expect(201);
 
@@ -98,7 +98,7 @@ describe('IdempotencyKeyInterceptor', () => {
       const idempotencyKey = 'test-uuid-123';
 
       const res1 = await request(app.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .set('Idempotency-Key', idempotencyKey)
         .send(body)
         .expect(201);
@@ -122,7 +122,7 @@ describe('IdempotencyKeyInterceptor', () => {
       });
 
       const res2 = await request(app.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .set('Idempotency-Key', idempotencyKey)
         .send(body)
         .expect(201);
@@ -139,13 +139,13 @@ describe('IdempotencyKeyInterceptor', () => {
       const idempotencyKey = 'test-uuid-456';
 
       await request(app.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .set('Idempotency-Key', idempotencyKey)
         .send({ foo: 'bar' })
         .expect(201);
 
       const res2 = await request(app.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .set('Idempotency-Key', idempotencyKey)
         .send({ foo: 'DIFFERENT' })
         .expect(422);
@@ -174,7 +174,7 @@ describe('IdempotencyKeyInterceptor', () => {
       );
 
       const res = await request(app.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .set('Idempotency-Key', idempotencyKey)
         .send({ foo: 'bar' })
         .expect(409);
@@ -187,7 +187,7 @@ describe('IdempotencyKeyInterceptor', () => {
 
     it('ignores the header on endpoints without @Idempotent()', async () => {
       const res = await request(app.getHttpServer())
-        .post('/idempotency-test/not-idempotent')
+        .post('/v1/idempotency-test/not-idempotent')
         .set('Idempotency-Key', 'any-key')
         .send({ x: 1 })
         .expect(201);
@@ -213,7 +213,7 @@ describe('IdempotencyKeyInterceptor', () => {
       await nullApp.init();
 
       const res = await request(nullApp.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .set('Idempotency-Key', 'some-key')
         .send({ foo: 'bar' })
         .expect(201);
@@ -245,7 +245,7 @@ describe('IdempotencyKeyInterceptor', () => {
       await flakyApp.init();
 
       const res = await request(flakyApp.getHttpServer())
-        .post('/idempotency-test/idempotent')
+        .post('/v1/idempotency-test/idempotent')
         .set('Idempotency-Key', 'some-key')
         .send({ foo: 'bar' })
         .expect(201);

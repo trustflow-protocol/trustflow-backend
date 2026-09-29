@@ -1,4 +1,5 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { WebhookModule } from './webhook/webhook.module';
@@ -24,10 +25,16 @@ import { SorobanEventIndexerModule } from './soroban-event-indexer/soroban-event
 import { OutboxModule } from './outbox/outbox.module';
 import { LoggingModule } from './common/logging/logging.module';
 import { CorrelationIdMiddleware } from './common/logging/correlation-id.middleware';
+import { ShutdownModule } from './common/shutdown/shutdown.module';
+import { DrainMiddleware } from './common/shutdown/drain.middleware';
+
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     LoggingModule,
+    ShutdownModule,
     SentryModule,
     RedisModule,
     DatabaseModule,
@@ -51,10 +58,16 @@ import { CorrelationIdMiddleware } from './common/logging/correlation-id.middlew
     MilestoneNotificationsModule,
     SorobanEventIndexerModule,
     OutboxModule,
+    AuditModule,
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
+    // Correlation ID first so every later log line — including the drain middleware's own —
+    // can be attributed to a request. DrainMiddleware must run after it but before the
+    // route handlers, so that a request rejected with 503 during a shutdown is still logged
+    // with its correlation ID rather than silently shed.
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+    consumer.apply(DrainMiddleware).forRoutes('*');
   }
 }

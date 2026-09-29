@@ -1,6 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import * as https from 'https';
 import { config } from '../config/env.config';
+import { MetricsService } from '../monitoring/metrics.service';
+import { withRetry, isRetryable } from './retry.helper';
 
 interface DiscordEmbed {
   title: string;
@@ -17,15 +20,19 @@ interface DiscordWebhookPayload {
 
 @Injectable()
 export class DiscordService {
-  private readonly logger = new Logger(DiscordService.name);
+  private readonly logger = new SanitizedLogger(DiscordService.name);
   private readonly webhookUrl: string;
+  /** Permanent failures that should not be retried. */
+  private readonly failedNotifications = new Map<string, { error: string; timestamp: string }>();
 
-  constructor() {
+  constructor(@Optional() private readonly metrics?: MetricsService) {
     this.webhookUrl = config.DISCORD_WEBHOOK_URL || '';
   }
 
   /**
-   * Send a notification to Discord when a dispute needs jurors
+   * Send a notification to Discord when a dispute needs jurors.
+   * Retries transient failures with exponential backoff; permanent failures are recorded
+   * in a dead-letter map (#394). Does not block the dispute request — returns immediately.
    */
   async notifyDisputeNeedsJurors(disputeData: {
     escrowId: string;
@@ -35,7 +42,7 @@ export class DiscordService {
     reason?: string;
   }): Promise<void> {
     if (!this.webhookUrl) {
-      this.logger.warn('Discord webhook URL not configured. Skipping notification.');
+      this.logger.debug('Discord webhook URL not configured. Skipping notification.');
       return;
     }
 
@@ -61,20 +68,54 @@ export class DiscordService {
       embeds: [embed],
     };
 
-    try {
-      await this.sendWebhook(payload);
-      this.logger.log(`Discord notification sent for dispute: ${disputeData.escrowId}`);
-    } catch (error) {
+    // Deliver asynchronously without blocking the request path
+    this.sendWithRetry(payload, disputeData.escrowId).catch(error => {
+      // Log permanent failure but don't throw (request is already in response path)
       this.logger.error(
-        `Failed to send Discord notification: ${error instanceof Error ? error.message : String(error)}`,
+        `Discord notification permanently failed for dispute ${disputeData.escrowId}: ${error instanceof Error ? error.message : String(error)}`,
       );
+    });
+  }
+
+  /**
+   * Attempt to send a notification with exponential backoff retry on transient failures.
+   * Permanent failures (4xx except 429, configuration errors) are recorded in dead-letter.
+   */
+  private async sendWithRetry(payload: DiscordWebhookPayload, disputeId: string): Promise<void> {
+    const maxAttempts = config.DISCORD_NOTIFICATION_MAX_RETRIES;
+    const baseDelayMs = config.DISCORD_NOTIFICATION_RETRY_BASE_DELAY_MS;
+
+    try {
+      await withRetry(
+        () => this.sendWebhook(payload, disputeId),
+        maxAttempts,
+        baseDelayMs,
+        error => {
+          const retryable = isRetryable(error);
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.debug(
+            `Discord notification for ${disputeId}: ${retryable ? 'retryable' : 'permanent'} error: ${message}`,
+          );
+          return retryable;
+        },
+      );
+      this.logger.log(`Discord notification delivered for dispute: ${disputeId}`);
+      this.metrics?.increment('discord_notifications_sent_total');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.failedNotifications.set(disputeId, {
+        error: message,
+        timestamp: new Date().toISOString(),
+      });
+      this.metrics?.increment('discord_notifications_failed_total', { reason: 'permanent' });
+      throw error; // Re-throw so caller knows delivery ultimately failed
     }
   }
 
   /** Milliseconds to wait for a Discord webhook response before aborting. */
   static readonly WEBHOOK_TIMEOUT_MS = 5_000;
 
-  private async sendWebhook(payload: DiscordWebhookPayload): Promise<void> {
+  private async sendWebhook(payload: DiscordWebhookPayload, disputeId?: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const body = JSON.stringify(payload);
       const url = new URL(this.webhookUrl);
@@ -91,11 +132,30 @@ export class DiscordService {
       };
 
       const req = https.request(options, res => {
-        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-          resolve();
-        } else {
-          reject(new Error(`Discord webhook returned status ${res.statusCode}`));
-        }
+        const chunks: Buffer[] = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+          } else {
+            let errorMsg = `Discord webhook returned status ${res.statusCode}`;
+            // Try to extract error details from Discord response
+            const responseBody = Buffer.concat(chunks).toString('utf8');
+            if (responseBody && res.statusCode === 429) {
+              errorMsg += ' (rate limited)';
+            } else if (responseBody) {
+              try {
+                const response = JSON.parse(responseBody);
+                if (response.message) {
+                  errorMsg += `: ${response.message}`;
+                }
+              } catch {
+                // Ignore parse errors, use default message
+              }
+            }
+            reject(new Error(errorMsg));
+          }
+        });
       });
 
       req.on('timeout', () => {
@@ -108,6 +168,11 @@ export class DiscordService {
       req.write(body);
       req.end();
     });
+  }
+
+  /** Returns the current dead-letter list of permanently failed notifications. */
+  getFailedNotifications(): Map<string, { error: string; timestamp: string }> {
+    return this.failedNotifications;
   }
 
   private truncateAddress(address: string): string {

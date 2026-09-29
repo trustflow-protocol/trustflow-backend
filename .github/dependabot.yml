@@ -1,0 +1,64 @@
+version: 2
+updates:
+  # Node.js packages in backend
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "daily"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "0xsteins"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    groups:
+      security:
+        dependency-type: "direct"
+        update-types:
+          - "version-update:semver-patch"
+          - "version-update:semver-minor"
+        patterns:
+          # Security-related packages
+          - "@sentry/*"
+          - "helmet"
+          - "passport*"
+          - "class-validator"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-scope: "backend"
+      include: "scope"
+    rebase-strategy: "auto"
+    target-branch: "main"
+    # Skip creating PRs for dependencies that would break the build
+    ignore:
+      - dependency-name: "node"
+        # Homogeneous with the .nvmrc version
+
+  # Docker images
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "0xsteins"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "0xsteins"
+    commit-message:
+      prefix: "ci"
+      prefix-scope: "actions"

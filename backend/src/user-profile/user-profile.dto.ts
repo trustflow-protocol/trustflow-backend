@@ -45,7 +45,7 @@ export type CreateUserProfileDto = z.infer<typeof CreateUserProfileSchema>;
 
 /**
  * Schema for updating an existing user profile
- * All fields are optional except walletAddress for identification
+ * All fields are optional. Status is intentionally excluded — only admins can modify status.
  */
 export const UpdateUserProfileSchema = z.object({
   name: z
@@ -66,7 +66,6 @@ export const UpdateUserProfileSchema = z.object({
       website: z.string().regex(URL_REGEX).optional(),
     })
     .optional(),
-  status: z.nativeEnum(UserStatus).optional(),
 });
 
 export type UpdateUserProfileDto = z.infer<typeof UpdateUserProfileSchema>;
@@ -100,7 +99,8 @@ export type SearchQueryDto = z.infer<typeof SearchQuerySchema>;
 
 /**
  * Response DTO for user profile
- * Excludes sensitive internal fields
+ * Excludes sensitive internal fields, including the email address: this is the only shape
+ * unauthenticated endpoints may return.
  */
 export interface UserProfileResponseDto {
   id: string;
@@ -126,4 +126,12 @@ export interface UserProfileResponseDto {
   createdAt: string;
   updatedAt: string;
   lastActiveAt?: string;
+}
+
+/**
+ * Response DTO for a profile read by its own owner — the public view plus the email address
+ * the owner registered with. Never returned to anyone else.
+ */
+export interface OwnerProfileResponseDto extends UserProfileResponseDto {
+  email?: string;
 }

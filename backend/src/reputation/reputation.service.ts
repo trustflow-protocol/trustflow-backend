@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { ReputationScoreStore } from './reputation-score.store';
 import {
   EscrowParties,
@@ -12,6 +13,7 @@ import {
   ReputationScoreRecord,
   ReputationScoreView,
 } from './reputation.types';
+import { parseAmount } from '../common/amount';
 
 /**
  * Computes Sybil-resistant, time-decayed trust scores from escrow completion and
@@ -44,7 +46,7 @@ import {
  */
 @Injectable()
 export class ReputationService {
-  private readonly logger = new Logger(ReputationService.name);
+  private readonly logger = new SanitizedLogger(ReputationService.name);
 
   /**
    * `ReputationScoreStore` may now be Redis-backed (real I/O), so `applyContribution`'s
@@ -223,9 +225,13 @@ export class ReputationService {
   }
 
   private amountWeight(amountXLM: string): number {
-    const amount = Number(amountXLM);
-    if (!Number.isFinite(amount) || amount <= 0) return 0;
-    return Math.min(Math.sqrt(amount), REPUTATION_MAX_AMOUNT_WEIGHT);
+    try {
+      const amount = parseAmount(amountXLM).toNumber();
+      if (!Number.isFinite(amount) || amount <= 0) return 0;
+      return Math.min(Math.sqrt(amount), REPUTATION_MAX_AMOUNT_WEIGHT);
+    } catch {
+      return 0;
+    }
   }
 
   private toView(record: ReputationScoreRecord): ReputationScoreView {

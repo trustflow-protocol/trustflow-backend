@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
+  MAX_BASE64_CONTENT_LENGTH,
   PinProviderName,
   PinRecord,
   PinStatus,
@@ -28,7 +29,7 @@ export class PinContentDto {
   })
   @IsBase64()
   @IsNotEmpty()
-  @MaxLength(14_316_560, {
+  @MaxLength(MAX_BASE64_CONTENT_LENGTH, {
     message: 'content exceeds the maximum allowed size of 10 MB (decoded)',
   })
   content: string;
@@ -65,9 +66,9 @@ export class PinContentDto {
 }
 
 export class ProviderPinRecordDto implements ProviderPinRecord {
-  @ApiProperty({ enum: PinProviderName }) provider: PinProviderName;
-  @ApiProperty({ enum: ProviderPinStatus }) status: ProviderPinStatus;
-  @ApiProperty() attempts: number;
+  @ApiProperty({ enum: PinProviderName }) provider!: PinProviderName;
+  @ApiProperty({ enum: ProviderPinStatus }) status!: ProviderPinStatus;
+  @ApiProperty() attempts!: number;
   @ApiPropertyOptional() pinnedAt?: string;
   @ApiPropertyOptional() lastVerifiedAt?: string;
   @ApiPropertyOptional() lastError?: string;
@@ -75,12 +76,12 @@ export class ProviderPinRecordDto implements ProviderPinRecord {
 
 export class PinRecordResponseDto implements PinRecord {
   @ApiProperty({ description: 'Content identifier (CIDv1, raw, sha2-256)' })
-  cid: string;
-  @ApiProperty() size: number;
+  cid!: string;
+  @ApiProperty() size!: number;
   @ApiPropertyOptional() filename?: string;
-  @ApiProperty() replicationFactor: number;
-  @ApiProperty({ enum: PinStatus }) status: PinStatus;
-  @ApiProperty({ type: [ProviderPinRecordDto] }) providers: ProviderPinRecordDto[];
-  @ApiProperty() createdAt: string;
-  @ApiProperty() updatedAt: string;
+  @ApiProperty() replicationFactor!: number;
+  @ApiProperty({ enum: PinStatus }) status!: PinStatus;
+  @ApiProperty({ type: [ProviderPinRecordDto] }) providers!: ProviderPinRecordDto[];
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
 }

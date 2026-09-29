@@ -1,22 +1,37 @@
 import { EscrowReconciliationWorkerService } from './escrow-reconciliation-worker.service';
 import { EscrowReconciliationService } from './escrow-reconciliation.service';
+import { DistributedLockService } from '../common/redis/distributed-lock.service';
+
+async function flushPromises(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+function fakeLock(): jest.Mocked<Pick<DistributedLockService, 'tryAcquire' | 'release'>> {
+  return {
+    tryAcquire: jest.fn().mockResolvedValue('fake-token'),
+    release: jest.fn().mockResolvedValue(undefined),
+  };
+}
 
 describe('EscrowReconciliationWorkerService', () => {
   const originalInterval = process.env.ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS;
   let reconciliationService: jest.Mocked<Pick<EscrowReconciliationService, 'reconcile'>>;
+  let lock: jest.Mocked<Pick<DistributedLockService, 'tryAcquire' | 'release'>>;
   let worker: EscrowReconciliationWorkerService;
 
   beforeEach(() => {
     reconciliationService = {
       reconcile: jest.fn().mockResolvedValue({ runId: 'recon-1', driftCount: 0 }),
     };
+    lock = fakeLock();
     worker = new EscrowReconciliationWorkerService(
       reconciliationService as unknown as EscrowReconciliationService,
+      lock as unknown as DistributedLockService,
     );
   });
 
-  afterEach(() => {
-    worker.onModuleDestroy();
+  afterEach(async () => {
+    await worker.onModuleDestroy();
     jest.useRealTimers();
     if (originalInterval === undefined) delete process.env.ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS;
     else process.env.ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS = originalInterval;
@@ -26,6 +41,44 @@ describe('EscrowReconciliationWorkerService', () => {
     it('delegates to the reconciliation service', async () => {
       await worker.runOnce();
       expect(reconciliationService.reconcile).toHaveBeenCalledWith();
+    });
+
+    it('does not run overlapping sweeps in the same process', async () => {
+      let releaseSweep!: () => void;
+      reconciliationService.reconcile.mockImplementation(
+        () =>
+          new Promise(resolve => {
+            releaseSweep = () =>
+              resolve({
+                runId: 'recon-blocked',
+                startedAt: '',
+                completedAt: '',
+                checked: 0,
+                driftCount: 0,
+                repairedCount: 0,
+                drifts: [],
+                errorCount: 0,
+                errors: [],
+              });
+          }),
+      );
+
+      const first = worker.runOnce();
+      await flushPromises();
+      await worker.runOnce();
+
+      expect(reconciliationService.reconcile).toHaveBeenCalledTimes(1);
+      releaseSweep();
+      await first;
+    });
+
+    it('skips a sweep when another instance holds the distributed lock', async () => {
+      lock.tryAcquire.mockResolvedValue(null);
+
+      await worker.runOnce();
+
+      expect(reconciliationService.reconcile).not.toHaveBeenCalled();
+      expect(lock.release).not.toHaveBeenCalled();
     });
   });
 

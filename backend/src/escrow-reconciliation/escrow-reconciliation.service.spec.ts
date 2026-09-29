@@ -3,13 +3,14 @@ import { EscrowService, Escrow } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { EscrowReconciliationStateStore } from './escrow-reconciliation-state.store';
+import { InvalidChainStateError } from './chain-escrow.validation';
 import { ChainEscrowRecord, DriftType, RECONCILIATION_EVENTS } from './escrow-reconciliation.types';
 
 function makeEscrow(overrides: Partial<Escrow> = {}): Escrow {
   return {
     id: 'esc-1',
-    depositor: 'GDEP',
-    beneficiary: 'GBEN',
+    depositor: `G${'A'.repeat(55)}`,
+    beneficiary: `G${'B'.repeat(55)}`,
     amountXLM: '100',
     status: 'active',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -21,8 +22,8 @@ function makeEscrow(overrides: Partial<Escrow> = {}): Escrow {
 function makeChainRecord(overrides: Partial<ChainEscrowRecord> = {}): ChainEscrowRecord {
   return {
     contractEscrowId: 'chain-esc-1',
-    depositor: 'GDEP',
-    beneficiary: 'GBEN',
+    depositor: `G${'A'.repeat(55)}`,
+    beneficiary: `G${'B'.repeat(55)}`,
     amountXLM: '100',
     status: 'active',
     ...overrides,
@@ -30,6 +31,7 @@ function makeChainRecord(overrides: Partial<ChainEscrowRecord> = {}): ChainEscro
 }
 
 describe('EscrowReconciliationService', () => {
+  const originalConcurrency = process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY;
   let escrowService: jest.Mocked<
     Pick<
       EscrowService,
@@ -58,6 +60,14 @@ describe('EscrowReconciliationService', () => {
       webhookService as unknown as WebhookService,
       store,
     );
+  });
+
+  afterEach(() => {
+    if (originalConcurrency === undefined) {
+      delete process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY;
+    } else {
+      process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY = originalConcurrency;
+    }
   });
 
   describe('no drift', () => {
@@ -221,6 +231,55 @@ describe('EscrowReconciliationService', () => {
     });
   });
 
+  describe('chain read failures', () => {
+    it('records a failed read, continues checking other escrows, saves the run, and dispatches the webhook', async () => {
+      const secondEscrow = makeEscrow({ id: 'esc-2', contractEscrowId: 'chain-esc-2' });
+      escrowService.findAll.mockResolvedValue([makeEscrow(), secondEscrow]);
+      chainClient.getEscrow.mockImplementation(async contractEscrowId => {
+        if (contractEscrowId === 'chain-esc-1') throw new Error('RPC timeout');
+        return makeChainRecord({ contractEscrowId });
+      });
+
+      const run = await service.reconcile();
+
+      expect(run.checked).toBe(2);
+      expect(run.errorCount).toBe(1);
+      expect(run.errors[0]).toMatchObject({
+        contractEscrowId: 'chain-esc-1',
+        message: 'RPC timeout',
+      });
+      expect(run.drifts).toEqual([]);
+      expect(await service.findById(run.runId)).toEqual(run);
+      expect(webhookService.dispatch).toHaveBeenCalledWith(
+        RECONCILIATION_EVENTS.DRIFT_DETECTED,
+        expect.objectContaining({ errorCount: 1 }),
+      );
+    });
+
+    it('bounds chain reads using the configured concurrency', async () => {
+      process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY = '2';
+      const escrows = Array.from({ length: 6 }, (_, index) =>
+        makeEscrow({ id: `esc-${index}`, contractEscrowId: `chain-esc-${index}` }),
+      );
+      escrowService.findAll.mockResolvedValue(escrows);
+      let active = 0;
+      let maximumActive = 0;
+      chainClient.getEscrow.mockImplementation(async contractEscrowId => {
+        active++;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        active--;
+        return makeChainRecord({ contractEscrowId });
+      });
+
+      const run = await service.reconcile();
+
+      expect(run.errorCount).toBe(0);
+      expect(maximumActive).toBeLessThanOrEqual(2);
+      expect(chainClient.getEscrow).toHaveBeenCalledTimes(6);
+    });
+  });
+
   describe('run history', () => {
     it('persists runs and returns them via findById/findAll', async () => {
       escrowService.findAll.mockResolvedValue([]);
@@ -229,6 +288,46 @@ describe('EscrowReconciliationService', () => {
 
       expect(await service.findById(run.runId)).toEqual(run);
       expect(await service.findAll()).toEqual([run]);
+    });
+  });
+
+  describe('invalid chain data', () => {
+    it('records an unrepaired error against that escrow and never writes to the DB', async () => {
+      escrowService.findAll.mockResolvedValue([
+        makeEscrow(),
+        makeEscrow({ id: 'esc-2', contractEscrowId: 'chain-esc-2' }),
+      ]);
+      chainClient.getEscrow
+        .mockRejectedValueOnce(new InvalidChainStateError('chain-esc-1', 'unrecognised status'))
+        .mockResolvedValueOnce(makeChainRecord({ contractEscrowId: 'chain-esc-2' }));
+
+      const run = await service.reconcile();
+
+      expect(escrowService.applyChainState).not.toHaveBeenCalled();
+      expect(run.checked).toBe(2);
+      expect(run.drifts).toHaveLength(1);
+      expect(run.drifts[0]).toMatchObject({
+        contractEscrowId: 'chain-esc-1',
+        driftType: DriftType.INVALID_CHAIN_DATA,
+        repaired: false,
+      });
+      expect(run.drifts[0].repairError).toContain('unrecognised status');
+    });
+
+    it('records an unexpected read error against that escrow instead of aborting the run', async () => {
+      escrowService.findAll.mockResolvedValue([makeEscrow()]);
+      chainClient.getEscrow.mockRejectedValue(new Error('network'));
+
+      const run = await service.reconcile();
+
+      // A single bad read must not discard drift detection for every other escrow, so the
+      // failure is captured on the run record instead of thrown out of reconcile().
+      expect(run.errorCount).toBe(1);
+      expect(run.errors[0]).toMatchObject({
+        contractEscrowId: 'chain-esc-1',
+        message: 'network',
+      });
+      expect(run.checked).toBe(1);
     });
   });
 });

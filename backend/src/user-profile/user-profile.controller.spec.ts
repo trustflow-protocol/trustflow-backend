@@ -12,6 +12,8 @@ const WALLET = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 const OTHER_WALLET = 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY';
 const PROFILE_ID = 'profile-uuid-001';
 
+const OWNER_EMAIL = 'alice@example.com';
+
 const FAKE_PROFILE = {
   id: PROFILE_ID,
   walletAddress: WALLET,
@@ -25,6 +27,9 @@ const FAKE_PROFILE = {
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
+
+/** The profile as stored, with the email address that must stay private. */
+const STORED_PROFILE = { ...FAKE_PROFILE, email: OWNER_EMAIL };
 
 /** A minimal valid CreateUserProfileDto body (passes Zod schema). */
 const VALID_CREATE_DTO = {
@@ -103,6 +108,14 @@ describe('UserProfileController', () => {
       expect(result).toEqual(FAKE_PROFILE);
     });
 
+    it('returns the email to the owner who just created the profile', async () => {
+      mockProfileService.create.mockResolvedValue(STORED_PROFILE);
+
+      const result = await controller.create(VALID_CREATE_DTO as any, makeReq() as any);
+
+      expect(result).toMatchObject({ email: OWNER_EMAIL });
+    });
+
     it('throws ForbiddenException when walletAddress does not match the JWT address', async () => {
       // req.user.address is a different wallet than the one in the body.
       await expect(
@@ -146,7 +159,7 @@ describe('UserProfileController', () => {
 
   describe('findAll()', () => {
     it('delegates to UserProfileService.findAll() with no filters', async () => {
-      mockProfileService.findAll.mockResolvedValue([FAKE_PROFILE]);
+      mockProfileService.findAll.mockResolvedValue({ data: [FAKE_PROFILE], total: 1 });
 
       const result = await controller.findAll();
 
@@ -154,12 +167,28 @@ describe('UserProfileController', () => {
         userType: undefined,
         status: undefined,
         minRating: undefined,
+        offset: 0,
+        limit: 20,
       });
-      expect(result).toEqual([FAKE_PROFILE]);
+      expect(result).toEqual({ data: [FAKE_PROFILE], total: 1 });
+    });
+
+    it('never includes the email address of any listed profile', async () => {
+      mockProfileService.findAll.mockResolvedValue({
+        data: [STORED_PROFILE, { ...STORED_PROFILE, id: 'profile-uuid-002' }],
+        total: 2,
+      });
+
+      const result = await controller.findAll();
+
+      expect(result.total).toBe(2);
+      expect(result.data).toHaveLength(2);
+      for (const profile of result.data) expect(profile).not.toHaveProperty('email');
+      expect(JSON.stringify(result)).not.toContain(OWNER_EMAIL);
     });
 
     it('forwards userType query param to the service', async () => {
-      mockProfileService.findAll.mockResolvedValue([]);
+      mockProfileService.findAll.mockResolvedValue({ data: [], total: 0 });
 
       await controller.findAll(UserType.FREELANCER, undefined, undefined);
 
@@ -169,7 +198,7 @@ describe('UserProfileController', () => {
     });
 
     it('forwards status query param to the service', async () => {
-      mockProfileService.findAll.mockResolvedValue([]);
+      mockProfileService.findAll.mockResolvedValue({ data: [], total: 0 });
 
       await controller.findAll(undefined, UserStatus.ACTIVE, undefined);
 
@@ -179,7 +208,7 @@ describe('UserProfileController', () => {
     });
 
     it('parses minRating as a float before forwarding', async () => {
-      mockProfileService.findAll.mockResolvedValue([]);
+      mockProfileService.findAll.mockResolvedValue({ data: [], total: 0 });
 
       // NestJS delivers query strings as strings; the controller calls parseFloat().
       await controller.findAll(undefined, undefined, '4.5' as any);
@@ -190,7 +219,7 @@ describe('UserProfileController', () => {
     });
 
     it('passes minRating: undefined when the param is absent', async () => {
-      mockProfileService.findAll.mockResolvedValue([]);
+      mockProfileService.findAll.mockResolvedValue({ data: [], total: 0 });
 
       await controller.findAll(undefined, undefined, undefined);
 
@@ -202,7 +231,7 @@ describe('UserProfileController', () => {
     it('does not require authentication (no guard on this endpoint)', async () => {
       // Rebuild with a guard that denies and confirm findAll is still callable
       // by verifying no UnauthorizedException is raised at the controller layer.
-      mockProfileService.findAll.mockResolvedValue([]);
+      mockProfileService.findAll.mockResolvedValue({ data: [], total: 0 });
       await expect(controller.findAll()).resolves.not.toThrow();
     });
   });
@@ -211,7 +240,7 @@ describe('UserProfileController', () => {
 
   describe('search()', () => {
     it('forwards the trimmed query string and default pagination to UserProfileService.search()', async () => {
-      mockProfileService.search.mockResolvedValue([FAKE_PROFILE]);
+      mockProfileService.search.mockResolvedValue({ data: [FAKE_PROFILE], total: 1 });
 
       const result = await controller.search('blockchain');
 
@@ -219,7 +248,16 @@ describe('UserProfileController', () => {
         offset: 0,
         limit: 20,
       });
-      expect(result).toEqual([FAKE_PROFILE]);
+      expect(result).toEqual({ data: [FAKE_PROFILE], total: 1 });
+    });
+
+    it('never includes the email address of any search result', async () => {
+      mockProfileService.search.mockResolvedValue({ data: [STORED_PROFILE], total: 1 });
+
+      const result = await controller.search('alice');
+
+      expect(result.data[0]).not.toHaveProperty('email');
+      expect(JSON.stringify(result)).not.toContain(OWNER_EMAIL);
     });
 
     it('throws BadRequestException when q is missing', async () => {
@@ -243,7 +281,7 @@ describe('UserProfileController', () => {
     });
 
     it('trims surrounding whitespace before delegating to the service', async () => {
-      mockProfileService.search.mockResolvedValue([FAKE_PROFILE]);
+      mockProfileService.search.mockResolvedValue({ data: [FAKE_PROFILE], total: 1 });
 
       await controller.search('  blockchain  ');
 
@@ -264,6 +302,15 @@ describe('UserProfileController', () => {
 
       expect(mockProfileService.findById).toHaveBeenCalledWith(PROFILE_ID);
       expect(result).toEqual(FAKE_PROFILE);
+    });
+
+    it('never includes the email address', async () => {
+      mockProfileService.findById.mockResolvedValue(STORED_PROFILE);
+
+      const result = await controller.findById(PROFILE_ID);
+
+      expect(result).not.toHaveProperty('email');
+      expect(JSON.stringify(result)).not.toContain(OWNER_EMAIL);
     });
 
     it('propagates NotFoundException from the service', async () => {
@@ -287,6 +334,48 @@ describe('UserProfileController', () => {
       expect(mockProfileService.findByWalletAddress).toHaveBeenCalledWith(WALLET);
       expect(result).toEqual(FAKE_PROFILE);
     });
+
+    it('never includes the email address', async () => {
+      mockProfileService.findByWalletAddress.mockResolvedValue(STORED_PROFILE);
+
+      const result = await controller.findByWalletAddress(WALLET);
+
+      expect(result).not.toHaveProperty('email');
+      expect(JSON.stringify(result)).not.toContain(OWNER_EMAIL);
+    });
+  });
+
+  // ─── GET /me ──────────────────────────────────────────────────────────────
+
+  describe('findMine()', () => {
+    it('returns the authenticated wallet's own profile including its email', async () => {
+      mockProfileService.findByWalletAddress.mockResolvedValue(STORED_PROFILE);
+
+      const result = await controller.findMine(makeReq() as any);
+
+      expect(mockProfileService.findByWalletAddress).toHaveBeenCalledWith(WALLET);
+      expect(result).toMatchObject({ id: PROFILE_ID, walletAddress: WALLET, email: OWNER_EMAIL });
+    });
+
+    it('looks the profile up by the JWT address, never by a caller-supplied value', async () => {
+      mockProfileService.findByWalletAddress.mockResolvedValue({
+        ...STORED_PROFILE,
+        walletAddress: OTHER_WALLET,
+      });
+
+      await controller.findMine(makeReq(OTHER_WALLET) as any);
+
+      expect(mockProfileService.findByWalletAddress).toHaveBeenCalledWith(OTHER_WALLET);
+    });
+
+    it('propagates NotFoundException when the wallet has no profile', async () => {
+      const { NotFoundException } = jest.requireActual('@nestjs/common');
+      mockProfileService.findByWalletAddress.mockRejectedValue(
+        new NotFoundException('User profile not found'),
+      );
+
+      await expect(controller.findMine(makeReq() as any)).rejects.toThrow(NotFoundException);
+    });
   });
 
   // ─── PUT /:id (update) ────────────────────────────────────────────────────
@@ -296,7 +385,7 @@ describe('UserProfileController', () => {
       const updated = { ...FAKE_PROFILE, name: 'Alice Updated' };
       mockProfileService.update.mockResolvedValue(updated);
 
-      const result = await controller.update(PROFILE_ID, VALID_UPDATE_DTO as any);
+      const result = await controller.update(PROFILE_ID, VALID_UPDATE_DTO as any, makeReq() as any);
 
       expect(mockProfileService.update).toHaveBeenCalledWith(
         PROFILE_ID,
@@ -305,26 +394,46 @@ describe('UserProfileController', () => {
       expect(result).toEqual(updated);
     });
 
+    it('returns the email only when the caller owns the profile', async () => {
+      mockProfileService.update.mockResolvedValue(STORED_PROFILE);
+
+      const asOwner = await controller.update(
+        PROFILE_ID,
+        VALID_UPDATE_DTO as any,
+        makeReq() as any,
+      );
+      const asOther = await controller.update(
+        PROFILE_ID,
+        VALID_UPDATE_DTO as any,
+        makeReq(OTHER_WALLET) as any,
+      );
+
+      expect(asOwner).toMatchObject({ email: OWNER_EMAIL });
+      expect(asOther).not.toHaveProperty('email');
+    });
+
     it('throws (Zod) when name is too short', async () => {
-      await expect(controller.update(PROFILE_ID, { name: 'X' } as any)).rejects.toThrow();
+      await expect(
+        controller.update(PROFILE_ID, { name: 'X' } as any, makeReq() as any),
+      ).rejects.toThrow();
     });
 
     it('throws (Zod) when bio exceeds 500 characters', async () => {
       await expect(
-        controller.update(PROFILE_ID, { bio: 'B'.repeat(501) } as any),
+        controller.update(PROFILE_ID, { bio: 'B'.repeat(501) } as any, makeReq() as any),
       ).rejects.toThrow();
     });
 
     it('throws (Zod) when avatarUrl is not a valid URL', async () => {
       await expect(
-        controller.update(PROFILE_ID, { avatarUrl: 'not-a-url' } as any),
+        controller.update(PROFILE_ID, { avatarUrl: 'not-a-url' } as any, makeReq() as any),
       ).rejects.toThrow();
     });
 
     it('accepts a partial update with only status', async () => {
       mockProfileService.update.mockResolvedValue(FAKE_PROFILE);
 
-      await controller.update(PROFILE_ID, { status: UserStatus.INACTIVE } as any);
+      await controller.update(PROFILE_ID, { status: UserStatus.INACTIVE } as any, makeReq() as any);
 
       expect(mockProfileService.update).toHaveBeenCalledWith(
         PROFILE_ID,
@@ -360,7 +469,7 @@ describe('UserProfileController', () => {
       const rated = { ...FAKE_PROFILE, rating: 5, ratingCount: 1 };
       mockProfileService.rateUser.mockResolvedValue(rated);
 
-      const result = await controller.rateUser(PROFILE_ID, VALID_RATE_DTO as any);
+      const result = await controller.rateUser(PROFILE_ID, VALID_RATE_DTO as any, makeReq() as any);
 
       expect(mockProfileService.rateUser).toHaveBeenCalledWith(
         PROFILE_ID,
@@ -369,31 +478,61 @@ describe('UserProfileController', () => {
       expect(result).toEqual(rated);
     });
 
+    it('returns the email only when the caller owns the profile', async () => {
+      mockProfileService.rateUser.mockResolvedValue(STORED_PROFILE);
+
+      const asOwner = await controller.rateUser(
+        PROFILE_ID,
+        VALID_RATE_DTO as any,
+        makeReq() as any,
+      );
+      const asOther = await controller.rateUser(
+        PROFILE_ID,
+        VALID_RATE_DTO as any,
+        makeReq(OTHER_WALLET) as any,
+      );
+
+      expect(asOwner).toMatchObject({ email: OWNER_EMAIL });
+      expect(asOther).not.toHaveProperty('email');
+    });
+
     it('throws (Zod) when rating is below 1', async () => {
       await expect(
-        controller.rateUser(PROFILE_ID, { walletAddress: OTHER_WALLET, rating: 0 } as any),
+        controller.rateUser(
+          PROFILE_ID,
+          { walletAddress: OTHER_WALLET, rating: 0 } as any,
+          makeReq() as any,
+        ),
       ).rejects.toThrow();
     });
 
     it('throws (Zod) when rating is above 5', async () => {
       await expect(
-        controller.rateUser(PROFILE_ID, { walletAddress: OTHER_WALLET, rating: 6 } as any),
+        controller.rateUser(
+          PROFILE_ID,
+          { walletAddress: OTHER_WALLET, rating: 6 } as any,
+          makeReq() as any,
+        ),
       ).rejects.toThrow();
     });
 
     it('throws (Zod) when walletAddress is not a valid Stellar address', async () => {
       await expect(
-        controller.rateUser(PROFILE_ID, { walletAddress: 'bad-addr', rating: 4 } as any),
+        controller.rateUser(
+          PROFILE_ID,
+          { walletAddress: 'bad-addr', rating: 4 } as any,
+          makeReq() as any,
+        ),
       ).rejects.toThrow();
     });
 
     it('throws (Zod) when review exceeds 1000 characters', async () => {
       await expect(
-        controller.rateUser(PROFILE_ID, {
-          walletAddress: OTHER_WALLET,
-          rating: 4,
-          review: 'R'.repeat(1001),
-        } as any),
+        controller.rateUser(
+          PROFILE_ID,
+          { walletAddress: OTHER_WALLET, rating: 4, review: 'R'.repeat(1001) } as any,
+          makeReq() as any,
+        ),
       ).rejects.toThrow();
     });
   });
@@ -405,10 +544,20 @@ describe('UserProfileController', () => {
       const verified = { ...FAKE_PROFILE, isVerified: true };
       mockProfileService.verifyUser.mockResolvedValue(verified);
 
-      const result = await controller.verifyUser(PROFILE_ID);
+      const result = await controller.verifyUser(PROFILE_ID, makeReq() as any);
 
       expect(mockProfileService.verifyUser).toHaveBeenCalledWith(PROFILE_ID);
       expect(result).toEqual(verified);
+    });
+
+    it('returns the email only when the caller owns the profile', async () => {
+      mockProfileService.verifyUser.mockResolvedValue(STORED_PROFILE);
+
+      const asOwner = await controller.verifyUser(PROFILE_ID, makeReq() as any);
+      const asOther = await controller.verifyUser(PROFILE_ID, makeReq(OTHER_WALLET) as any);
+
+      expect(asOwner).toMatchObject({ email: OWNER_EMAIL });
+      expect(asOther).not.toHaveProperty('email');
     });
   });
 

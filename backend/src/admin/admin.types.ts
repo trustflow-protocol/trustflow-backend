@@ -6,8 +6,8 @@ export const ADMIN_OVERVIEW_REPUTATION_TOP_N = 5;
 export interface EscrowAnalytics {
   total: number;
   byStatus: Record<string, number>;
-  /** Sum of `amountXLM` across every escrow, regardless of status. Non-numeric amounts are treated as 0. */
-  totalValueXLM: number;
+  /** Sum of `amountXLM` across every escrow, regardless of status, as a decimal string. */
+  totalValueXLM: string;
 }
 
 export interface GigAnalytics {

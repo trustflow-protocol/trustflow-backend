@@ -1,10 +1,37 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  OnModuleInit,
+  Optional,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { randomUUID } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import {
+  assertTransactionApplied,
+  isTransactionIntegrityError,
+  RedisTransactionError,
+} from '../common/redis/redis-transaction';
 import { MetricsService } from '../monitoring/metrics.service';
+import { OutboxService } from '../outbox/outbox.service';
+import { config } from '../config/env.config';
 
-export type EscrowStatus = 'pending' | 'active' | 'released' | 'disputed' | 'cancelled';
+export const ESCROW_EVENTS = {
+  ESCROW_CREATED: 'escrow.created',
+  ESCROW_FUNDED: 'escrow.funded',
+  ESCROW_RELEASED: 'escrow.released',
+  ESCROW_CANCELLED: 'escrow.cancelled',
+  ESCROW_SPLIT: 'escrow.split',
+  ESCROW_DISPUTED: 'escrow.disputed',
+} as const;
+
+export const ESCROW_STATUSES = ['pending', 'active', 'released', 'disputed', 'cancelled'] as const;
+export type EscrowStatus = (typeof ESCROW_STATUSES)[number];
 
 export interface Escrow {
   id: string;
@@ -52,6 +79,15 @@ const ESCROWS_BY_CONTRACT_PREFIX = 'escrows:by-contract:';
 export const ESCROW_PERSISTENCE_FALLBACK_METRIC = 'escrow_persistence_fallback_total';
 
 /**
+ * Counts writes that were refused because a `MULTI`/`EXEC` did not apply as a unit. A
+ * non-zero rate means Redis state may need reconciling — it is an alerting signal, not a
+ * transient blip.
+ */
+export const ESCROW_TRANSACTION_INCONSISTENT_METRIC = 'escrow_transaction_inconsistent_total';
+
+import { AuditService } from '../audit/audit.service';
+
+/**
  * Escrow store. Backed by Redis so escrow state survives restarts and is shared across
  * instances behind a load balancer — see PERSISTENT_STORAGE_SPIKE.md §2 and its "Follow-up
  * decisions" addendum for the full write-up and the money-adjacent/audit-sensitive trade-off
@@ -75,7 +111,7 @@ export const ESCROW_PERSISTENCE_FALLBACK_METRIC = 'escrow_persistence_fallback_t
  */
 @Injectable()
 export class EscrowService implements OnModuleInit {
-  private readonly logger = new Logger(EscrowService.name);
+  private readonly logger = new SanitizedLogger(EscrowService.name);
 
   /** Fallback store, only used while Redis is unavailable. */
   private escrows: Map<string, Escrow> = new Map();
@@ -83,6 +119,8 @@ export class EscrowService implements OnModuleInit {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
     private readonly metrics: MetricsService,
+    @Optional() private readonly outbox?: OutboxService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -93,7 +131,7 @@ export class EscrowService implements OnModuleInit {
    * Redis.
    */
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'EscrowService requires REDIS_URL to be configured in production — refusing to start ' +
           'with per-instance in-memory storage, which would silently diverge across instances.',
@@ -127,22 +165,27 @@ export class EscrowService implements OnModuleInit {
       createdAt: new Date().toISOString(),
     };
 
+    const event = this.outbox?.create(ESCROW_EVENTS.ESCROW_CREATED, 'escrow', id, escrow);
+
     if (this.redis) {
       try {
-        const results = await this.redis
+        const transaction = this.redis
           .multi()
           .set(this.escrowKey(id), JSON.stringify(escrow))
           .zadd(ESCROWS_INDEX_KEY, Date.parse(escrow.createdAt), id)
-          .sadd(this.depositorKey(depositor), id)
-          .exec();
-        this.assertTransactionOk(results);
+          .sadd(this.depositorKey(depositor), id);
+        if (event) this.outbox!.appendToTransaction(transaction, event);
+        const results = await transaction.exec();
+        assertTransactionApplied(results);
         return escrow;
       } catch (err) {
+        this.rethrowIfInconsistent('create', id, err);
         this.logFallback('create', err);
       }
     }
 
     this.escrows.set(id, escrow);
+    if (event) await this.outbox!.append(event);
     return escrow;
   }
 
@@ -211,7 +254,7 @@ export class EscrowService implements OnModuleInit {
   /** Links a DB row to its on-chain counterpart so the reconciler can diff the two. */
   async linkContractEscrowId(id: string, contractEscrowId: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     escrow.contractEscrowId = contractEscrowId;
 
     if (this.redis) {
@@ -221,9 +264,10 @@ export class EscrowService implements OnModuleInit {
           .set(this.escrowKey(id), JSON.stringify(escrow))
           .set(this.contractKey(contractEscrowId), id)
           .exec();
-        this.assertTransactionOk(results);
+        assertTransactionApplied(results);
         return escrow;
       } catch (err) {
+        this.rethrowIfInconsistent('linkContractEscrowId', id, err);
         this.logFallback('linkContractEscrowId', err);
       }
     }
@@ -240,8 +284,13 @@ export class EscrowService implements OnModuleInit {
    */
   async applyChainState(id: string, patch: ChainStatePatch): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
-    if (patch.status !== undefined) escrow.status = patch.status;
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    if (patch.status !== undefined) {
+      if (!ESCROW_STATUSES.includes(patch.status)) {
+        throw new BadRequestException(`Invalid escrow status: ${String(patch.status)}`);
+      }
+      escrow.status = patch.status;
+    }
     if (patch.amountXLM !== undefined) escrow.amountXLM = patch.amountXLM;
     await this.persist(escrow);
     return escrow;
@@ -255,7 +304,7 @@ export class EscrowService implements OnModuleInit {
    */
   async correctStatus(id: string, patch: StatusCorrection): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     if (patch.status !== undefined) escrow.status = patch.status;
     if (patch.requiresManualReview !== undefined)
       escrow.requiresManualReview = patch.requiresManualReview;
@@ -286,9 +335,10 @@ export class EscrowService implements OnModuleInit {
           .sadd(this.depositorKey(escrow.depositor), id)
           .set(this.contractKey(seed.contractEscrowId), id)
           .exec();
-        this.assertTransactionOk(results);
+        assertTransactionApplied(results);
         return escrow;
       } catch (err) {
+        this.rethrowIfInconsistent('createFromChainState', id, err);
         this.logFallback('createFromChainState', err);
       }
     }
@@ -299,91 +349,122 @@ export class EscrowService implements OnModuleInit {
 
   async fund(id: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
     if (escrow.status !== 'pending') {
-      throw new Error(`Cannot fund escrow in status: ${escrow.status}`);
+      throw new BadRequestException(`Cannot fund escrow in status: ${escrow.status}`);
     }
     escrow.status = 'active';
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_FUNDED);
     return escrow;
   }
 
-  async release(id: string): Promise<Escrow> {
+  async release(id: string, user: string = 'system'): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    if (escrow.status === 'released') throw new ConflictException('Escrow is already released');
+    if (escrow.status !== 'disputed')
+      throw new BadRequestException('Only disputed escrows can be released');
+
+    const beforeState = { ...escrow };
     escrow.status = 'released';
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_RELEASED);
+
+    if (this.audit) {
+      await this.audit
+        .logOperation({
+          operation: 'ESCROW_RELEASE',
+          user,
+          entityId: id,
+          entityType: 'escrow',
+          beforeState,
+          afterState: escrow,
+        })
+        .catch(err => this.logger.error('Failed to write audit log', err));
+    }
+
     return escrow;
   }
 
   async cancel(id: string): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    if (escrow.status === 'cancelled') throw new ConflictException('Escrow is already cancelled');
+    if (escrow.status !== 'disputed')
+      throw new BadRequestException('Only disputed escrows can be cancelled');
     escrow.status = 'cancelled';
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_CANCELLED);
     return escrow;
   }
 
   async split(id: string, splitPercentage: number): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    if (escrow.status === 'released') throw new ConflictException('Escrow is already released');
+    if (escrow.status !== 'disputed')
+      throw new BadRequestException('Only disputed escrows can be split');
     escrow.status = 'released';
     escrow.splitPercentage = splitPercentage;
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_SPLIT);
     return escrow;
   }
 
-  async raiseDispute(id: string, reason?: string): Promise<Escrow> {
+  async raiseDispute(id: string, reason?: string, user: string = 'system'): Promise<Escrow> {
     const escrow = await this.findById(id);
-    if (!escrow) throw new Error('Escrow not found');
-    if (escrow.status === 'released') throw new Error('Cannot dispute a released escrow');
-    if (escrow.status === 'disputed') throw new Error('Escrow is already disputed');
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    if (escrow.status === 'released')
+      throw new BadRequestException('Cannot dispute a released escrow');
+    if (escrow.status === 'disputed') throw new ConflictException('Escrow is already disputed');
 
+    const beforeState = { ...escrow };
     escrow.status = 'disputed';
     escrow.disputeReason = reason;
     escrow.disputedAt = new Date().toISOString();
 
-    await this.persist(escrow);
+    await this.persist(escrow, ESCROW_EVENTS.ESCROW_DISPUTED);
+
+    if (this.audit) {
+      await this.audit
+        .logOperation({
+          operation: 'ESCROW_DISPUTE',
+          user,
+          entityId: id,
+          entityType: 'escrow',
+          beforeState,
+          afterState: escrow,
+        })
+        .catch(err => this.logger.error('Failed to write audit log', err));
+    }
+
     return escrow;
   }
 
   /** Writes an escrow's current field values without touching any index (its id/depositor never change). */
-  private async persist(escrow: Escrow): Promise<void> {
+  private async persist(escrow: Escrow, eventType?: string): Promise<void> {
+    const event = eventType
+      ? this.outbox?.create(eventType, 'escrow', escrow.id, escrow)
+      : undefined;
     if (this.redis) {
       try {
-        const results = await this.redis
+        const transaction = this.redis
           .multi()
-          .set(this.escrowKey(escrow.id), JSON.stringify(escrow))
-          .exec();
-        this.assertTransactionOk(results);
+          .set(this.escrowKey(escrow.id), JSON.stringify(escrow));
+        if (event) this.outbox!.appendToTransaction(transaction, event);
+        const results = await transaction.exec();
+        assertTransactionApplied(results);
         return;
       } catch (err) {
+        this.rethrowIfInconsistent('persist', escrow.id, err);
         this.logFallback('persist', err);
       }
     }
     this.escrows.set(escrow.id, escrow);
+    if (event) await this.outbox!.append(event);
   }
 
   private async fetchMany(ids: string[]): Promise<Escrow[]> {
     if (ids.length === 0) return [];
     const raw = await this.redis!.mget(...ids.map(id => this.escrowKey(id)));
     return raw.filter((r): r is string => r !== null).map(r => JSON.parse(r) as Escrow);
-  }
-
-  /**
-   * `MULTI`/`EXEC` only rejects the whole batch on a queue-time error; a runtime failure in
-   * one queued command instead surfaces as a per-command `[Error, null]` entry in the results
-   * array while `exec()` itself still resolves. Without this check a partially-applied
-   * transaction would be treated as a full success.
-   */
-  private assertTransactionOk(results: Array<[Error | null, unknown]> | null): void {
-    if (!results) {
-      throw new Error('Redis transaction aborted (exec() returned null, e.g. a WATCH conflict)');
-    }
-    const failed = results.find(([err]) => err);
-    if (failed) {
-      throw new Error(`Redis transaction command failed: ${failed[0]!.message}`);
-    }
   }
 
   private escrowKey(id: string): string {
@@ -396,6 +477,41 @@ export class EscrowService implements OnModuleInit {
 
   private contractKey(contractEscrowId: string): string {
     return `${ESCROWS_BY_CONTRACT_PREFIX}${contractEscrowId}`;
+  }
+
+  /**
+   * Surfaces a transaction-integrity failure instead of absorbing it.
+   *
+   * This is the fix for the "gig created but escrow failed" class of bug. `MULTI`/`EXEC` does
+   * not roll back the commands that already ran, so when one queued command fails the earlier
+   * writes in the same batch are still durable in Redis. The previous code caught that signal
+   * — it exists precisely to be thrown — logged it, then wrote the entity to a process-local
+   * Map and returned success. The caller got a 2xx for a write that was half applied, and the
+   * in-memory copy diverged from Redis.
+   *
+   * Degrading is only safe for a genuine connectivity failure, where *nothing* was applied.
+   * So that case still falls through to `logFallback`, while an integrity failure is reported
+   * to the caller as 503 — retryable, and never a false success.
+   */
+  private rethrowIfInconsistent(operation: string, escrowId: string, err: unknown): void {
+    if (!isTransactionIntegrityError(err)) return;
+
+    const transactionError = err as RedisTransactionError;
+    this.metrics.increment(ESCROW_TRANSACTION_INCONSISTENT_METRIC, {
+      operation,
+      reason: transactionError.reason,
+    });
+    this.logger.error(
+      `Escrow transaction for ${operation} (${escrowId}) did not apply as a unit ` +
+        `(${transactionError.reason}). Redis does not roll back a partially applied MULTI, ` +
+        'so the stored state may be incomplete and the in-memory fallback is unsafe. ' +
+        'Refusing to report success.',
+      transactionError.stack,
+    );
+
+    throw new ServiceUnavailableException(
+      `Escrow ${operation} could not be committed atomically — please retry`,
+    );
   }
 
   private logFallback(operation: string, err: unknown): void {

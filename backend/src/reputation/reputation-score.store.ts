@@ -1,8 +1,10 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { ReputationScoreRecord } from './reputation.types';
+import { config } from '../config/env.config';
 
 const SCORE_KEY_PREFIX = 'reputation:score:';
 const SCORES_INDEX_KEY = 'reputation:scores:index';
@@ -21,7 +23,7 @@ export const REPUTATION_PERSISTENCE_FALLBACK_METRIC = 'reputation_persistence_fa
  */
 @Injectable()
 export class ReputationScoreStore implements OnModuleInit {
-  private readonly logger = new Logger(ReputationScoreStore.name);
+  private readonly logger = new SanitizedLogger(ReputationScoreStore.name);
   /** Fallback store, only used while Redis is unavailable. */
   private readonly records: Map<string, ReputationScoreRecord> = new Map();
 
@@ -31,7 +33,7 @@ export class ReputationScoreStore implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'ReputationScoreStore requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',

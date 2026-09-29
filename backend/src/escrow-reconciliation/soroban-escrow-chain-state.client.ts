@@ -1,8 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { rpc as SorobanRpc, xdr, nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { ChainEscrowRecord } from './escrow-reconciliation.types';
+import { InvalidChainStateError, parseChainEscrow } from './chain-escrow.validation';
 import { getStellarConfig } from '../stellar/stellar.config';
+import { buildSorobanServer } from '../stellar/soroban.helper';
 
 /**
  * Storage-key convention assumed for the TrustFlow escrow contract: each escrow is a
@@ -21,13 +24,13 @@ import { getStellarConfig } from '../stellar/stellar.config';
  */
 @Injectable()
 export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
-  private readonly logger = new Logger(SorobanEscrowChainStateClient.name);
+  private readonly logger = new SanitizedLogger(SorobanEscrowChainStateClient.name);
   private readonly rpcServer: SorobanRpc.Server;
   private readonly simulatedStore = new Map<string, ChainEscrowRecord>();
 
   constructor() {
     super();
-    this.rpcServer = new SorobanRpc.Server(getStellarConfig().sorobanRpcUrl);
+    this.rpcServer = buildSorobanServer(getStellarConfig().sorobanRpcUrl);
   }
 
   get isConfigured(): boolean {
@@ -55,6 +58,7 @@ export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
       return this.toChainRecord(contractEscrowId, native);
     } catch (error) {
       if (this.isNotFound(error)) return undefined;
+      if (error instanceof InvalidChainStateError) throw error;
       this.logger.error(
         `Failed to read chain state for escrow ${contractEscrowId}`,
         error instanceof Error ? error.stack : String(error),
@@ -63,17 +67,8 @@ export class SorobanEscrowChainStateClient extends EscrowChainStateClient {
     }
   }
 
-  private toChainRecord(
-    contractEscrowId: string,
-    native: Record<string, unknown>,
-  ): ChainEscrowRecord {
-    return {
-      contractEscrowId,
-      depositor: String(native.depositor),
-      beneficiary: String(native.beneficiary),
-      amountXLM: String(native.amount),
-      status: native.status as ChainEscrowRecord['status'],
-    };
+  private toChainRecord(contractEscrowId: string, native: unknown): ChainEscrowRecord {
+    return parseChainEscrow(contractEscrowId, native);
   }
 
   private isNotFound(error: unknown): boolean {

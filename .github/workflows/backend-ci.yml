@@ -28,7 +28,10 @@ jobs:
   ci:
     name: Lint · TypeCheck · Test · Build
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Bumped from 5 to 7 when the postgres service container and its integration specs were
+    # added — pulling the extra image and the "Wait for Postgres" step add well under a
+    # minute in practice, but this leaves headroom instead of running right at the edge.
+    timeout-minutes: 7
 
     services:
       # Backs the Redis integration smoke tests (e.g. gig.service.redis-integration.spec.ts).
@@ -40,6 +43,24 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      # Backs the Postgres integration specs (e.g. database.postgres-integration.spec.ts,
+      # health.postgres-integration.spec.ts). Tests that need it check `process.env.DATABASE_URL`
+      # themselves and skip when it's unset, so this is additive — it doesn't change behavior
+      # of the mocked-pool unit tests.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: trustflow
+          POSTGRES_PASSWORD: trustflow
+          POSTGRES_DB: trustflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trustflow"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -76,6 +97,12 @@ jobs:
         working-directory: ./backend
         run: npx tsc --noEmit
 
+      # Catches a token/service import cycle (e.g. #429) before it ships: Nest silently
+      # resolves the cycled DI token to `undefined` at runtime instead of failing to compile.
+      - name: Circular dependency check
+        working-directory: ./backend
+        run: npm run check:cycles
+
       # Belt-and-suspenders alongside the service's own --health-cmd/--health-retries above
       # (which gates job startup, not necessarily readiness by the time this step runs):
       # explicitly retry a real connection before trusting REDIS_URL in the test step.
@@ -92,25 +119,49 @@ jobs:
           echo "::error::Redis did not become available in time" >&2
           exit 1
 
+      # Belt-and-suspenders alongside postgres's own --health-cmd/--health-retries above:
+      # explicitly retry a real connection before trusting DATABASE_URL in the test step.
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 15); do
+            if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
+              echo "Postgres is accepting connections"
+              exit 0
+            fi
+            echo "Waiting for Postgres... ($i/15)"
+            sleep 2
+          done
+          echo "::error::Postgres did not become available in time" >&2
+          exit 1
+
       - name: Unit tests
         working-directory: ./backend
         run: npm run test:ci
         env:
           REDIS_URL: redis://localhost:6379
+          DATABASE_URL: postgres://trustflow:trustflow@localhost:5432/trustflow_test
 
       - name: Build
         working-directory: ./backend
         run: npm run build
 
-      # Dependency vulnerability scanning with npm audit.
-      # Fails the build if high or critical vulnerabilities are found in the dependency tree.
-      # The --audit-level=high threshold balances security with practicality — low/moderate
-      # findings are logged but don't block CI, giving teams time to evaluate and update
-      # dependencies on a reasonable schedule rather than forcing immediate action on every
-      # minor advisory.
-      - name: Dependency vulnerability scan
+      # Dependency vulnerability scan — gates on the PRODUCTION dependency tree only
+      # (--omit=dev). See backend/DEPENDENCY_AUDIT_POLICY.md for the triage process and the
+      # checked-in allow-list of advisories accepted for now (each with a reason and an
+      # expiry date). The --audit-level=high threshold balances security with practicality —
+      # low/moderate findings are logged but don't block CI, giving teams time to evaluate
+      # and update dependencies on a reasonable schedule rather than forcing immediate
+      # action on every minor advisory. Dev-only findings (lint/build tooling — never
+      # shipped) are reported separately below without blocking the build, so a new advisory
+      # in, say, eslint's dependency tree can't mask the lint/type/test results above by
+      # failing the job outright.
+      - name: Dependency vulnerability scan (production)
         working-directory: ./backend
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Dependency vulnerability scan (dev, non-blocking)
+        working-directory: ./backend
+        run: npm audit --audit-level=high || echo "::warning::Dev-dependency high/critical advisories found — see backend/DEPENDENCY_AUDIT_POLICY.md. Not blocking the build."
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

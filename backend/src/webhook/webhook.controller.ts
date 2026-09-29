@@ -12,7 +12,14 @@ export class WebhookController {
   @ApiOperation({
     summary: 'Register webhook',
     description:
-      'Register a webhook endpoint to receive event notifications. Supported events: escrow.created, escrow.released, dispute.raised, dispute.resolved.',
+      'Register a webhook endpoint to receive event notifications.\n\n' +
+      'Supported events:\n' +
+      '- **Gig Events (Outbox)**: gig.created, gig.accepted, gig.expired, gig.cancelled\n' +
+      '- **Dispute Events (Direct)**: dispute.raised\n' +
+      '- **Dispute Saga Events (Outbox)**: dispute.escalated, dispute.jurors_assigned, dispute.vote_cast, dispute.verdict_reached, dispute.payout_executed, dispute.saga_completed, dispute.saga_compensating, dispute.saga_failed\n' +
+      '- **IPFS Events (Outbox)**: ipfs.pin.created, ipfs.pin.degraded, ipfs.pin.restored, ipfs.pin.lost, ipfs.pin.failed, ipfs.pin.removed\n' +
+      '- **Reconciliation Events (Outbox)**: escrow_reconciliation.drift_detected, escrow_reconciliation.escrow_backfilled\n\n' +
+      'Pass events: ["*"] to subscribe to all events, or specify individual event types.',
   })
   @ApiBody({
     description: 'Webhook registration details',
@@ -34,8 +41,8 @@ export class WebhookController {
         events: {
           type: 'array',
           items: { type: 'string' },
-          description: 'List of events to subscribe to (defaults to ["*"])',
-          example: ['escrow.created', 'escrow.released'],
+          description: 'List of events to subscribe to (defaults to ["*"] for all events)',
+          example: ['gig.created', 'dispute.raised', 'dispute.escalated'],
         },
         secret: {
           type: 'string',

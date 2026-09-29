@@ -142,6 +142,34 @@ describe('RpcFailoverService', () => {
       expect(endpoint.failureCount).toBe(1);
       expect(endpoint.lastError).toBe('Network error');
     });
+
+    it('should mark Soroban endpoint as healthy on successful JSON-RPC health check', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ result: { status: 'healthy' } }),
+      });
+
+      const endpoint = service.getAllSorobanEndpoints()[0];
+      await (service as any).checkSorobanEndpoint(endpoint);
+
+      expect(endpoint.healthy).toBe(true);
+      expect(endpoint.failureCount).toBe(0);
+      expect(endpoint.lastError).toBeUndefined();
+    });
+
+    it('should mark Soroban endpoint as unhealthy on unsuccessful JSON-RPC health check', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ error: { message: 'Node not synced' } }),
+      });
+
+      const endpoint = service.getAllSorobanEndpoints()[0];
+      await (service as any).checkSorobanEndpoint(endpoint);
+
+      expect(endpoint.healthy).toBe(false);
+      expect(endpoint.failureCount).toBe(1);
+      expect(endpoint.lastError).toContain('Unhealthy status');
+    });
   });
 
   describe('failover switching', () => {

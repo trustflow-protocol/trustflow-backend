@@ -5,6 +5,8 @@ export enum DriftType {
   AMOUNT_MISMATCH = 'amount_mismatch',
   MISSING_IN_DB = 'missing_in_db',
   MISSING_ON_CHAIN = 'missing_on_chain',
+  /** The chain returned data that failed validation; nothing was written to the database. */
+  INVALID_CHAIN_DATA = 'invalid_chain_data',
 }
 
 /** Canonical on-chain view of a single escrow, as read by an EscrowChainStateClient. */
@@ -26,6 +28,12 @@ export interface DriftRecord {
   detectedAt: string;
 }
 
+export interface ReconciliationError {
+  contractEscrowId: string;
+  message: string;
+  occurredAt: string;
+}
+
 export interface ReconciliationRun {
   runId: string;
   startedAt: string;
@@ -35,6 +43,8 @@ export interface ReconciliationRun {
   driftCount: number;
   repairedCount: number;
   drifts: DriftRecord[];
+  errorCount: number;
+  errors: ReconciliationError[];
 }
 
 /** Webhook events emitted by the reconciler. */
@@ -44,3 +54,4 @@ export const RECONCILIATION_EVENTS = {
 } as const;
 
 export const DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+export const DEFAULT_ESCROW_RECONCILIATION_SWEEP_CONCURRENCY = 8;

@@ -1,13 +1,19 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { randomUUID } from 'crypto';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { OutboxEvent, OutboxTransaction } from './outbox.types';
+import { config } from '../config/env.config';
 
 const EVENT_KEY_PREFIX = 'outbox:event:';
 const PENDING_KEY = 'outbox:pending';
 const PROCESSING_KEY = 'outbox:processing';
+const WEBHOOK_PENDING_KEY = 'outbox:webhook:pending';
+const WEBHOOK_PROCESSING_KEY = 'outbox:webhook:processing';
+export const DEFAULT_OUTBOX_DELIVERED_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const DEFAULT_OUTBOX_MAX_ATTEMPTS = 5;
 const CLAIM_DUE_SCRIPT = `
   local ids = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[3])
   local claimed = {}
@@ -42,10 +48,12 @@ export const OUTBOX_PERSISTENCE_FALLBACK_METRIC = 'outbox_persistence_fallback_t
  */
 @Injectable()
 export class OutboxService implements OnModuleInit {
-  private readonly logger = new Logger(OutboxService.name);
+  private readonly logger = new SanitizedLogger(OutboxService.name);
   private readonly memory = new Map<string, OutboxEvent>();
   private readonly pending = new Set<string>();
   private readonly processing = new Map<string, number>();
+  private readonly webhookPending = new Set<string>();
+  private readonly webhookProcessing = new Map<string, number>();
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
@@ -53,7 +61,7 @@ export class OutboxService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'OutboxService requires REDIS_URL in production so domain state and outbox events share a durable transaction',
       );
@@ -84,12 +92,13 @@ export class OutboxService implements OnModuleInit {
   }
 
   /** Fallback-only append for development/test stores that have no transaction. */
-  async append(event: OutboxEvent): Promise<void> {
+  async append(event: OutboxEvent, isWebhook = false): Promise<void> {
+    const pendingKey = isWebhook ? WEBHOOK_PENDING_KEY : PENDING_KEY;
     if (this.redis) {
       const results = await this.redis
         .multi()
         .set(this.eventKey(event.id), JSON.stringify(event))
-        .zadd(PENDING_KEY, event.nextAttemptAt, event.id)
+        .zadd(pendingKey, event.nextAttemptAt, event.id)
         .exec();
       this.assertTransactionOk(results);
       return;
@@ -97,7 +106,25 @@ export class OutboxService implements OnModuleInit {
 
     this.logFallback('append');
     this.memory.set(event.id, event);
-    this.pending.add(event.id);
+    if (isWebhook) this.webhookPending.add(event.id);
+    else this.pending.add(event.id);
+  }
+
+  sendWebhook(
+    transaction: OutboxTransaction | null,
+    eventName: string,
+    payload: unknown,
+    dedupKey?: string,
+  ): void {
+    const event = this.create(eventName, 'webhook', 'dispatch', payload);
+    if (dedupKey) event.dedupKey = dedupKey;
+    if (transaction) {
+      transaction
+        .set(this.eventKey(event.id), JSON.stringify(event))
+        .zadd(WEBHOOK_PENDING_KEY, event.nextAttemptAt, event.id);
+    } else {
+      this.append(event, true).catch(err => this.logger.error('Failed to append webhook', err));
+    }
   }
 
   async findById(id: string): Promise<OutboxEvent | undefined> {
@@ -109,13 +136,20 @@ export class OutboxService implements OnModuleInit {
   }
 
   /** Atomically claims due events and places a lease on each one. */
-  async claimDue(now: number, leaseMs: number, limit: number): Promise<OutboxEvent[]> {
+  async claimDue(
+    now: number,
+    leaseMs: number,
+    limit: number,
+    isWebhook = false,
+  ): Promise<OutboxEvent[]> {
+    const pendingKey = isWebhook ? WEBHOOK_PENDING_KEY : PENDING_KEY;
+    const processingKey = isWebhook ? WEBHOOK_PROCESSING_KEY : PROCESSING_KEY;
     if (this.redis) {
       const ids = (await this.redis.eval(
         CLAIM_DUE_SCRIPT,
         2,
-        PENDING_KEY,
-        PROCESSING_KEY,
+        pendingKey,
+        processingKey,
         now,
         now + leaseMs,
         limit,
@@ -132,38 +166,45 @@ export class OutboxService implements OnModuleInit {
     }
 
     this.logFallback('claim');
-    const events = [...this.pending]
+    const pendingSet = isWebhook ? this.webhookPending : this.pending;
+    const processingMap = isWebhook ? this.webhookProcessing : this.processing;
+    const events = [...pendingSet]
       .map(id => this.memory.get(id))
       .filter((event): event is OutboxEvent => Boolean(event && event.nextAttemptAt <= now))
       .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt)
       .slice(0, limit);
     for (const event of events) {
-      this.pending.delete(event.id);
-      this.processing.set(event.id, now + leaseMs);
+      pendingSet.delete(event.id);
+      processingMap.set(event.id, now + leaseMs);
       event.status = 'processing';
     }
     return events;
   }
 
   /** Returns abandoned processing leases to the pending set for redelivery. */
-  async reclaimExpired(now: number, limit: number): Promise<void> {
+  async reclaimExpired(now: number, limit: number, isWebhook = false): Promise<void> {
+    const pendingKey = isWebhook ? WEBHOOK_PENDING_KEY : PENDING_KEY;
+    const processingKey = isWebhook ? WEBHOOK_PROCESSING_KEY : PROCESSING_KEY;
     if (this.redis) {
-      await this.redis.eval(RECLAIM_EXPIRED_SCRIPT, 2, PROCESSING_KEY, PENDING_KEY, now, limit);
+      await this.redis.eval(RECLAIM_EXPIRED_SCRIPT, 2, processingKey, pendingKey, now, limit);
       return;
     }
 
-    for (const [id, leaseUntil] of this.processing) {
+    const processingMap = isWebhook ? this.webhookProcessing : this.processing;
+    const pendingSet = isWebhook ? this.webhookPending : this.pending;
+    for (const [id, leaseUntil] of processingMap) {
       if (leaseUntil > now) continue;
-      this.processing.delete(id);
+      processingMap.delete(id);
       const event = this.memory.get(id);
       if (!event) continue;
       event.status = 'pending';
       event.nextAttemptAt = now;
-      this.pending.add(id);
+      pendingSet.add(id);
     }
   }
 
-  async markDelivered(event: OutboxEvent): Promise<void> {
+  async markDelivered(event: OutboxEvent, isWebhook = false): Promise<void> {
+    const processingKey = isWebhook ? WEBHOOK_PROCESSING_KEY : PROCESSING_KEY;
     event.status = 'delivered';
     event.deliveredAt = new Date().toISOString();
     event.lastError = undefined;
@@ -172,37 +213,60 @@ export class OutboxService implements OnModuleInit {
       const results = await this.redis
         .multi()
         .set(this.eventKey(event.id), JSON.stringify(event))
-        .zrem(PROCESSING_KEY, event.id)
+        .expire(
+          this.eventKey(event.id),
+          config.OUTBOX_DELIVERED_TTL_SECONDS,
+        )
+        .zrem(processingKey, event.id)
         .exec();
       this.assertTransactionOk(results);
       return;
     }
 
     this.memory.set(event.id, event);
-    this.processing.delete(event.id);
+    const processingMap = isWebhook ? this.webhookProcessing : this.processing;
+    processingMap.delete(event.id);
   }
 
-  async retry(event: OutboxEvent, error: unknown): Promise<void> {
+  async retry(event: OutboxEvent, error: unknown, isWebhook = false): Promise<void> {
+    const pendingKey = isWebhook ? WEBHOOK_PENDING_KEY : PENDING_KEY;
+    const processingKey = isWebhook ? WEBHOOK_PROCESSING_KEY : PROCESSING_KEY;
     event.attempts += 1;
-    event.status = 'pending';
     event.lastError = error instanceof Error ? error.message : String(error);
-    event.nextAttemptAt =
-      Date.now() + Math.min(1000 * 2 ** Math.min(event.attempts - 1, 5), 30_000);
+    const failed =
+      event.attempts >= config.OUTBOX_MAX_ATTEMPTS;
+    event.status = failed ? 'failed' : 'pending';
+    if (!failed) {
+      event.nextAttemptAt =
+        Date.now() + Math.min(1000 * 2 ** Math.min(event.attempts - 1, 5), 30_000);
+    }
 
     if (this.redis) {
-      const results = await this.redis
+      const transaction = this.redis
         .multi()
         .set(this.eventKey(event.id), JSON.stringify(event))
-        .zrem(PROCESSING_KEY, event.id)
-        .zadd(PENDING_KEY, event.nextAttemptAt, event.id)
-        .exec();
+        .zrem(processingKey, event.id);
+      if (!failed) transaction.zadd(pendingKey, event.nextAttemptAt, event.id);
+      const results = await transaction.exec();
       this.assertTransactionOk(results);
+      if (failed)
+        this.logger.error(
+          `Outbox event ${event.id} failed after ${event.attempts} attempts: ${event.lastError}`,
+        );
       return;
     }
 
     this.memory.set(event.id, event);
-    this.processing.delete(event.id);
-    this.pending.add(event.id);
+    const processingMap = isWebhook ? this.webhookProcessing : this.processing;
+    const pendingSet = isWebhook ? this.webhookPending : this.pending;
+    processingMap.delete(event.id);
+    if (failed) {
+      this.logger.error(
+        `Outbox event ${event.id} failed after ${event.attempts} attempts: ${event.lastError}`,
+      );
+    } else {
+      pendingSet.add(event.id);
+    }
   }
 
   private eventKey(id: string): string {

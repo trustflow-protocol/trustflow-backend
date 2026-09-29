@@ -10,12 +10,13 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../admin/admin.guard';
 import { OutboxRelayService } from './outbox-relay.service';
 import { OutboxService } from './outbox.service';
 
 @ApiTags('Outbox')
-@ApiBearerAuth('JWT-auth')
-@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('outbox')
 export class OutboxController {
   constructor(
@@ -25,11 +26,13 @@ export class OutboxController {
 
   @Get(':id')
   @ApiOperation({
-    summary: 'Inspect a durable domain event',
+    summary: 'Inspect a durable domain event (admin only)',
     description: 'Returns event delivery state, including its consumer-facing deduplication key.',
   })
   @ApiParam({ name: 'id', description: 'Outbox event UUID' })
   @ApiResponse({ status: 200, description: 'Outbox event found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin privileges required' })
   @ApiResponse({ status: 404, description: 'Outbox event not found' })
   async findOne(@Param('id') id: string) {
     const event = await this.outbox.findById(id);
@@ -40,7 +43,7 @@ export class OutboxController {
   @Post('relay')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
-    summary: 'Run one outbox relay batch',
+    summary: 'Run one outbox relay batch (admin only)',
     description:
       'Operational endpoint for draining due events without waiting for the scheduled relay.',
   })
@@ -49,6 +52,8 @@ export class OutboxController {
     description: 'Relay batch processed',
     schema: { example: { processed: 3 } },
   })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin privileges required' })
   async relayNow() {
     return { processed: await this.relay.runOnce() };
   }

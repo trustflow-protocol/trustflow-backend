@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import {
   rpc as SorobanRpc,
   Contract,
@@ -7,6 +8,7 @@ import {
   nativeToScVal,
 } from '@stellar/stellar-sdk';
 import { StellarConfig } from '../stellar/stellar.config';
+import { config } from '../config/env.config';
 
 export const SOROBAN_RPC_SERVER = 'SOROBAN_RPC_SERVER';
 export const ESCROW_WRITE_STELLAR_CONFIG = 'ESCROW_WRITE_STELLAR_CONFIG';
@@ -39,7 +41,7 @@ export interface UnsignedReleaseTransaction {
  */
 @Injectable()
 export class EscrowReleaseTransactionBuilderService {
-  private readonly logger = new Logger(EscrowReleaseTransactionBuilderService.name);
+  private readonly logger = new SanitizedLogger(EscrowReleaseTransactionBuilderService.name);
 
   constructor(
     @Inject(SOROBAN_RPC_SERVER) private readonly rpcServer: SorobanRpc.Server,
@@ -70,7 +72,7 @@ export class EscrowReleaseTransactionBuilderService {
       .addOperation(
         contract.call(RELEASE_ENTRYPOINT, nativeToScVal(contractEscrowId, { type: 'string' })),
       )
-      .setTimeout(60)
+      .setTimeout(config.STELLAR_TX_VALIDITY_SECONDS)
       .build();
 
     const prepared = await this.rpcServer.prepareTransaction(tx);

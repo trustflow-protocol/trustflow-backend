@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Horizon } from '@stellar/stellar-sdk';
 import { getStellarConfig } from './stellar.config';
+import { config } from '../config/env.config';
 
 interface EndpointStatus {
   url: string;
@@ -12,7 +14,7 @@ interface EndpointStatus {
 
 @Injectable()
 export class RpcFailoverService {
-  private readonly logger = new Logger(RpcFailoverService.name);
+  private readonly logger = new SanitizedLogger(RpcFailoverService.name);
   private horizonEndpoints: EndpointStatus[] = [];
   private sorobanEndpoints: EndpointStatus[] = [];
   private currentHorizonEndpoint: string;
@@ -20,7 +22,6 @@ export class RpcFailoverService {
   private healthCheckInterval: NodeJS.Timeout;
   private readonly HEALTH_CHECK_INTERVAL_MS = 30000; // 30 seconds
   private readonly MAX_FAILURES_BEFORE_UNHEALTHY = 3;
-  private readonly HEALTH_CHECK_TIMEOUT_MS = 5000;
 
   constructor() {
     this.initializeEndpoints();
@@ -28,10 +29,10 @@ export class RpcFailoverService {
   }
 
   private initializeEndpoints() {
-    const horizonUrls = (process.env.STELLAR_HORIZON_ENDPOINTS || getStellarConfig().horizonUrl)
+    const horizonUrls = (config.STELLAR_HORIZON_ENDPOINTS || getStellarConfig().horizonUrl)
       .split(',')
       .map(url => url.trim());
-    const sorobanUrls = (process.env.SOROBAN_RPC_ENDPOINTS || getStellarConfig().sorobanRpcUrl)
+    const sorobanUrls = (config.SOROBAN_RPC_ENDPOINTS || getStellarConfig().sorobanRpcUrl)
       .split(',')
       .map(url => url.trim());
 
@@ -77,7 +78,10 @@ export class RpcFailoverService {
   private async checkHorizonEndpoint(endpoint: EndpointStatus): Promise<void> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.HEALTH_CHECK_TIMEOUT_MS);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        config.STELLAR_HEALTH_CHECK_TIMEOUT_MS,
+      );
 
       const response = await fetch(`${endpoint.url}/ledgers?order=desc&limit=1`, {
         signal: controller.signal,
@@ -114,18 +118,35 @@ export class RpcFailoverService {
   private async checkSorobanEndpoint(endpoint: EndpointStatus): Promise<void> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.HEALTH_CHECK_TIMEOUT_MS);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        config.STELLAR_HEALTH_CHECK_TIMEOUT_MS,
+      );
 
-      const response = await fetch(`${endpoint.url}/health`, {
+      const response = await fetch(endpoint.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getHealth',
+        }),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
       if (response.ok) {
-        endpoint.healthy = true;
-        endpoint.failureCount = 0;
-        endpoint.lastError = undefined;
+        const data = (await response.json()) as any;
+        if (data?.result?.status === 'healthy') {
+          endpoint.healthy = true;
+          endpoint.failureCount = 0;
+          endpoint.lastError = undefined;
+        } else {
+          endpoint.healthy = false;
+          endpoint.failureCount++;
+          endpoint.lastError = `Unhealthy status: ${JSON.stringify(data)}`;
+        }
       } else {
         endpoint.healthy = false;
         endpoint.failureCount++;

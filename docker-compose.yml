@@ -1,0 +1,62 @@
+# Local development/test dependencies for the backend — NOT used in CI (backend-ci.yml runs
+# its own redis/postgres service containers directly). Start with:
+#
+#   docker compose up -d
+#
+# then point backend/.env at them (values match .env.example's defaults):
+#   REDIS_URL=redis://localhost:6379
+#   DATABASE_URL=postgres://trustflow:trustflow@localhost:5432/trustflow_dev
+#
+# `npm run test:integration` (in backend/) starts these automatically and runs only the
+# *-integration.spec.ts suites against them.
+#
+# Redis persistence is configured the same way in development as it must be in production,
+# because an unconfigured Redis silently loses every escrow, gig and outbox event on restart
+# and that is not something a developer should discover locally for the first time:
+#   appendonly yes  + appendfsync everysec -> at most ~1s of acknowledged writes can be lost,
+#                                              which is what makes a Redis-based RPO achievable
+#   dir /data      -> the named volume below, so the data survives `docker compose down`
+services:
+  redis:
+    image: redis:7-alpine
+    # AOF: log every write, fsync once per second. The alternative (RDB snapshots alone)
+    # can lose everything since the last save; with `no` Redis loses all data on restart.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --dir
+      - /data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      # Escrows, gigs, nonces and the outbox all live here. Without a volume, a container
+      # recreate is a total data loss.
+      - trustflow-redis-data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trustflow
+      POSTGRES_PASSWORD: trustflow
+      POSTGRES_DB: trustflow_dev
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trustflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - trustflow-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  trustflow-postgres-data:
+  trustflow-redis-data:

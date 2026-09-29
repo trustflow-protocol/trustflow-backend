@@ -3,6 +3,7 @@ import { WebhookService } from '../webhook/webhook.service';
 import { OutboxPublisherService } from './outbox-publisher.service';
 import { OutboxRelayService } from './outbox-relay.service';
 import { OutboxService } from './outbox.service';
+import { OutboxEventDispatcher } from './outbox-event-dispatcher.service';
 
 describe('OutboxService and OutboxRelayService', () => {
   let metrics: jest.Mocked<Pick<MetricsService, 'increment'>>;
@@ -62,10 +63,14 @@ describe('OutboxService and OutboxRelayService', () => {
     const webhooks = {
       dispatch: jest.fn().mockResolvedValue(undefined),
     } as unknown as WebhookService;
+    const dispatcher = {
+      dispatch: jest.fn().mockResolvedValue(undefined),
+    } as unknown as OutboxEventDispatcher;
     const relay = new OutboxRelayService(
       outbox,
       publisher,
       webhooks,
+      dispatcher,
       metrics as unknown as MetricsService,
     );
 
@@ -82,10 +87,14 @@ describe('OutboxService and OutboxRelayService', () => {
     const webhooks = {
       dispatch: jest.fn().mockRejectedValue(new Error('receiver unavailable')),
     } as unknown as WebhookService;
+    const dispatcher = {
+      dispatch: jest.fn().mockRejectedValue(new Error('receiver unavailable')),
+    } as unknown as OutboxEventDispatcher;
     const relay = new OutboxRelayService(
       outbox,
       publisher,
       webhooks,
+      dispatcher,
       metrics as unknown as MetricsService,
     );
 
@@ -98,5 +107,64 @@ describe('OutboxService and OutboxRelayService', () => {
         lastError: 'receiver unavailable',
       }),
     );
+  });
+
+  it('marks a poison event failed and stops retrying at the configured attempt count', async () => {
+    const previous = process.env.OUTBOX_MAX_ATTEMPTS;
+    process.env.OUTBOX_MAX_ATTEMPTS = '2';
+    try {
+      const event = outbox.create('gig.accepted', 'gig', 'gig-1', { id: 'gig-1' });
+      await outbox.append(event);
+      const [claimed] = await outbox.claimDue(Date.now(), 1000, 1);
+
+      await outbox.retry(claimed, new Error('gateway offline'));
+      const [claimedAgain] = await outbox.claimDue(Date.now() + 2000, 1000, 1);
+      await outbox.retry(claimedAgain, new Error('gateway offline'));
+
+      expect(await outbox.findById(event.id)).toEqual(
+        expect.objectContaining({
+          status: 'failed',
+          attempts: 2,
+          lastError: 'gateway offline',
+        }),
+      );
+      expect(await outbox.claimDue(Date.now() + 60_000, 1000, 1)).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.OUTBOX_MAX_ATTEMPTS;
+      else process.env.OUTBOX_MAX_ATTEMPTS = previous;
+    }
+  });
+
+  it('records terminal failures separately from ordinary retries', async () => {
+    const previous = process.env.OUTBOX_MAX_ATTEMPTS;
+    process.env.OUTBOX_MAX_ATTEMPTS = '1';
+    try {
+      const event = outbox.create('gig.expired', 'gig', 'gig-1', { id: 'gig-1' });
+      await outbox.append(event);
+      const publisher = new OutboxPublisherService(null);
+      const webhooks = {
+        dispatch: jest.fn().mockResolvedValue(undefined),
+      } as unknown as WebhookService;
+      const dispatcher = {
+        dispatch: jest.fn().mockRejectedValue(new Error('receiver unavailable')),
+      } as unknown as OutboxEventDispatcher;
+      const relay = new OutboxRelayService(
+        outbox,
+        publisher,
+        webhooks,
+        dispatcher,
+        metrics as unknown as MetricsService,
+      );
+
+      await relay.runOnce();
+
+      expect(metrics.increment).toHaveBeenCalledWith('outbox_delivery_total', {
+        result: 'failed',
+        type: event.type,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.OUTBOX_MAX_ATTEMPTS;
+      else process.env.OUTBOX_MAX_ATTEMPTS = previous;
+    }
   });
 });

@@ -1,6 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ArrayMaxSize, IsArray, IsOptional, IsString } from 'class-validator';
-import { DriftRecord, DriftType, ReconciliationRun } from './escrow-reconciliation.types';
+import {
+  DriftRecord,
+  DriftType,
+  ReconciliationError,
+  ReconciliationRun,
+} from './escrow-reconciliation.types';
 
 export class RunReconciliationDto {
   @ApiPropertyOptional({
@@ -19,21 +24,29 @@ export class RunReconciliationDto {
 }
 
 export class DriftRecordDto implements DriftRecord {
-  @ApiProperty() contractEscrowId: string;
-  @ApiProperty({ enum: DriftType }) driftType: DriftType;
+  @ApiProperty() contractEscrowId!: string;
+  @ApiProperty({ enum: DriftType }) driftType!: DriftType;
   @ApiPropertyOptional() dbValue?: Record<string, unknown>;
   @ApiPropertyOptional() chainValue?: Record<string, unknown>;
-  @ApiProperty() repaired: boolean;
+  @ApiProperty() repaired!: boolean;
   @ApiPropertyOptional() repairError?: string;
-  @ApiProperty() detectedAt: string;
+  @ApiProperty() detectedAt!: string;
+}
+
+export class ReconciliationErrorDto implements ReconciliationError {
+  @ApiProperty() contractEscrowId!: string;
+  @ApiProperty() message!: string;
+  @ApiProperty() occurredAt!: string;
 }
 
 export class ReconciliationRunResponseDto implements ReconciliationRun {
-  @ApiProperty() runId: string;
-  @ApiProperty() startedAt: string;
-  @ApiProperty() completedAt: string;
-  @ApiProperty() checked: number;
-  @ApiProperty() driftCount: number;
-  @ApiProperty() repairedCount: number;
-  @ApiProperty({ type: [DriftRecordDto] }) drifts: DriftRecordDto[];
+  @ApiProperty() runId!: string;
+  @ApiProperty() startedAt!: string;
+  @ApiProperty() completedAt!: string;
+  @ApiProperty() checked!: number;
+  @ApiProperty() driftCount!: number;
+  @ApiProperty() repairedCount!: number;
+  @ApiProperty({ type: [DriftRecordDto] }) drifts!: DriftRecordDto[];
+  @ApiProperty() errorCount!: number;
+  @ApiProperty({ type: [ReconciliationErrorDto] }) errors!: ReconciliationErrorDto[];
 }

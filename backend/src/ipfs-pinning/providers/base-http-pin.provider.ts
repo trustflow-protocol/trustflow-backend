@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { SanitizedLogger } from '../../common/logging/sanitized-logger';
 import { IpfsPinProvider, PinProviderName } from './ipfs-provider.interface';
 
 /**
@@ -12,7 +12,7 @@ import { IpfsPinProvider, PinProviderName } from './ipfs-provider.interface';
  * are provided.
  */
 export abstract class BaseHttpPinProvider extends IpfsPinProvider {
-  protected readonly logger = new Logger(this.constructor.name);
+  protected readonly logger = new SanitizedLogger(this.constructor.name);
   private readonly simulatedStore = new Map<string, Buffer>();
 
   abstract readonly name: PinProviderName;

@@ -38,8 +38,8 @@ describe('SorobanEscrowChainStateClient', () => {
     it('returns a seeded record', async () => {
       const record: ChainEscrowRecord = {
         contractEscrowId: 'esc-1',
-        depositor: 'GDEP',
-        beneficiary: 'GBEN',
+        depositor: `G${'A'.repeat(55)}`,
+        beneficiary: `G${'B'.repeat(55)}`,
         amountXLM: '100',
         status: 'active',
       };
@@ -72,7 +72,12 @@ describe('SorobanEscrowChainStateClient', () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { nativeToScVal } = require('@stellar/stellar-sdk');
       const nativeVal = nativeToScVal(
-        { depositor: 'GDEP', beneficiary: 'GBEN', amount: '250', status: 'released' },
+        {
+          depositor: `G${'A'.repeat(55)}`,
+          beneficiary: `G${'B'.repeat(55)}`,
+          amount: '250',
+          status: 'released',
+        },
         { type: 'instance' },
       );
       const fakeEntry = { val: { contractData: () => ({ val: () => nativeVal }) } };
@@ -80,11 +85,44 @@ describe('SorobanEscrowChainStateClient', () => {
 
       await expect(client.getEscrow('esc-2')).resolves.toEqual({
         contractEscrowId: 'esc-2',
-        depositor: 'GDEP',
-        beneficiary: 'GBEN',
+        depositor: `G${'A'.repeat(55)}`,
+        beneficiary: `G${'B'.repeat(55)}`,
         amountXLM: '250',
         status: 'released',
       });
+    });
+
+    it('rejects an unknown status instead of returning it', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { nativeToScVal } = require('@stellar/stellar-sdk');
+      const nativeVal = nativeToScVal(
+        {
+          depositor: `G${'A'.repeat(55)}`,
+          beneficiary: `G${'B'.repeat(55)}`,
+          amount: '250',
+          status: 'Bogus',
+        },
+        { type: 'instance' },
+      );
+      const fakeEntry = { val: { contractData: () => ({ val: () => nativeVal }) } };
+      jest.spyOn(client.rpcServer, 'getContractData').mockResolvedValue(fakeEntry);
+
+      await expect(client.getEscrow('esc-bad')).rejects.toThrow('unrecognised status');
+    });
+
+    it('rejects a record with a missing field rather than emitting "undefined"', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { nativeToScVal } = require('@stellar/stellar-sdk');
+      const nativeVal = nativeToScVal(
+        { depositor: `G${'A'.repeat(55)}`, amount: '1', status: 'active' },
+        {
+          type: 'instance',
+        },
+      );
+      const fakeEntry = { val: { contractData: () => ({ val: () => nativeVal }) } };
+      jest.spyOn(client.rpcServer, 'getContractData').mockResolvedValue(fakeEntry);
+
+      await expect(client.getEscrow('esc-bad')).rejects.toThrow('beneficiary');
     });
 
     it('returns undefined when the contract holds no entry for the escrow', async () => {

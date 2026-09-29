@@ -1,7 +1,9 @@
-import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
+import { config } from '../config/env.config';
 
 export interface LedgerCheckpoint {
   ledgerSequence: number;
@@ -33,7 +35,7 @@ export const LEDGER_CURSOR_PERSISTENCE_FALLBACK_METRIC = 'ledger_cursor_persiste
  */
 @Injectable()
 export class LedgerCursorService implements OnModuleInit {
-  private readonly logger = new Logger(LedgerCursorService.name);
+  private readonly logger = new SanitizedLogger(LedgerCursorService.name);
   /** Fallback store, only used while Redis is unavailable. */
   private checkpoints: Map<string, LedgerCheckpoint> = new Map();
 
@@ -43,7 +45,7 @@ export class LedgerCursorService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'LedgerCursorService requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',
@@ -74,6 +76,17 @@ export class LedgerCursorService implements OnModuleInit {
     networkHash: string,
   ): Promise<void> {
     const key = this.cursorKey(contractId);
+
+    // Ensure cursor updates are monotonic — never move backward (#408)
+    const existing = await this.getCursor(contractId);
+    if (existing && existing.lastProcessedLedger >= ledgerSequence) {
+      this.logger.warn(
+        `Ignoring cursor update for contract ${contractId}: ` +
+          `existing ledger ${existing.lastProcessedLedger} >= new ledger ${ledgerSequence}`,
+      );
+      return;
+    }
+
     const checkpoint: LedgerCheckpoint = {
       ledgerSequence,
       lastProcessedLedger: ledgerSequence,

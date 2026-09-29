@@ -1,9 +1,11 @@
 import { Module, Global, Logger } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { DistributedLockService } from './distributed-lock.service';
 import { config } from '../../config/env.config';
+import { REDIS_CLIENT } from './redis.constants';
 
-export const REDIS_CLIENT = 'REDIS_CLIENT';
+export { REDIS_CLIENT } from './redis.constants';
 
 /**
  * Build the app's ioredis client from `REDIS_URL`, or `null` when it is unset.
@@ -20,7 +22,9 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
  * logged, ioredis keeps retrying per `retryStrategy`, and Redis-backed
  * features degrade until it recovers.
  */
-export function createRedisClient(logger: Logger = new Logger('RedisModule')): Redis | null {
+export function createRedisClient(
+  logger: Pick<Logger, 'warn' | 'error' | 'log'> = new SanitizedLogger('RedisModule'),
+): Redis | null {
   const url = config.REDIS_URL;
   if (!url) {
     logger.warn(
@@ -31,6 +35,9 @@ export function createRedisClient(logger: Logger = new Logger('RedisModule')): R
 
   const client = new Redis(url, {
     maxRetriesPerRequest: 3,
+    // Without this a command on an unreachable Redis waits out the whole retry/backoff
+    // sequence (seconds). Reject fast so callers can apply their own degradation policy.
+    commandTimeout: config.REDIS_COMMAND_TIMEOUT_MS,
     retryStrategy: times => Math.min(times * 100, 3000),
     lazyConnect: true,
   });

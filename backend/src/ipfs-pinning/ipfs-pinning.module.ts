@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { WebhookModule } from '../webhook/webhook.module';
+import { CircuitBreakerModule } from '../common/circuit-breaker';
 import { IpfsPinningService } from './ipfs-pinning.service';
 import { RepinWorkerService } from './repin-worker.service';
 import { IpfsPinningController } from './ipfs-pinning.controller';
@@ -10,7 +11,7 @@ import { InfuraProvider } from './providers/infura.provider';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 
 @Module({
-  imports: [WebhookModule, MonitoringModule],
+  imports: [WebhookModule, MonitoringModule, CircuitBreakerModule],
   controllers: [IpfsPinningController],
   providers: [
     IpfsPinningService,

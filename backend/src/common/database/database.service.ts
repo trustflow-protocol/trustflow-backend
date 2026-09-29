@@ -1,6 +1,10 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
+import { redactError } from '../logging/redaction';
 import { Pool, QueryResult, QueryResultRow } from 'pg';
-import { PG_POOL } from './database.module';
+import { PG_POOL } from './database.constants';
+
+import { MetricsService } from '../../monitoring/metrics.service';
 
 /**
  * Thin wrapper around the Core DB connection pool. Every query goes through here rather
@@ -9,9 +13,13 @@ import { PG_POOL } from './database.module';
  */
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
-  private readonly logger = new Logger(DatabaseService.name);
+  private readonly logger = new SanitizedLogger(DatabaseService.name);
+  private readonly slowQueryThresholdMs = 500;
 
-  constructor(@Inject(PG_POOL) private readonly pool: Pool | null) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool | null,
+    @Optional() private readonly metrics?: MetricsService,
+  ) {}
 
   get isConfigured(): boolean {
     return this.pool !== null;
@@ -30,7 +38,54 @@ export class DatabaseService implements OnModuleDestroy {
     text: string,
     params?: unknown[],
   ): Promise<QueryResult<T>> {
-    return this.getPool().query<T>(text, params);
+    const startTime = performance.now();
+    try {
+      const result = await this.getPool().query<T>(text, params);
+      const duration = performance.now() - startTime;
+
+      this.logger.debug(`Query executed in ${duration.toFixed(2)}ms`);
+      if (this.metrics) {
+        this.metrics.increment('db_query_count');
+      }
+
+      if (duration > this.slowQueryThresholdMs) {
+        this.logger.warn(
+          `Slow query detected: ${duration.toFixed(2)}ms\nQuery: ${this.describeQuery(text)}`,
+        );
+        if (this.metrics) {
+          this.metrics.increment('db_slow_query_count');
+        }
+      }
+      return result;
+    } catch (error) {
+      const duration = performance.now() - startTime;
+      this.logger.error(
+        `Query failed after ${duration.toFixed(2)}ms\nQuery: ${this.describeQuery(text)}\nReason: ${redactError(error)}`,
+      );
+      if (this.metrics) {
+        this.metrics.increment('db_query_error_count');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Reduces a SQL statement to a loggable shape: literals are replaced with `?` and the whole
+   * string is truncated.
+   *
+   * The raw `text` used to be logged verbatim on both the slow-query and the failure path. A
+   * caller that builds SQL by interpolation (rather than using `$1` placeholders) put live
+   * values — including the `before_state`/`after_state` JSONB columns the audit log writes —
+   * straight into the logs. Values are not needed to diagnose a slow or failing query, so
+   * they are stripped rather than redacted field-by-field.
+   */
+  private describeQuery(text: string): string {
+    const withoutLiterals = text
+      .replace(/'(?:[^']|'')*'/g, '?')
+      .replace(/\b\d+\.\d+\b/g, '?')
+      .replace(/\b\d+\b/g, '?')
+      .replace(/\$\d+/g, '?');
+    return withoutLiterals.length > 200 ? `${withoutLiterals.slice(0, 200)}…` : withoutLiterals;
   }
 
   /**

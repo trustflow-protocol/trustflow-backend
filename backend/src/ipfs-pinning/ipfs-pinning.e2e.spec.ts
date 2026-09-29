@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import request from 'supertest';
@@ -11,8 +11,15 @@ import {
   PIN_PROVIDERS,
   PinProviderName,
 } from './providers/ipfs-provider.interface';
+import { SentryModule } from '../sentry/sentry.module';
+import { LoggingModule } from '../common/logging/logging.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
+import { configureApp } from '../app.setup';
+import { validateEnv } from '../config/env.config';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'ipfs-pinning-e2e-secret';
+// configureApp() reads config.* — requires validateEnv() to have run first.
+validateEnv();
 
 /**
  * Stands in for a real IPFS pinning backend (Pinata/web3.storage/Infura) — this is the
@@ -25,6 +32,7 @@ class FakePinProvider extends IpfsPinProvider {
   readonly pinned = new Map<string, Buffer>();
   failPin = false;
   failVerify = false;
+  failUnpin = false;
 
   constructor(name: PinProviderName) {
     super();
@@ -41,6 +49,7 @@ class FakePinProvider extends IpfsPinProvider {
   }
 
   async unpin(cid: string): Promise<void> {
+    if (this.failUnpin) throw new Error(`${this.name} refused the unpin`);
     this.pinned.delete(cid);
   }
 
@@ -53,6 +62,7 @@ class FakePinProvider extends IpfsPinProvider {
     this.pinned.clear();
     this.failPin = false;
     this.failVerify = false;
+    this.failUnpin = false;
   }
 }
 
@@ -74,6 +84,9 @@ describe('IPFS Pinning (API integration)', () => {
         IpfsPinningModule,
         JwtModule.register({ secret: process.env.JWT_SECRET, signOptions: { expiresIn: '1h' } }),
         PassportModule.register({ defaultStrategy: 'jwt' }),
+        SentryModule,
+        LoggingModule,
+        MonitoringModule,
       ],
       providers: [JwtStrategy],
     })
@@ -82,9 +95,7 @@ describe('IPFS Pinning (API integration)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
-    );
+    configureApp(app, { skipSentryInit: true, skipIndexerStart: true });
     await app.init();
 
     const jwtService = moduleFixture.get(JwtService);
@@ -104,20 +115,20 @@ describe('IPFS Pinning (API integration)', () => {
   describe('authentication', () => {
     it('rejects a pin request with no bearer token', async () => {
       await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .send({ content: CONTENT_BASE64 })
         .expect(401);
     });
 
     it('rejects a list request with no bearer token', async () => {
-      await request(app.getHttpServer()).get('/ipfs/pins').expect(401);
+      await request(app.getHttpServer()).get('/v1/ipfs/pins').expect(401);
     });
   });
 
   describe('POST /ipfs/pins', () => {
     it('pins across both configured providers and returns a HEALTHY record', async () => {
       const res = await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .set('Authorization', authHeader)
         .send({ content: CONTENT_BASE64, filename: 'hello.txt' })
         .expect(201);
@@ -132,7 +143,7 @@ describe('IPFS Pinning (API integration)', () => {
 
     it('rejects content that does not match expectedCid, without contacting any provider', async () => {
       await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .set('Authorization', authHeader)
         .send({ content: CONTENT_BASE64, expectedCid: 'bafkreiwrongcidvaluefortestpurposesonly' })
         .expect(400);
@@ -142,12 +153,16 @@ describe('IPFS Pinning (API integration)', () => {
     });
 
     it('fails over to the remaining provider and reports DEGRADED when one provider fails', async () => {
+      // Distinct content — pinContent() skips re-pinning a provider already recorded as
+      // healthy for a given CID, so reusing CONTENT_BASE64 here would no-op against the
+      // fully-healthy record the earlier tests already created for it.
+      const content = Buffer.from('Hello, TrustFlow! (failover case)').toString('base64');
       providerA.failPin = true;
 
       const res = await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .set('Authorization', authHeader)
-        .send({ content: CONTENT_BASE64 })
+        .send({ content })
         .expect(201);
 
       expect(res.body.status).toBe('DEGRADED');
@@ -159,13 +174,15 @@ describe('IPFS Pinning (API integration)', () => {
     });
 
     it('returns 503 when every registered provider fails to pin', async () => {
+      // Distinct content — see the note in the DEGRADED test above.
+      const content = Buffer.from('Hello, TrustFlow! (total failure case)').toString('base64');
       providerA.failPin = true;
       providerB.failPin = true;
 
       await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .set('Authorization', authHeader)
-        .send({ content: CONTENT_BASE64 })
+        .send({ content })
         .expect(503);
     });
   });
@@ -173,13 +190,13 @@ describe('IPFS Pinning (API integration)', () => {
   describe('GET /ipfs/pins and /ipfs/pins/:cid', () => {
     it('lists a pin created via POST and fetches it by CID', async () => {
       await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .set('Authorization', authHeader)
         .send({ content: CONTENT_BASE64 })
         .expect(201);
 
       const list = await request(app.getHttpServer())
-        .get('/ipfs/pins')
+        .get('/v1/ipfs/pins')
         .set('Authorization', authHeader)
         .expect(200);
       expect(list.body.some((p: { cid: string }) => p.cid === EXPECTED_CID)).toBe(true);
@@ -193,7 +210,7 @@ describe('IPFS Pinning (API integration)', () => {
 
     it('returns 404 for an unknown CID', async () => {
       await request(app.getHttpServer())
-        .get('/ipfs/pins/bafkreiunknowncidnotpinnedanywhereatall')
+        .get('/v1/ipfs/pins/bafkreiunknowncidnotpinnedanywhereatall')
         .set('Authorization', authHeader)
         .expect(404);
     });
@@ -202,7 +219,7 @@ describe('IPFS Pinning (API integration)', () => {
   describe('POST /ipfs/pins/:cid/verify', () => {
     it('automatically restores replication when a provider silently loses the pin', async () => {
       await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .set('Authorization', authHeader)
         .send({ content: CONTENT_BASE64 })
         .expect(201);
@@ -223,7 +240,7 @@ describe('IPFS Pinning (API integration)', () => {
 
     it('returns 404 when verifying an unknown CID', async () => {
       await request(app.getHttpServer())
-        .post('/ipfs/pins/bafkreiunknowncidnotpinnedanywhereatall/verify')
+        .post('/v1/ipfs/pins/bafkreiunknowncidnotpinnedanywhereatall/verify')
         .set('Authorization', authHeader)
         .expect(404);
     });
@@ -232,7 +249,7 @@ describe('IPFS Pinning (API integration)', () => {
   describe('DELETE /ipfs/pins/:cid', () => {
     it('unpins from every provider currently holding the content', async () => {
       await request(app.getHttpServer())
-        .post('/ipfs/pins')
+        .post('/v1/ipfs/pins')
         .set('Authorization', authHeader)
         .send({ content: CONTENT_BASE64 })
         .expect(201);
@@ -247,9 +264,54 @@ describe('IPFS Pinning (API integration)', () => {
       expect(providerB.pinned.has(EXPECTED_CID)).toBe(false);
     });
 
+    it('answers 502 with per-provider results when a provider fails, and a retry completes the removal', async () => {
+      await request(app.getHttpServer())
+        .post('/v1/ipfs/pins')
+        .set('Authorization', authHeader)
+        .send({ content: CONTENT_BASE64 })
+        .expect(201);
+      providerB.failUnpin = true;
+
+      const failed = await request(app.getHttpServer())
+        .delete(`/ipfs/pins/${EXPECTED_CID}`)
+        .set('Authorization', authHeader)
+        .expect(502);
+
+      expect(failed.body).toMatchObject({
+        statusCode: 502,
+        cid: EXPECTED_CID,
+        status: 'UNPINNING',
+        failedProviders: [PinProviderName.WEB3_STORAGE],
+        providers: [
+          expect.objectContaining({ provider: PinProviderName.PINATA, status: 'UNPINNED' }),
+          expect.objectContaining({
+            provider: PinProviderName.WEB3_STORAGE,
+            status: 'PINNED',
+            lastError: 'web3.storage refused the unpin',
+          }),
+        ],
+      });
+      expect(providerB.pinned.has(EXPECTED_CID)).toBe(true);
+
+      const record = await request(app.getHttpServer())
+        .get(`/ipfs/pins/${EXPECTED_CID}`)
+        .set('Authorization', authHeader)
+        .expect(200);
+      expect(record.body.status).toBe('UNPINNING');
+
+      providerB.failUnpin = false;
+      const retried = await request(app.getHttpServer())
+        .delete(`/ipfs/pins/${EXPECTED_CID}`)
+        .set('Authorization', authHeader)
+        .expect(200);
+
+      expect(retried.body.status).toBe('UNPINNED');
+      expect(providerB.pinned.has(EXPECTED_CID)).toBe(false);
+    });
+
     it('returns 404 when unpinning an unknown CID', async () => {
       await request(app.getHttpServer())
-        .delete('/ipfs/pins/bafkreiunknowncidnotpinnedanywhereatall')
+        .delete('/v1/ipfs/pins/bafkreiunknowncidnotpinnedanywhereatall')
         .set('Authorization', authHeader)
         .expect(404);
     });

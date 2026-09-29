@@ -1,18 +1,22 @@
-import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { getJwtVerificationSecrets } from '../config/env.config';
 import { NonceStoreService } from './nonce-store.service';
+import { JWT_ALGORITHM } from '../config/env.config';
 
 const CHALLENGE_PREFIX = 'Sign this message to authenticate with TrustFlow: ';
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
+  private readonly logger = new SanitizedLogger(AuthService.name);
 
   constructor(
     private jwtService: JwtService,
     private nonceStore: NonceStoreService,
+    private refreshTokenStore: RefreshTokenStoreService,
   ) {}
 
   async generateChallenge(address: string): Promise<string> {
@@ -32,10 +36,6 @@ export class AuthService {
     }
 
     const nonce = this.extractNonce(challenge);
-    if (nonce && (await this.nonceStore.isNonceReplay(nonce))) {
-      this.logger.warn(`Replay attempt detected for ${this.maskAddress(address)}`);
-      throw new UnauthorizedException('Challenge already used — replay blocked');
-    }
 
     try {
       const signatureBuffer = Buffer.from(signature, 'base64');
@@ -45,7 +45,11 @@ export class AuthService {
       const isValid = keypair.verify(challengeBuffer, signatureBuffer);
 
       if (isValid && nonce) {
-        await this.nonceStore.markNonceUsed(nonce);
+        const firstUse = await this.nonceStore.markNonceUsed(nonce);
+        if (!firstUse) {
+          this.logger.warn(`Replay attempt detected for ${this.maskAddress(address)}`);
+          throw new UnauthorizedException('Challenge already used — replay blocked');
+        }
         this.logger.debug(`Signature verified for ${this.maskAddress(address)}`);
       }
 
@@ -59,17 +63,47 @@ export class AuthService {
     }
   }
 
-  generateToken(address: string): string {
+  generateToken(address: string, ttlSeconds?: number): string {
     const payload = { address, sub: address };
-    return this.jwtService.sign(payload);
+    const options = ttlSeconds ? { expiresIn: ttlSeconds } : {};
+    return this.jwtService.sign(payload, options);
+  }
+
+  async generateRefreshToken(address: string): Promise<string> {
+    return this.refreshTokenStore.issueRefreshToken(address);
+  }
+
+  async refreshAccessToken(
+    refreshToken: string,
+    address: string,
+  ): Promise<{ token: string; refreshToken: string } | null> {
+    const result = await this.refreshTokenStore.validateAndRotateRefreshToken(
+      refreshToken,
+      address,
+    );
+    if (!result.valid || !result.newToken) {
+      return null;
+    }
+
+    const newAccessToken = this.generateToken(address, ACCESS_TOKEN_TTL_SECONDS);
+    return {
+      token: newAccessToken,
+      refreshToken: result.newToken,
+    };
+  }
+
+  async revokeRefreshToken(address: string, token: string): Promise<void> {
+    return this.refreshTokenStore.revokeRefreshToken(address, token);
   }
 
   validateToken(token: string): unknown {
     try {
-      return this.jwtService.verify(token);
+      return this.jwtService.verify(token, { algorithms: [JWT_ALGORITHM] });
     } catch (error) {
       throw new UnauthorizedException('Invalid token');
     }
+
+    throw new UnauthorizedException('Invalid token');
   }
 
   private extractNonce(challenge: string): string | null {

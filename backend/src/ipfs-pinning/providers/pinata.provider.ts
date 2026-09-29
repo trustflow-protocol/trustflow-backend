@@ -3,20 +3,24 @@ import * as https from 'https';
 import { BaseHttpPinProvider } from './base-http-pin.provider';
 import { PinProviderName } from './ipfs-provider.interface';
 import { buildSingleFileMultipart } from './multipart.util';
+import { config } from '../../config/env.config';
 
 const PINATA_API_HOST = 'api.pinata.cloud';
 
 /**
- * Pinata (https://pinata.cloud) adapter. Configured via the PINATA_JWT env var
+ * Pinata (https://pinata.cloud) adapter. Configured via the IPFS_PINATA_JWT env var
  * (a Pinata API JWT with pinning scope). Falls back to simulated in-memory
  * pinning when unset — see BaseHttpPinProvider.
+ *
+ * HTTP requests to Pinata timeout after IPFS_PROVIDER_TIMEOUT_MS (default 30s) to prevent
+ * hung requests from blocking the sweep (#409).
  */
 @Injectable()
 export class PinataProvider extends BaseHttpPinProvider {
   readonly name = PinProviderName.PINATA;
 
   protected get credential(): string | undefined {
-    return process.env.PINATA_JWT || undefined;
+    return config.PINATA_JWT || undefined;
   }
 
   protected async sendPin(cid: string, content: Buffer, jwt: string): Promise<void> {
@@ -68,12 +72,14 @@ export class PinataProvider extends BaseHttpPinProvider {
     body?: Buffer;
   }): Promise<T> {
     return new Promise((resolve, reject) => {
+      const timeoutMs = config.IPFS_PROVIDER_TIMEOUT_MS;
       const req = https.request(
         {
           hostname: options.hostname,
           path: options.path,
           method: options.method,
           headers: options.headers,
+          timeout: timeoutMs,
         },
         res => {
           const chunks: Buffer[] = [];
@@ -89,6 +95,10 @@ export class PinataProvider extends BaseHttpPinProvider {
         },
       );
       req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error(`Pinata request timed out after ${timeoutMs}ms`));
+      });
       if (options.body) req.write(options.body);
       req.end();
     });

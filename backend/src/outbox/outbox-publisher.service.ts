@@ -2,9 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { OutboxEvent } from './outbox.types';
+import { config } from '../config/env.config';
 
 export const OUTBOX_GATEWAY_CHANNEL = 'trustflow:events:gateway';
 export const OUTBOX_QUEUE_KEY = 'trustflow:events:queue';
+export const DEFAULT_OUTBOX_QUEUE_MAX_LENGTH = 1000;
 
 /**
  * Relays durable events to the WebSocket gateway's Redis pub/sub channel and
@@ -23,6 +25,7 @@ export class OutboxPublisherService {
       .multi()
       .publish(OUTBOX_GATEWAY_CHANNEL, payload)
       .lpush(OUTBOX_QUEUE_KEY, payload)
+      .ltrim(OUTBOX_QUEUE_KEY, 0, config.OUTBOX_QUEUE_MAX_LENGTH - 1)
       .exec();
 
     if (!results) throw new Error('Redis outbox publish transaction aborted');

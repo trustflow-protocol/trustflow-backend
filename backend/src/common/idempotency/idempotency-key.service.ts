@@ -1,20 +1,13 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { SanitizedLogger } from '../logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { MetricsService } from '../../monitoring/metrics.service';
 import { createHash } from 'crypto';
+import { config } from '../../config/env.config';
 
 const KEY_PREFIX = 'idempotency:';
 const RECORD_VERSION = 1;
-const DEFAULT_TTL_SECONDS = 24 * 60 * 60; // 24 hours
-
-function defaultTtlSeconds(): number {
-  const raw = process.env.IDEMPOTENCY_KEY_TTL_SECONDS;
-  if (!raw) return DEFAULT_TTL_SECONDS;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TTL_SECONDS;
-}
-
 export interface IdempotencyRecord {
   /** Schema version of this record, so future format changes can be handled gracefully. */
   version: number;
@@ -34,7 +27,7 @@ export type ClaimResult = { claimed: true } | { claimed: false; record: Idempote
 
 @Injectable()
 export class IdempotencyKeyService {
-  private readonly logger = new Logger(IdempotencyKeyService.name);
+  private readonly logger = new SanitizedLogger(IdempotencyKeyService.name);
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
@@ -67,7 +60,7 @@ export class IdempotencyKeyService {
     endpoint: string,
     key: string,
     requestHash: string,
-    ttlSeconds: number = defaultTtlSeconds(),
+    ttlSeconds: number = config.IDEMPOTENCY_KEY_TTL_SECONDS,
   ): Promise<ClaimResult> {
     if (!this.redis) return { claimed: true };
 
@@ -117,7 +110,7 @@ export class IdempotencyKeyService {
     statusCode: number,
     body: unknown,
     headers: Record<string, string> = {},
-    ttlSeconds: number = defaultTtlSeconds(),
+    ttlSeconds: number = config.IDEMPOTENCY_KEY_TTL_SECONDS,
   ): Promise<void> {
     if (!this.redis) return;
     const record: IdempotencyRecord = {

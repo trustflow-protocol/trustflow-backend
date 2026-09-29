@@ -1,12 +1,12 @@
 import {
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   ConflictException,
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import BigNumber from 'bignumber.js';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -14,6 +14,7 @@ import { MetricsService } from '../monitoring/metrics.service';
 import { UserType, UserStatus } from './user-profile.entity';
 import { CreateUserProfileDto, UpdateUserProfileDto, RateUserDto } from './user-profile.dto';
 import { randomUUID } from 'crypto';
+import { config } from '../config/env.config';
 
 export interface UserProfile {
   id: string;
@@ -64,7 +65,7 @@ export const USER_PROFILE_PERSISTENCE_FALLBACK_METRIC = 'user_profile_persistenc
  */
 @Injectable()
 export class UserProfileService implements OnModuleInit {
-  private readonly logger = new Logger(UserProfileService.name);
+  private readonly logger = new SanitizedLogger(UserProfileService.name);
 
   /** Fallback stores, only used while Redis is unavailable. */
   private profiles: Map<string, UserProfile> = new Map();
@@ -76,7 +77,7 @@ export class UserProfileService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.redis && process.env.NODE_ENV === 'production') {
+    if (!this.redis && config.NODE_ENV === 'production') {
       throw new Error(
         'UserProfileService requires REDIS_URL to be configured in production — refusing to ' +
           'start with per-instance in-memory storage, which would silently diverge across instances.',
@@ -276,10 +277,11 @@ export class UserProfileService implements OnModuleInit {
    * Update total earned (for freelancers)
    */
   async updateTotalEarned(id: string, amount: string): Promise<UserProfile> {
+    parseAmount(amount);
     const profile = await this.findById(id);
-    const currentEarned = new BigNumber(profile.totalEarned || '0');
-    const additionalAmount = new BigNumber(amount);
-    profile.totalEarned = currentEarned.plus(additionalAmount).toFixed(7);
+    const currentEarned = parseAmount(profile.totalEarned || '0');
+    const additionalAmount = parseAmount(amount);
+    profile.totalEarned = normalizeAmount(currentEarned.plus(additionalAmount).toFixed());
     profile.updatedAt = new Date().toISOString();
     await this.persist(profile);
     return profile;
@@ -289,10 +291,11 @@ export class UserProfileService implements OnModuleInit {
    * Update total spent (for clients)
    */
   async updateTotalSpent(id: string, amount: string): Promise<UserProfile> {
+    parseAmount(amount);
     const profile = await this.findById(id);
-    const currentSpent = new BigNumber(profile.totalSpent || '0');
-    const additionalAmount = new BigNumber(amount);
-    profile.totalSpent = currentSpent.plus(additionalAmount).toFixed(7);
+    const currentSpent = parseAmount(profile.totalSpent || '0');
+    const additionalAmount = parseAmount(amount);
+    profile.totalSpent = normalizeAmount(currentSpent.plus(additionalAmount).toFixed());
     profile.updatedAt = new Date().toISOString();
     await this.persist(profile);
     return profile;

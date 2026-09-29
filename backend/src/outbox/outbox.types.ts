@@ -1,4 +1,4 @@
-export type OutboxStatus = 'pending' | 'processing' | 'delivered';
+export type OutboxStatus = 'pending' | 'processing' | 'delivered' | 'failed';
 
 /**
  * Durable domain event. `dedupKey` is stable across retries so every consumer

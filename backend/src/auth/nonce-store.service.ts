@@ -1,4 +1,5 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 
@@ -15,7 +16,7 @@ return val
 
 @Injectable()
 export class NonceStoreService {
-  private readonly logger = new Logger(NonceStoreService.name);
+  private readonly logger = new SanitizedLogger(NonceStoreService.name);
 
   private readonly inMemoryChallenges = new Map<string, { challenge: string; expiresAt: number }>();
   private readonly inMemoryConsumed = new Map<string, number>();
@@ -26,9 +27,8 @@ export class NonceStoreService {
 
   constructor(@Inject(REDIS_CLIENT) private readonly redisClient: Redis | null) {}
 
-  async store(address: string, challenge: string, nonce: string): Promise<void> {
+  async store(address: string, challenge: string, _nonce: string): Promise<void> {
     const key = this.challengeKey(address);
-    const nonceKey = this.nonceKey(nonce);
 
     if (this.redis) {
       try {
@@ -37,7 +37,6 @@ export class NonceStoreService {
           this.logger.warn(`Challenge already exists for ${this.maskAddress(address)}, replacing`);
           await this.redis.set(key, challenge, 'EX', NONCE_TTL_SECONDS);
         }
-        await this.redis.set(nonceKey, '1', 'EX', CONSUMED_TTL_SECONDS);
         return;
       } catch (err) {
         this.logger.warn('Redis unavailable for nonce store, falling back to memory');
@@ -48,7 +47,6 @@ export class NonceStoreService {
       challenge,
       expiresAt: Date.now() + NONCE_TTL_SECONDS * 1000,
     });
-    this.inMemoryConsumed.set(nonceKey, Date.now() + CONSUMED_TTL_SECONDS * 1000);
     this.cleanupExpiredEntries();
   }
 
@@ -76,6 +74,12 @@ export class NonceStoreService {
     return entry.challenge;
   }
 
+  /**
+   * Read-only check for whether `nonce` has already been marked used. Not used as a
+   * pre-verification gate in the login flow (see `markNonceUsed`, which does that
+   * check-and-set atomically) — kept as a standalone query for callers that just need
+   * to know current state without also mutating it.
+   */
   async isNonceReplay(nonce: string): Promise<boolean> {
     const key = this.nonceKey(nonce);
 
@@ -97,19 +101,30 @@ export class NonceStoreService {
     return true;
   }
 
-  async markNonceUsed(nonce: string): Promise<void> {
+  /**
+   * Atomically marks `nonce` as used. Returns `true` the first time a given nonce is
+   * marked (safe to proceed) and `false` if it was already marked (a replay) — the
+   * `SET ... NX` (Redis) / has-then-set (memory) check and the write happen as a single
+   * step so there is no read-then-write gap between detecting and recording use.
+   */
+  async markNonceUsed(nonce: string): Promise<boolean> {
     const key = this.nonceKey(nonce);
 
     if (this.redis) {
       try {
-        await this.redis.set(key, '1', 'EX', CONSUMED_TTL_SECONDS, 'NX');
-        return;
+        const result = await this.redis.set(key, '1', 'EX', CONSUMED_TTL_SECONDS, 'NX');
+        return result === 'OK';
       } catch (err) {
         this.logger.warn('Redis unavailable for marking nonce, falling back to memory');
       }
     }
 
+    const expiresAt = this.inMemoryConsumed.get(key);
+    const alreadyUsed = expiresAt !== undefined && Date.now() <= expiresAt;
+    if (alreadyUsed) return false;
+
     this.inMemoryConsumed.set(key, Date.now() + CONSUMED_TTL_SECONDS * 1000);
+    return true;
   }
 
   async hasActiveChallenge(address: string): Promise<boolean> {

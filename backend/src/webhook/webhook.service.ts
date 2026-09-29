@@ -1,10 +1,15 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { SanitizedLogger } from '../common/logging/sanitized-logger';
+import { redactUrl } from '../common/logging/redaction';
 import * as https from 'https';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import * as dns from 'dns';
 import * as net from 'net';
 import { withRetry, isRetryable } from './retry.helper';
+import { OutboxService } from '../outbox/outbox.service';
+import { forwardRef, Inject } from '@nestjs/common';
+import { config } from '../config/env.config';
 
 /** Base backoff between webhook delivery attempts; grows linearly per attempt. */
 const WEBHOOK_RETRY_BASE_DELAY_MS = 1000;
@@ -34,7 +39,6 @@ export function computeWebhookSignature(payloadBody: string, secret: string): st
  * Configurable via WEBHOOK_TIMEOUT_MS env var; defaults to 10 seconds.
  * Prevents a single unresponsive endpoint from stalling dispatch() indefinitely.
  */
-const WEBHOOK_TIMEOUT_MS = parseInt(process.env.WEBHOOK_TIMEOUT_MS || '10000', 10);
 
 /**
  * Returns true if the IP is in a private/loopback/link-local range that must
@@ -169,8 +173,12 @@ export async function validateWebhookUrl(urlString: string): Promise<void> {
 
 @Injectable()
 export class WebhookService {
-  private readonly logger = new Logger(WebhookService.name);
+  private readonly logger = new SanitizedLogger(WebhookService.name);
   private endpoints = new Map<string, WebhookEndpointConfig>();
+
+  constructor(
+    @Inject(forwardRef(() => OutboxService)) private readonly outboxService: OutboxService,
+  ) {}
 
   async register(id: string, url: string, secret?: string) {
     await validateWebhookUrl(url);
@@ -181,6 +189,10 @@ export class WebhookService {
   }
 
   async dispatch(event: string, data: unknown, dedupKey?: string) {
+    this.outboxService.sendWebhook(null, event, data, dedupKey);
+  }
+
+  async deliver(event: string, data: unknown, dedupKey?: string) {
     const payload: WebhookPayload = { event, data, timestamp: new Date().toISOString(), dedupKey };
     // Re-validate each endpoint at dispatch time to protect against DNS rebinding
     const validEndpoints: WebhookEndpointConfig[] = [];
@@ -190,7 +202,9 @@ export class WebhookService {
         validEndpoints.push(endpoint);
       } catch (e) {
         this.logger.warn(
-          `Skipping webhook dispatch to blocked/private URL: ${endpoint.url} - ${(e as Error).message}`,
+          `Skipping webhook dispatch to blocked/private URL: ${redactUrl(
+            endpoint.url,
+          )} - ${(e as Error).message}`,
         );
         continue;
       }
@@ -246,8 +260,8 @@ export class WebhookService {
           else rej(new Error(`${r.statusCode}`));
         },
       );
-      req.setTimeout(WEBHOOK_TIMEOUT_MS, () => {
-        req.destroy(new Error(`Webhook request timed out after ${WEBHOOK_TIMEOUT_MS}ms`));
+      req.setTimeout(config.WEBHOOK_TIMEOUT_MS, () => {
+        req.destroy(new Error(`Webhook request timed out after ${config.WEBHOOK_TIMEOUT_MS}ms`));
       });
       req.on('error', rej);
       req.write(body);

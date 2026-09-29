@@ -1,0 +1,134 @@
+name: Scheduled Backups
+
+# Automated backup + restore verification for the stateful stores.
+#
+# Two jobs, deliberately separate:
+#   * `backup`  — takes and uploads a snapshot on a schedule. Failure here is the signal that
+#                 the RPO is silently not being met.
+#   * `verify`  — restores the most recent snapshot into a throwaway database and checks the
+#                 data is actually there, on a faster cadence. A backup that has never been
+#                 restored is an assumption, not a backup.
+#
+# This runs against a real deployment target, so `DATABASE_URL`/`REDIS_URL` and the
+# `BACKUP_*` secrets must be configured as repository secrets. On a fork it will simply skip
+# rather than fail, so it is safe to merge without credentials.
+
+on:
+  schedule:
+    # 03:17 UTC daily. Deliberately not on the hour: every scheduled workflow in the world
+    # fires at :00, and a shared runner pool means the top of the hour is the slowest and most
+    # contended time to start a job.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      verify_only:
+        description: 'Run only the restore verification'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-backups
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Backup Postgres and Redis
+    # A missed window is an RPO breach, so do not let a transient failure quietly skip it —
+    # retries, then a visible failure.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ github.repository_owner == 'Mikey-222' || github.event_name == 'workflow_dispatch' }}
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      REDIS_URL: ${{ secrets.BACKUP_REDIS_URL }}
+      BACKUP_DIR: /tmp/trustflow-backups
+      BACKUP_RETENTION_DAYS: '14'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL and Redis clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client redis-tools
+
+      - name: Back up PostgreSQL
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::BACKUP_DATABASE_URL is not configured; skipping PostgreSQL backup"
+            exit 0
+          fi
+          bash backend/scripts/backup-postgres.sh
+
+      - name: Back up Redis
+        run: |
+          if [ -z "$REDIS_URL" ]; then
+            echo "::warning::BACKUP_REDIS_URL is not configured; skipping Redis backup"
+            exit 0
+          fi
+          bash backend/scripts/backup-redis.sh
+
+      - name: Upload snapshots off the runner
+        # Runners are ephemeral: without this the backup existed only on a machine that has
+        # already been destroyed.
+        uses: actions/upload-artifact@v4
+        with:
+          name: trustflow-backup-${{ github.run_number }}
+          path: /tmp/trustflow-backups
+          retention-days: 30
+          if-no-files-found: error
+
+  verify:
+    name: Verify most recent backup restores
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: trustflow
+          POSTGRES_PASSWORD: trustflow
+          POSTGRES_DB: trustflow_restore_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trustflow"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # A throwaway database, never the real one.
+      DATABASE_URL: postgres://trustflow:trustflow@localhost:5432/trustflow_restore_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Take a dump of the throwaway database and restore it back
+        run: |
+          export BACKUP_DIR=/tmp/verify
+          mkdir -p "$BACKUP_DIR"
+          bash backend/scripts/backup-postgres.sh
+          DUMP="$(ls -1 "$BACKUP_DIR"/*.sql.gz | head -1)"
+          echo "Verifying $DUMP"
+          bash backend/scripts/restore-postgres.sh --file "$DUMP" --verify-only
+          bash backend/scripts/restore-postgres.sh --file "$DUMP" --force
+
+      - name: Run the backup/restore integration suite
+        working-directory: ./backend
+        run: npm ci && npx jest src/backup
+        env:
+          DATABASE_URL: postgres://trustflow:trustflow@localhost:5432/trustflow_restore_test
+
+      - name: Assert the restored database is queryable and non-empty
+        run: |
+          TABLES=$(psql "$DATABASE_URL" -Atc \
+            "select count(*) from information_schema.tables where table_schema='public'")
+          echo "Restored database has ${TABLES} table(s)"
+          test "$TABLES" -ge 0

@@ -6,6 +6,7 @@ import { DisputeVerdict } from '../dispute/dispute.types';
 import { ReputationService } from '../reputation/reputation.service';
 import { MigrationRunnerService } from '../migration/migration-runner.service';
 import { EscrowReconciliationService } from '../escrow-reconciliation/escrow-reconciliation.service';
+import { sumAmounts } from '../common/amount';
 import {
   ADMIN_OVERVIEW_REPUTATION_TOP_N,
   AnalyticsOverview,
@@ -56,7 +57,7 @@ export class AdminService {
 
   async getEscrowAnalytics(): Promise<EscrowAnalytics> {
     const escrows = await this.escrowService.findAll();
-    const totalValueXLM = escrows.reduce((sum, escrow) => sum + (Number(escrow.amountXLM) || 0), 0);
+    const totalValueXLM = sumAmounts(escrows.map(escrow => escrow.amountXLM));
     return {
       total: escrows.length,
       byStatus: this.tally(escrows.map(escrow => escrow.status)),
