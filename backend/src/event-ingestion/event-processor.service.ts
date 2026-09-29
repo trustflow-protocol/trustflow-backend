@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { EscrowService, Escrow } from '../escrow/escrow.service';
+import { DisputeSagaService } from '../dispute/dispute-saga.service';
 import { config } from '../config/env.config';
 
 export interface SorobanEvent {
@@ -56,6 +57,7 @@ export class EventProcessorService implements OnModuleInit {
     private readonly escrowService: EscrowService,
     @Optional() @Inject(REDIS_CLIENT) private readonly redis: Redis | null = null,
     @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly disputeSagaService?: DisputeSagaService,
   ) {}
 
   onModuleInit(): void {
@@ -162,7 +164,12 @@ export class EventProcessorService implements OnModuleInit {
 
   private async handleEscrowDisputed(event: SorobanEvent): Promise<void> {
     const escrow = await this.resolveEscrowByContractId(event);
-    const reason = event.value.reason as string | undefined;
+    const reason = (event.value.reason as string | undefined) ?? 'Dispute raised on-chain';
+    if (this.disputeSagaService) {
+      await this.disputeSagaService.escalateFromChain(escrow.id, reason);
+      this.logger.log(`Escrow disputed via saga: ${escrow.contractEscrowId}`);
+      return;
+    }
     await this.escrowService.raiseDispute(escrow.id, reason);
     this.logger.log(`Escrow disputed: ${escrow.contractEscrowId}`);
   }

@@ -34,6 +34,8 @@ export interface DisputeSaga {
   sagaId: string;
   escrowId: string;
   initiator: string;
+  /** Where the dispute originated. Defaults to 'api' for backwards compatibility. */
+  origin?: 'api' | 'chain';
   reason: string;
   currentStep: DisputeStep;
   escalationTxHash?: string;

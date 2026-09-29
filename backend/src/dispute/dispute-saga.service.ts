@@ -57,6 +57,20 @@ const SAGAS_BY_ESCROW_PREFIX = 'sagas:by-escrow:';
 export const DISPUTE_SAGA_PERSISTENCE_FALLBACK_METRIC = 'dispute_saga_persistence_fallback_total';
 
 /**
+ * Sentinel initiator for chain-originated disputes.
+ *
+ * Per #463 (docs/soroban-event-spec.md), `escrow_disputed` events carry only an
+ * escrow id and an optional `reason` — no initiator/discriminator field. This
+ * sentinel marks that absence explicitly instead of fabricating a party.
+ */
+export const CHAIN_DISPUTE_INITIATOR = 'chain:unknown';
+
+export interface EscalateOptions {
+  /** Defaults to 'api'. Chain path passes 'chain'. */
+  origin?: 'api' | 'chain';
+}
+
+/**
  * Orchestrates the dispute resolution saga (escalation → juror assignment → voting → payout),
  * with a compensating action for every step. Backed by Redis so saga progress survives restarts
  * and is shared across instances — see PERSISTENT_STORAGE_SPIKE.md and its "Follow-up decisions"
@@ -147,10 +161,15 @@ export class DisputeSagaService implements OnModuleInit {
 
   /**
    * Opens a new dispute saga for an escrow.
-   * Compensating action: restore escrow status to 'active'.
+   * Compensating action: restore escrow status to 'active' (only if this call disputed it).
    * Serialized per escrow to prevent double escalation.
    */
-  async escalate(escrowId: string, dto: EscalateDisputeDto): Promise<DisputeSaga> {
+  async escalate(
+    escrowId: string,
+    dto: EscalateDisputeDto,
+    opts: EscalateOptions = {},
+  ): Promise<DisputeSaga> {
+    const origin = opts.origin ?? 'api';
     return this.escalateMutex.lock(escrowId, async () => {
       // Guard: only one active saga per escrow
       const existing = await this.findByEscrowId(escrowId);
@@ -168,11 +187,17 @@ export class DisputeSagaService implements OnModuleInit {
         throw new BadRequestException('Cannot dispute a released escrow');
       }
 
-      // Verify that initiator is either depositor or beneficiary
-      if (dto.initiator !== escrow.depositor && dto.initiator !== escrow.beneficiary) {
-        throw new ForbiddenException(
-          'Only the depositor or beneficiary can escalate a dispute for this escrow',
-        );
+      // Verify that initiator is either depositor or beneficiary, unless this is a
+      // chain-originated dispute with no reliable initiator (#463): the sentinel
+      // CHAIN_DISPUTE_INITIATOR is the only non-party value accepted.
+      const isChainUnknown =
+        origin === 'chain' && dto.initiator === CHAIN_DISPUTE_INITIATOR;
+      if (!isChainUnknown) {
+        if (dto.initiator !== escrow.depositor && dto.initiator !== escrow.beneficiary) {
+          throw new ForbiddenException(
+            'Only the depositor or beneficiary can escalate a dispute for this escrow',
+          );
+        }
       }
 
       const sagaId = `saga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -182,6 +207,7 @@ export class DisputeSagaService implements OnModuleInit {
         sagaId,
         escrowId,
         initiator: dto.initiator,
+        origin,
         reason: dto.reason,
         currentStep: DisputeStep.ESCALATION,
         votes: [],
@@ -192,9 +218,16 @@ export class DisputeSagaService implements OnModuleInit {
 
       this.recordStepStart(saga, DisputeStep.ESCALATION);
 
+      // Track whether this call moved the escrow to disputed, so compensation
+      // and adoption behave correctly for already-disputed escrows.
+      let disputedByThisCall = false;
       try {
-        // Freeze the escrow by marking it disputed
-        await this.escrowService.raiseDispute(escrowId, dto.reason);
+        // Adopt orphaned disputes: if the escrow is already disputed (chain or
+        // direct API path), skip raiseDispute and still create the saga.
+        if (escrow.status !== 'disputed') {
+          await this.escrowService.raiseDispute(escrowId, dto.reason);
+          disputedByThisCall = true;
+        }
 
         // Simulate on-chain escalation tx hash
         saga.escalationTxHash = `escalation-tx-${sagaId}`;
@@ -230,15 +263,42 @@ export class DisputeSagaService implements OnModuleInit {
         this.logger.log(`Saga ${sagaId}: escalation complete for escrow ${escrowId}`);
         return saga;
       } catch (error) {
-        await this.compensateEscalation(saga, error);
+        await this.compensateEscalation(saga, error, disputedByThisCall);
         throw error;
       }
     });
   }
 
+  /**
+   * Chain entry point for `escrow_disputed` events. Per #463 the event cannot
+   * reliably identify an initiator, so no party is fabricated: the saga is
+   * recorded with the `chain:unknown` sentinel and `origin: 'chain'`.
+   * Idempotent per escrow — returns the existing active saga on re-delivery.
+   */
+  async escalateFromChain(escrowId: string, reason: string): Promise<DisputeSaga> {
+    const existing = await this.findByEscrowId(escrowId);
+    if (
+      existing &&
+      existing.currentStep !== DisputeStep.FAILED &&
+      existing.currentStep !== DisputeStep.COMPLETED
+    ) {
+      this.logger.warn(`Chain dispute for escrow ${escrowId} already has saga ${existing.sagaId}`);
+      return existing;
+    }
+    return this.escalate(
+      escrowId,
+      { initiator: CHAIN_DISPUTE_INITIATOR, reason } as EscalateDisputeDto,
+      { origin: 'chain' },
+    );
+  }
+
   // ─── Compensating action for Step 1 ──────────────────────────────
 
-  private async compensateEscalation(saga: DisputeSaga, error: unknown): Promise<void> {
+  private async compensateEscalation(
+    saga: DisputeSaga,
+    error: unknown,
+    disputedByThisCall = true,
+  ): Promise<void> {
     const reason = error instanceof Error ? error.message : String(error);
     this.logger.warn(`Saga ${saga.sagaId}: compensating escalation — ${reason}`);
     this.recordStepFailed(saga, DisputeStep.ESCALATION, reason);
@@ -246,10 +306,13 @@ export class DisputeSagaService implements OnModuleInit {
     saga.compensationReason = reason;
 
     try {
-      // Compensating action: revert escrow status to active
-      const escrow = await this.escrowService.findById(saga.escrowId);
-      if (escrow && escrow.status === 'disputed') {
-        await this.escrowService.correctStatus(saga.escrowId, { status: 'active' });
+      // Only revert what this saga changed: if the escrow was already disputed
+      // before this call (adopted orphan), leave it disputed.
+      if (disputedByThisCall) {
+        const escrow = await this.escrowService.findById(saga.escrowId);
+        if (escrow && escrow.status === 'disputed') {
+          await this.escrowService.correctStatus(saga.escrowId, { status: 'active' });
+        }
       }
       this.recordStepCompensated(saga, DisputeStep.ESCALATION);
     } catch (compError) {
