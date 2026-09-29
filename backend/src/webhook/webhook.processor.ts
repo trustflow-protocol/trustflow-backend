@@ -6,9 +6,7 @@ import { WebhookService } from './webhook.service';
 // Since @nestjs/schedule might not be available, use setInterval to fulfill the "cron job" requirement natively if needed,
 // but the prompt explicitly said "@nestjs/schedule cron job". I will write it using @nestjs/schedule.
 import { Cron, CronExpression } from '@nestjs/schedule';
-
-const DEFAULT_BATCH_SIZE = 50;
-const DEFAULT_LEASE_MS = 30_000;
+import { config } from '../config/env.config';
 
 @Injectable()
 export class WebhookProcessor {
@@ -23,9 +21,9 @@ export class WebhookProcessor {
   @Cron(CronExpression.EVERY_SECOND)
   async processWebhooks() {
     const now = Date.now();
-    const batchSize = Number(process.env.WEBHOOK_RELAY_BATCH_SIZE) || DEFAULT_BATCH_SIZE;
-    const leaseMs = Number(process.env.WEBHOOK_RELAY_LEASE_MS) || DEFAULT_LEASE_MS;
-
+    const batchSize = config.WEBHOOK_RELAY_BATCH_SIZE;
+    const leaseMs = config.WEBHOOK_RELAY_LEASE_MS;
+    
     try {
       await this.outbox.reclaimExpired(now, batchSize, true);
       const events = await this.outbox.claimDue(now, leaseMs, batchSize, true);

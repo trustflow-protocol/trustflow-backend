@@ -5,7 +5,7 @@ import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { getJwtVerificationSecrets } from '../config/env.config';
 import { NonceStoreService } from './nonce-store.service';
-import { RefreshTokenStoreService, ACCESS_TOKEN_TTL_SECONDS } from './refresh-token-store.service';
+import { JWT_ALGORITHM } from '../config/env.config';
 
 const CHALLENGE_PREFIX = 'Sign this message to authenticate with TrustFlow: ';
 
@@ -97,14 +97,10 @@ export class AuthService {
   }
 
   validateToken(token: string): unknown {
-    const verificationSecrets = getJwtVerificationSecrets();
-
-    for (const secret of verificationSecrets) {
-      try {
-        return this.jwtService.verify(token, { secret });
-      } catch {
-        // Fall through to the next secret so tokens signed before a rotation remain valid.
-      }
+    try {
+      return this.jwtService.verify(token, { algorithms: [JWT_ALGORITHM] });
+    } catch (error) {
+      throw new UnauthorizedException('Invalid token');
     }
 
     throw new UnauthorizedException('Invalid token');

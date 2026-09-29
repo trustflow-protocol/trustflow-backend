@@ -20,7 +20,7 @@ export class PinataProvider extends BaseHttpPinProvider {
   readonly name = PinProviderName.PINATA;
 
   protected get credential(): string | undefined {
-    return process.env.IPFS_PINATA_JWT || undefined;
+    return config.PINATA_JWT || undefined;
   }
 
   protected async sendPin(cid: string, content: Buffer, jwt: string): Promise<void> {

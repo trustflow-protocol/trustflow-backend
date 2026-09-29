@@ -4,12 +4,9 @@ import { GigService } from './gig.service';
 import { DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS } from './gig.entity';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
 import { mapWithConcurrency, countRejected } from '../common/concurrency';
-import { MetricsService } from '../monitoring/metrics.service';
-import { SentryService } from '../sentry/sentry.service';
 import { config } from '../config/env.config';
 
 const LOCK_KEY = 'lock:gig-expiry-sweep';
-const LOCK_RENEWAL_INTERVAL_MS = 5000; // Renew lock every 5s during long sweeps
 
 /**
  * Periodically sweeps the DB for open gig solicitations whose response deadline has
@@ -137,89 +134,19 @@ export class GigExpiryWorkerService implements OnModuleInit, OnModuleDestroy {
    * Exposed so it can be triggered manually (e.g. from tests or an admin endpoint).
    */
   async runOnce(): Promise<void> {
-    const startTime = Date.now();
-    let succeeded = 0;
-    let failed = 0;
-    let redisFailure = false;
-    const failedGigs: Array<{ id: string; error: string }> = [];
+    const expirable = await this.gigService.findExpirable();
 
-    try {
-      const maxGigs = this.getMaxGigsPerSweep();
-      const expirable = await this.gigService.findExpirable();
-
-      if (expirable.length === 0) {
-        this.logger.debug('No gigs to expire');
-        return;
-      }
-
-      const toExpire = maxGigs ? expirable.slice(0, maxGigs) : expirable;
-      const remaining = maxGigs && expirable.length > maxGigs;
-
-      this.logger.debug(
-        `Gig expiry sweep starting: ${toExpire.length} gigs ${remaining ? `(${expirable.length - toExpire.length} remain)` : ''}`,
-      );
-
-      // Expire gigs with bounded concurrency (#236). A failed `expire()` does not
-      // abort the rest of the sweep — it is counted and logged with details.
-      const concurrency = this.getSweepConcurrency();
-      const results = await mapWithConcurrency(toExpire, concurrency, async gig => {
-        try {
-          const result = await this.gigService.expire(gig.id);
-          if (result) {
-            succeeded++;
-          } else {
-            // expire() returned undefined, meaning gig was already expired
-            this.logger.debug(`Gig ${gig.id} was already expired — no-op`);
-          }
-          return { success: true };
-        } catch (err) {
-          failed++;
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          failedGigs.push({ id: gig.id, error: errorMsg });
-          return { success: false, error: err };
-        }
-      });
-
-      const duration = Date.now() - startTime;
-      this.metrics.increment('gig_expiry_sweep_duration_ms', {
-        status: failed > 0 ? 'partial' : 'success',
-      });
-      this.metrics.increment('gig_expiry_sweep_gigs_expired_total', {}, succeeded);
-      this.metrics.increment('gig_expiry_sweep_gigs_failed_total', {}, failed);
-
-      if (failed > 0) {
-        this.failedBatchCount++;
-        // Rate-limit logs: log every nth batch or every 1000ms, whichever comes first
-        const shouldLog = this.failedBatchCount % 10 === 1 || duration > 1000;
-        if (shouldLog && failedGigs.length > 0) {
-          const failedIds = failedGigs
-            .slice(0, 5)
-            .map(g => `${g.id} (${g.error})`)
-            .join(', ');
-          const more = failedGigs.length > 5 ? `, +${failedGigs.length - 5} more` : '';
-          this.logger.warn(
-            `Gig expiry sweep: ${failed}/${toExpire.length} failed: ${failedIds}${more}`,
-          );
-        }
-        // Capture batch failure to Sentry
-        const error = new Error(
-          `Gig expiry sweep partial failure: ${failed}/${toExpire.length} gigs failed to expire`,
-        );
-        (error as any).failedGigs = failedGigs;
-        this.sentry.captureException(error, 'GigExpiryWorkerService');
-      } else {
-        this.failedBatchCount = 0;
-      }
-
-      this.logger.debug(
-        `Gig expiry sweep completed in ${duration}ms: ${succeeded} succeeded, ${failed} failed`,
-      );
-    } catch (err) {
-      redisFailure = true;
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Gig expiry sweep failed with Redis error: ${errorMsg}`, err);
-      this.metrics.increment('gig_expiry_sweep_redis_failure_total');
-      this.sentry.captureException(err, 'GigExpiryWorkerService.Redis');
+    // Expire gigs with bounded concurrency instead of one-at-a-time: each
+    // `expire()` appends an outbox row the relay then delivers with retries,
+    // so a fully sequential loop over a big batch serialised all of that
+    // latency and could outrun the sweep interval (#236). A failed `expire`
+    // no longer aborts the rest of the sweep — it is counted and logged.
+    const results = await mapWithConcurrency(expirable, config.GIG_EXPIRY_SWEEP_CONCURRENCY, gig =>
+      this.gigService.expire(gig.id),
+    );
+    const failed = countRejected(results);
+    if (failed > 0) {
+      this.logger.warn(`Gig expiry sweep: ${failed}/${expirable.length} gigs failed to expire`);
     }
   }
 

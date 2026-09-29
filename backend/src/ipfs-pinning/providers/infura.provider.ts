@@ -3,6 +3,7 @@ import * as https from 'https';
 import { BaseHttpPinProvider } from './base-http-pin.provider';
 import { PinProviderName } from './ipfs-provider.interface';
 import { buildSingleFileMultipart } from './multipart.util';
+import { config } from '../../config/env.config';
 
 const INFURA_IPFS_HOST = 'ipfs.infura.io';
 const INFURA_IPFS_PORT = 5001;
@@ -19,8 +20,8 @@ export class InfuraProvider extends BaseHttpPinProvider {
   readonly name = PinProviderName.INFURA;
 
   protected get credential(): string | undefined {
-    const projectId = process.env.INFURA_IPFS_PROJECT_ID;
-    const secret = process.env.INFURA_IPFS_PROJECT_SECRET;
+    const projectId = config.INFURA_IPFS_PROJECT_ID;
+    const secret = config.INFURA_IPFS_PROJECT_SECRET;
     return projectId && secret ? `${projectId}:${secret}` : undefined;
   }
 

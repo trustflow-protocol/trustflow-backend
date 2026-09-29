@@ -4,7 +4,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
 import { AuthService } from './auth.service';
 import { NonceStoreService } from './nonce-store.service';
-import { validateEnv } from '../config/env.config';
+import { JWT_ALGORITHM } from '../config/env.config';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -138,26 +138,7 @@ describe('AuthService', () => {
 
       expect(result).toEqual({ address: TEST_ADDRESS, sub: TEST_ADDRESS });
       expect(mockJwtService.verify).toHaveBeenCalledWith('valid-token', {
-        secret: 'test-secret-at-least-16-chars',
-      });
-    });
-
-    it('should validate a token signed with the previous secret during rotation overlap', () => {
-      mockJwtService.verify.mockImplementation((token: string, options?: { secret?: string }) => {
-        if (options?.secret === 'previous-secret-at-least-16-chars') {
-          return { address: TEST_ADDRESS, sub: TEST_ADDRESS };
-        }
-        throw new Error('jwt malformed');
-      });
-
-      const result = service.validateToken('old-token');
-
-      expect(result).toEqual({ address: TEST_ADDRESS, sub: TEST_ADDRESS });
-      expect(mockJwtService.verify).toHaveBeenCalledWith('old-token', {
-        secret: 'test-secret-at-least-16-chars',
-      });
-      expect(mockJwtService.verify).toHaveBeenCalledWith('old-token', {
-        secret: 'previous-secret-at-least-16-chars',
+        algorithms: [JWT_ALGORITHM],
       });
     });
 

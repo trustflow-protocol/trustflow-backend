@@ -16,7 +16,7 @@ import {
   ReconciliationRun,
 } from './escrow-reconciliation.types';
 import { InvalidChainStateError } from './chain-escrow.validation';
-import { amountsEqual } from '../common/amount';
+import { config } from '../config/env.config';
 
 interface ReconciliationTarget {
   contractEscrowId: string;
@@ -200,10 +200,10 @@ export class EscrowReconciliationService {
   }
 
   private getReadConcurrency(): number {
-    const raw = Number(process.env.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY);
-    return Number.isFinite(raw) && raw > 0
-      ? Math.max(1, Math.floor(raw))
-      : DEFAULT_ESCROW_RECONCILIATION_SWEEP_CONCURRENCY;
+    return (
+      config.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY ??
+      DEFAULT_ESCROW_RECONCILIATION_SWEEP_CONCURRENCY
+    );
   }
 
   private recordError(contractEscrowId: string, reason: unknown): ReconciliationError {
