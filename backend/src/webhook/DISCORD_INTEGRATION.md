@@ -79,4 +79,6 @@ The Discord notification works alongside the general webhook system:
 1. **Webhook Event**: `dispute.raised` event is dispatched to all registered webhooks
 2. **Discord Notification**: Specific Discord message is sent to the configured channel
 
-Both happen simultaneously when a dispute is raised.
+Both are sent once per dispute by `DisputeSagaService.escalate()` after the saga commits, whichever
+entry point raised it (`POST /escrows/:id/dispute`, `POST /dispute/escrow/:escrowId/escalate`, or an
+on-chain `escrow_disputed` event) — see #636.

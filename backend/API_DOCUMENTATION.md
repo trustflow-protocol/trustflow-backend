@@ -338,6 +338,7 @@ curl -X POST http://localhost:3001/escrows \
 
 ```bash
 curl -X POST http://localhost:3001/escrows/esc-1234567890/dispute \
+  -H "Authorization: Bearer <JWT for the depositor or beneficiary>" \
   -H "Content-Type: application/json" \
   -d '{
     "reason": "Work not delivered as specified"
@@ -351,14 +352,16 @@ curl -X POST http://localhost:3001/escrows/esc-1234567890/dispute \
   "id": "esc-1234567890",
   "status": "disputed",
   "disputeReason": "Work not delivered as specified",
-  "disputedAt": "2026-06-13T01:00:00.000Z"
+  "disputedAt": "2026-06-13T01:00:00.000Z",
+  "sagaId": "saga-1781312400000-k3j9x2"
 }
 ```
 
-**Note**: This also triggers:
+**Note**: Requires a JWT; the authenticated wallet must be the escrow's depositor or beneficiary and is recorded as the initiator. Only `active` escrows can be disputed. The route opens a dispute saga (same as `POST /dispute/escrow/:escrowId/escalate`), which sends — once per dispute:
 
-- Webhook event (`dispute.raised`)
+- Webhook event `dispute.raised` (escrow payload plus `sagaId`) and the internal `dispute.escalated`
 - Discord notification (if configured)
+- In-app notification to both parties
 
 ### 3. Register a Webhook
 
@@ -474,7 +477,7 @@ Events delivered via the outbox include a `dedupKey` for idempotent processing (
 |-------|--------|---------|--------|-----------|
 | `escrow.created` | Escrow | New escrow vault created | ❌ Documented but not yet emitted | Direct webhook |
 | `escrow.released` | Escrow | Funds released to beneficiary | ❌ Documented but not yet emitted | Direct webhook |
-| `dispute.raised` | Dispute | Dispute escalated by depositor or beneficiary | ✅ Implemented | Direct webhook |
+| `dispute.raised` | Dispute | Dispute opened (any entry point), once per dispute, from the saga; payload: escrowId, depositor, beneficiary, amountXLM, reason, disputedAt, sagaId | ✅ Implemented | Outbox |
 
 **Escrow Payload Shape**:
 ```typescript

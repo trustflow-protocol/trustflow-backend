@@ -27,7 +27,7 @@
            │ active │◄─────────────────────────────────────┐
            └───┬────┘                                       │
                │                                            │
-    ┌──────────┼──────────────┐          Compensating: revert to 'active'
+    ┌──────────┼──────────────┐          Compensating: restore recorded prior status
     │          │              │          (DisputeSagaService.compensateEscalation)
     │          │              │
     ▼          ▼              ▼
@@ -50,13 +50,11 @@
 | `pending`  | `active`   | On-chain event `escrow_funded`                                 | `EventProcessorService.handleEscrowFunded()` |
 | `active`   | `released` | `POST /escrow/:id/release` (API call)                          | `EscrowService.release()`                |
 | `active`   | `released` | On-chain event `escrow_released`                               | `EventProcessorService.handleEscrowReleased()` |
-| `active`   | `disputed` | `POST /escrow/:id/dispute` (API call)                          | `EscrowService.raiseDispute()`           |
-| `active`   | `disputed` | On-chain event `escrow_disputed`                               | `EventProcessorService.handleEscrowDisputed()` |
-| `active`   | `disputed` | `DisputeSagaService.escalate()` (internal, via API)            | `EscrowService.raiseDispute()`           |
+| `active`   | `disputed` | `POST /escrows/:id/dispute`, `POST /dispute/escrow/:escrowId/escalate` (API, JWT, depositor/beneficiary only) or on-chain `escrow_disputed` — all via `DisputeSagaService.escalate()` (#633) | `EscrowService.raiseDispute()`           |
 | `active`   | `cancelled`| `POST /escrow/:id/cancel` (API call)                           | `EscrowService.cancel()`                 |
 | `disputed` | `released` | Saga payout — verdict BENEFICIARY_WINS or SPLIT                | `DisputeSagaService.applyPayout()`       |
 | `disputed` | `cancelled`| Saga payout — verdict DEPOSITOR_WINS                           | `DisputeSagaService.applyPayout()`       |
-| `disputed` | `active`   | Compensating rollback on failed escalation                     | `DisputeSagaService.compensateEscalation()` |
+| `disputed` | prior status (`active`) | Compensating rollback on failed escalation — only if this saga's own `raiseDispute()` froze the escrow and it is unchanged since (#635) | `DisputeSagaService.compensateEscalation()` |
 | any        | any        | Reconciler drift correction                                    | `EscrowService.applyChainState()`        |
 
 ### Known Deviations
@@ -129,7 +127,8 @@
 ### State Diagram
 
 ```
-  POST /dispute/:escrowId/escalate (API)
+  POST /escrows/:id/dispute | POST /dispute/escrow/:escrowId/escalate (API)
+  on-chain escrow_disputed (EventProcessorService)
           │
           ▼
     ┌────────────┐
@@ -168,7 +167,7 @@
 
 | From               | To                 | Trigger                                       | Source                                        |
 |--------------------|--------------------|-----------------------------------------------|-----------------------------------------------|
-| —                  | `ESCALATION`       | `POST /dispute/:escrowId/escalate` (API)      | `DisputeSagaService.escalate()`               |
+| —                  | `ESCALATION`       | Any dispute entry point; the saga is persisted *before* the escrow is frozen (#634) | `DisputeSagaService.escalate()`               |
 | `ESCALATION`       | `JUROR_ASSIGNMENT` | Escalation step completes successfully        | `DisputeSagaService.escalate()`               |
 | `JUROR_ASSIGNMENT` | `VOTING`           | `POST /dispute/:sagaId/jurors` (API)          | `DisputeSagaService.assignJurors()`           |
 | `VOTING`           | `PAYOUT`           | All jurors have voted (majority verdict set)  | `DisputeSagaService.castVote()`               |
@@ -191,9 +190,10 @@
   `disputed → released/cancelled` guard logic that would be expected in a clean state machine,
   because `release()` has no precondition check (see Escrow deviations above).
 
-- **`compensateEscalation` mutates `escrow.status` inline** — the compensating action for a
-  failed escalation writes `escrow.status = 'active'` directly on the in-memory object rather
-  than going through `EscrowService.applyChainState()`. This bypasses the service layer entirely.
+- **`compensateEscalation`** goes through `EscrowService.correctStatus()` (no transition
+  guard, by design) and restores `saga.priorEscrowStatus`, clearing `disputeReason`/`disputedAt`.
+  It only runs when this saga's own `raiseDispute()` froze the escrow and the escrow's
+  `disputedAt` still matches — a dispute raised by another path or saga is never undone (#635).
 
 - **`compensatePayout` flags escrow for manual review inline** — casts `escrow` to an ad-hoc
   extended type to set `requiresManualReview = true`. This property is not declared on the
