@@ -117,4 +117,36 @@ describeIfRedis('NonceStoreService (Redis integration)', () => {
     expect(await service.consume(address1)).toBeNull();
     expect(await service.consume(address2)).toBeNull();
   });
+
+  it('enforces TTL on challenge keys after simulated reconnection', async () => {
+    // Store a challenge before "reconnection"
+    await service.store(TEST_ADDRESS, TEST_CHALLENGE, TEST_NONCE);
+    
+    // Verify TTL is set correctly
+    const ttl = await redis.ttl(`auth:nonce:${TEST_ADDRESS}`);
+    expect(ttl).toBeGreaterThan(50);
+    expect(ttl).toBeLessThanOrEqual(60);
+
+    // Simulate reconnection by creating a new service instance with the same Redis client
+    // This triggers the 'ready' event handler that verifies TTL configuration
+    const reconnectedService = new NonceStoreService(redis);
+    
+    // Store another challenge after "reconnection"
+    const newAddress = 'GNEWXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+    await reconnectedService.store(newAddress, 'Post-reconnect challenge', 'nonce-reconnect');
+    
+    // Verify TTL is still enforced after reconnection
+    const ttlAfterReconnect = await redis.ttl(`auth:nonce:${newAddress}`);
+    expect(ttlAfterReconnect).toBeGreaterThan(50);
+    expect(ttlAfterReconnect).toBeLessThanOrEqual(60);
+    
+    // Verify no orphaned keys without TTL exist
+    const keys = await redis.keys('auth:nonce:*');
+    for (const key of keys) {
+      if (!key.includes('used')) {  // Skip 'used' keys which have different TTL
+        const keyTtl = await redis.ttl(key);
+        expect(keyTtl).toBeGreaterThan(0); // -1 means no expiry, -2 means key doesn't exist
+      }
+    }
+  });
 });
