@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { SentryService } from './sentry.service';
+import { SentryService, scrubEvent } from './sentry.service';
 
 // Mock @sentry/node so tests never make network calls
 jest.mock('@sentry/node', () => ({
@@ -116,5 +116,153 @@ describe('SentryService', () => {
       service.init();
       expect(service.isInitialized()).toBe(false);
     });
+  });
+});
+
+/**
+ * #651 — `beforeSend` must strip credentials from the HTTP request the Sentry SDK attaches to
+ * server-side errors, and from the breadcrumbs that replay the request history.
+ *
+ * These call `scrubEvent` directly rather than going through `Sentry.init`, because the SDK is
+ * mocked in this file and the hook is what actually holds the guarantee.
+ */
+describe('scrubEvent (#651)', () => {
+  const BEARER =
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJHNtYWRlIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+  const SIGNATURE = 'SGVsbG8gV29ybGQhIFNpZ25lZCBUaGlzIHdhbGxldCBjaGFsbGVuZ2U=';
+
+  /**
+   * The SDK's `RequestEventData` type declares `data` but not the `body` alias some
+   * integrations emit, so build the request loosely and read it back the same way.
+   */
+  function eventWithRequest(request: Record<string, unknown>): Sentry.Event {
+    return { request } as unknown as Sentry.Event;
+  }
+
+  function requestOf(event: Sentry.Event): Record<string, unknown> {
+    return event.request as unknown as Record<string, unknown>;
+  }
+
+  it('redacts the Authorization header while keeping the request diagnosable', () => {
+    const scrubbed = scrubEvent(
+      eventWithRequest({
+        url: 'https://api.trustflow.io/escrows/abc',
+        method: 'POST',
+        headers: { Authorization: `Bearer ${BEARER}`, 'content-type': 'application/json' },
+      }),
+    );
+
+    const request = requestOf(scrubbed);
+    const headers = request.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('[REDACTED]');
+    expect(headers.Authorization).not.toContain(BEARER);
+    // A redacted header is useless for debugging if the request is flattened out too.
+    expect(headers['content-type']).toBe('application/json');
+    expect(request.method).toBe('POST');
+  });
+
+  it('redacts cookie values regardless of the cookie name', () => {
+    // Cookie names are framework-chosen (`session`, `sid`, `__Host-auth`), so key-based
+    // matching would miss most session cookies. Names survive; values never do.
+    const scrubbed = scrubEvent(
+      eventWithRequest({ cookies: { session: 'abc123', __Host_auth: 'def456' } }),
+    );
+
+    const cookies = requestOf(scrubbed).cookies as Record<string, string>;
+    expect(cookies.session).toBe('[REDACTED]');
+    expect(cookies.__Host_auth).toBe('[REDACTED]');
+    expect(JSON.stringify(scrubbed)).not.toContain('abc123');
+    expect(JSON.stringify(scrubbed)).not.toContain('def456');
+  });
+
+  it('redacts the wallet signature payload from the request body', () => {
+    const scrubbed = scrubEvent(
+      eventWithRequest({
+        url: 'https://api.trustflow.io/auth/verify',
+        data: { address: 'GABC', signature: SIGNATURE },
+      }),
+    );
+
+    const data = requestOf(scrubbed).data as Record<string, string>;
+    expect(data.signature).toBe('[REDACTED]');
+    expect(JSON.stringify(scrubbed)).not.toContain(SIGNATURE);
+    // The address is not a secret and is what makes the event actionable.
+    expect(data.address).toBe('GABC');
+  });
+
+  it('redacts a `body` alias when the SDK used that key instead of `data`', () => {
+    const scrubbed = scrubEvent(
+      eventWithRequest({ body: { address: 'GABC', signature: SIGNATURE } }),
+    );
+
+    const body = requestOf(scrubbed).body as Record<string, string>;
+    expect(body.signature).toBe('[REDACTED]');
+    expect(JSON.stringify(scrubbed)).not.toContain(SIGNATURE);
+  });
+
+  it('redacts a string body that the SDK could not parse as JSON', () => {
+    const scrubbed = scrubEvent(eventWithRequest({ data: `address=GABC&signature=${SIGNATURE}` }));
+
+    expect(String(requestOf(scrubbed).data)).not.toContain(SIGNATURE);
+  });
+
+  it('drops the query string from the request URL', () => {
+    const scrubbed = scrubEvent(
+      eventWithRequest({ url: `https://api.trustflow.io/escrows?token=${BEARER}&page=2` }),
+    );
+
+    expect(String(requestOf(scrubbed).url)).not.toContain(BEARER);
+    expect(String(requestOf(scrubbed).url)).toContain('/escrows');
+  });
+
+  it('redacts the wallet auth nonce from the request body', () => {
+    const scrubbed = scrubEvent(
+      eventWithRequest({ data: { address: 'GABC', nonce: 'n-0S6_WzA2Mj' } }),
+    );
+
+    const data = requestOf(scrubbed).data as Record<string, string>;
+    expect(data.nonce).toBe('[REDACTED]');
+    expect(JSON.stringify(scrubbed)).not.toContain('n-0S6_WzA2Mj');
+  });
+
+  it('redacts credentials carried in breadcrumbs', () => {
+    const scrubbed = scrubEvent({
+      breadcrumbs: [
+        {
+          category: 'http',
+          message: 'POST /auth/verify 500',
+          data: { headers: { Authorization: `Bearer ${BEARER}` }, signature: SIGNATURE },
+        },
+        {
+          category: 'http',
+          message: 'GET /ok',
+          // An HTTP breadcrumb keeps its target URL at `data.url`.
+          data: { url: `https://api.trustflow.io/x?token=${BEARER}` },
+        },
+      ],
+    });
+
+    const serialized = JSON.stringify(scrubbed);
+    expect(serialized).not.toContain(BEARER);
+    expect(serialized).not.toContain(SIGNATURE);
+    // Diagnostics survive redaction.
+    expect(scrubbed.breadcrumbs?.[0].message).toBe('POST /auth/verify 500');
+    expect(scrubbed.breadcrumbs?.[1].message).toBe('GET /ok');
+  });
+
+  it('leaves a request with nothing sensitive untouched apart from redaction', () => {
+    const scrubbed = scrubEvent(
+      eventWithRequest({ url: 'https://api.trustflow.io/escrows', method: 'GET' }),
+    );
+
+    expect(requestOf(scrubbed)).toEqual({
+      url: 'https://api.trustflow.io/escrows',
+      method: 'GET',
+    });
+  });
+
+  it('tolerates a request that is absent or malformed', () => {
+    expect(() => scrubEvent({})).not.toThrow();
+    expect(scrubEvent({ request: undefined }).request).toBeUndefined();
   });
 });
