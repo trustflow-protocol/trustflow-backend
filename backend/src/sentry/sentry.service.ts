@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { SanitizedLogger } from '../common/logging/sanitized-logger';
-import { redactIp, redactString, redactUrl, redactValue } from '../common/logging/redaction';
+import {
+  REDACTED,
+  redactIp,
+  redactString,
+  redactUrl,
+  redactValue,
+} from '../common/logging/redaction';
 import * as Sentry from '@sentry/node';
 import { config } from '../config/env.config';
 
@@ -61,8 +67,9 @@ export class SentryService {
  * retention policy. The exception object is the one payload that the app's own logging layer
  * cannot intercept before it leaves the process, so it has to be scrubbed at the boundary.
  *
- * Applies the same key- and value-based policy as `src/common/logging/redaction.ts`, plus a
- * dedicated pass for the `url` tag the exception filter attaches (path + query string).
+ * Applies the same key- and value-based policy as `src/common/logging/redaction.ts`, plus
+ * dedicated passes for the `url` tag the exception filter attaches (path + query string), for
+ * the HTTP `request` the SDK attaches to server-side errors, and for the breadcrumbs.
  */
 export function scrubEvent(event: Sentry.Event): Sentry.Event {
   const scrubbed = { ...event } as Sentry.Event & Record<string, unknown>;
@@ -96,10 +103,103 @@ export function scrubEvent(event: Sentry.Event): Sentry.Event {
     }
   }
 
+  // #651 — the HTTP request the SDK attaches to a server-side error. Its `headers` carry
+  // `Authorization: Bearer <jwt>` and session `cookie`s, and its `data`/`body` carry the raw
+  // wallet auth payload (address + base64 signature). None of it was being scrubbed, so every
+  // 5xx on /auth/verify exported a live credential to the third party.
+  if (scrubbed.request && typeof scrubbed.request === 'object') {
+    scrubbed.request = scrubRequest(scrubbed.request) as Sentry.Event['request'];
+  }
+
+  if (typeof scrubbed.query_string === 'string') {
+    scrubbed.query_string = redactString(scrubbed.query_string);
+  }
+
+  // #651 — breadcrumbs replay the request history leading up to the error, so an HTTP
+  // breadcrumb holds the same headers and bodies the request object does.
+  if (Array.isArray(scrubbed.breadcrumbs)) {
+    scrubbed.breadcrumbs = (scrubbed.breadcrumbs as unknown as unknown[]).map(
+      scrubBreadcrumb,
+    ) as Sentry.Event['breadcrumbs'];
+  }
+
   // `exception.values[].value` duplicates the message on some SDK versions; the stack frames
   // themselves carry only module/function names, so they need no scrubbing.
   for (const value of scrubbed.exception?.values ?? []) {
     if (typeof value.value === 'string') value.value = redactString(value.value);
+  }
+
+  return scrubbed;
+}
+
+/**
+ * Scrubs the sub-fields of a Sentry HTTP request.
+ *
+ * `url` loses its query string (tokens routinely arrive as `?token=`), and the header and body
+ * maps go through the shared key-based policy, so `Authorization` and `signature` are replaced
+ * wholesale while ordinary fields like `content-type` survive and stay useful for diagnosis.
+ *
+ * Cookie values are redacted unconditionally rather than by name. A session cookie's name is
+ * whatever the framework or the app happened to choose (`session`, `sid`, `connect.sid`,
+ * `__Host-auth`), so key-based matching would miss most of them; the name is preserved, only
+ * the value is dropped, so a report can still say which cookie was set.
+ */
+function scrubRequest(request: object): object {
+  const scrubbed = { ...(request as Record<string, unknown>) };
+
+  if (typeof scrubbed.url === 'string') {
+    scrubbed.url = redactUrl(scrubbed.url);
+  }
+
+  if (scrubbed.query_string) {
+    scrubbed.query_string = redactString(String(scrubbed.query_string));
+  }
+
+  if (scrubbed.cookies && typeof scrubbed.cookies === 'object') {
+    scrubbed.cookies = redactCookieValues(scrubbed.cookies);
+  }
+
+  for (const key of ['headers', 'data', 'body']) {
+    if (scrubbed[key] && typeof scrubbed[key] === 'object') {
+      scrubbed[key] = redactValue(scrubbed[key]);
+    } else if (typeof scrubbed[key] === 'string') {
+      // `data`/`body` arrive as a string when the SDK could not parse the body as JSON.
+      scrubbed[key] = redactString(scrubbed[key]);
+    }
+  }
+
+  return scrubbed;
+}
+
+/** Replaces every value in a cookie map, keeping the cookie names for diagnostics. */
+function redactCookieValues(cookies: object): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(cookies as Record<string, unknown>)) {
+    // The raw Cookie header form ("a=1; b=2") is a string, not a map.
+    output[name] = typeof value === 'string' ? REDACTED : redactValue(value);
+  }
+  return output;
+}
+
+/** Scrubs a single breadcrumb's message, URL and data payload. */
+function scrubBreadcrumb(breadcrumb: unknown): unknown {
+  if (!breadcrumb || typeof breadcrumb !== 'object') return breadcrumb;
+  const scrubbed = { ...(breadcrumb as Record<string, unknown>) };
+
+  if (typeof scrubbed.message === 'string') {
+    scrubbed.message = redactString(scrubbed.message);
+  }
+  if (typeof scrubbed.url === 'string') {
+    scrubbed.url = redactUrl(scrubbed.url);
+  }
+  if (scrubbed.data && typeof scrubbed.data === 'object') {
+    const data = redactValue(scrubbed.data) as Record<string, unknown>;
+    // An HTTP breadcrumb carries its target URL at `data.url`, so the query-string pass in
+    // `redactValue` (which only special-cases a real `URL` instance) has to be applied here.
+    if (typeof data.url === 'string') {
+      data.url = redactUrl(data.url);
+    }
+    scrubbed.data = data;
   }
 
   return scrubbed;
