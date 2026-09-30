@@ -1,13 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EscrowController } from './escrow.controller';
 import { EscrowService, Escrow } from './escrow.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
+import { DisputeSagaService } from '../dispute/dispute-saga.service';
+import { JwtAuthGuard } from '../auth/auth.guard';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const DEPOSITOR = 'GDEPOSITORAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const BENEFICIARY = 'GBENEFICIARYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const OTHER_WALLET = 'GOTHERWALLETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const AMOUNT = '100';
 
 function makeEscrow(overrides: Partial<Escrow> = {}): Escrow {
@@ -40,6 +43,9 @@ function buildMocks() {
     }),
   };
 
+  const disputeSagaService = {
+    escalate: jest.fn().mockResolvedValue({ sagaId: 'saga-001', escrowId: escrow.id }),
+  };
 
   const txBuilderService = {
     buildRelease: jest.fn().mockResolvedValue({
@@ -54,6 +60,7 @@ function buildMocks() {
   return {
     escrow,
     escrowService,
+    disputeSagaService,
     txBuilderService,
   };
 }
@@ -76,6 +83,7 @@ describe('EscrowController', () => {
           provide: EscrowReleaseTransactionBuilderService,
           useValue: mocks.txBuilderService,
         },
+        { provide: DisputeSagaService, useValue: mocks.disputeSagaService },
       ],
     }).compile();
 
@@ -175,58 +183,74 @@ describe('EscrowController', () => {
   // ─── POST /escrows/:id/dispute ────────────────────────────────────────────
 
   describe('raiseDispute()', () => {
-    it('calls EscrowService.raiseDispute(), dispatches webhook, sends Discord notification, and returns the escrow', async () => {
-      const disputed = makeEscrow({
-        status: 'disputed',
-        disputeReason: 'Work not delivered',
-        disputedAt: new Date().toISOString(),
-      });
-      mocks.escrowService.raiseDispute.mockResolvedValue(disputed);
+    it('requires JWT authentication', () => {
+      const guards = Reflect.getMetadata('__guards__', EscrowController.prototype.raiseDispute);
+      expect(guards).toContain(JwtAuthGuard);
+    });
 
-      const result = await controller.raiseDispute('esc-001', { reason: 'Work not delivered' });
+    it('delegates to the saga with the authenticated wallet, ignoring a caller-supplied initiator', async () => {
+      const saga = { sagaId: 'saga-001', escrowId: 'esc-001' };
+      mocks.disputeSagaService.escalate.mockResolvedValue(saga);
 
-      expect(mocks.escrowService.raiseDispute).toHaveBeenCalledWith(
+      const result = await controller.raiseDispute(
         'esc-001',
-        'Work not delivered',
+        { reason: 'Work not delivered', initiator: OTHER_WALLET } as any,
+        { user: { address: DEPOSITOR, sub: DEPOSITOR } },
       );
 
-      expect(result).toEqual(disputed);
+      expect(mocks.disputeSagaService.escalate).toHaveBeenCalledWith('esc-001', {
+        initiator: DEPOSITOR,
+        reason: 'Work not delivered',
+      });
+      expect(mocks.escrowService.raiseDispute).not.toHaveBeenCalled();
+      expect(result).toEqual(saga);
     });
 
-    it('works when no reason is provided in the dto', async () => {
-      mocks.escrowService.raiseDispute.mockResolvedValue(makeEscrow({ status: 'disputed' }));
+    it('supplies a default reason when none is provided', async () => {
+      await controller.raiseDispute('esc-001', {}, {
+        user: { address: DEPOSITOR, sub: DEPOSITOR },
+      });
 
-      await controller.raiseDispute('esc-001', {});
-
-      expect(mocks.escrowService.raiseDispute).toHaveBeenCalledWith('esc-001', undefined);
+      expect(mocks.disputeSagaService.escalate).toHaveBeenCalledWith('esc-001', {
+        initiator: DEPOSITOR,
+        reason: 'No reason provided',
+      });
     });
 
-    it('propagates BadRequestException when escrow is already released', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
-      mocks.escrowService.raiseDispute.mockRejectedValue(
-        new BadRequestException('Cannot dispute a released escrow'),
+    it('propagates ForbiddenException for a caller who is not an escrow party', async () => {
+      mocks.disputeSagaService.escalate.mockRejectedValue(
+        new ForbiddenException('Only the depositor or beneficiary can escalate a dispute'),
       );
 
-      await expect(controller.raiseDispute('esc-001', { reason: 'too late' })).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        controller.raiseDispute('esc-001', { reason: 'wrong party' }, {
+          user: { address: OTHER_WALLET, sub: OTHER_WALLET },
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mocks.disputeSagaService.escalate).toHaveBeenCalledWith('esc-001', {
+        initiator: OTHER_WALLET,
+        reason: 'wrong party',
+      });
     });
 
-    it('propagates BadRequestException when escrow is already disputed', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
-      mocks.escrowService.raiseDispute.mockRejectedValue(
-        new BadRequestException('Escrow is already disputed'),
+    it('propagates BadRequestException when the escrow cannot start a dispute', async () => {
+      mocks.disputeSagaService.escalate.mockRejectedValue(
+        new BadRequestException('Only active escrows can start a dispute'),
       );
 
-      await expect(controller.raiseDispute('esc-001', { reason: 'dupe' })).rejects.toThrow(
+      await expect(controller.raiseDispute('esc-001', { reason: 'not active' }, {
+        user: { address: DEPOSITOR, sub: DEPOSITOR },
+      })).rejects.toThrow(
         BadRequestException,
       );
     });
 
     it('propagates exception when service throws', async () => {
-      mocks.escrowService.raiseDispute.mockRejectedValue(new Error('unexpected'));
+      mocks.disputeSagaService.escalate.mockRejectedValue(new Error('unexpected'));
 
-      await expect(controller.raiseDispute('esc-001', {})).rejects.toThrow();
+      await expect(controller.raiseDispute('esc-001', {}, {
+        user: { address: DEPOSITOR, sub: DEPOSITOR },
+      })).rejects.toThrow();
     });
   });
 

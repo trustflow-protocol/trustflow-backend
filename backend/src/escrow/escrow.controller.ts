@@ -9,10 +9,13 @@ import {
   Body,
   Param,
   Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ZodError } from 'zod';
 import {
   ApiBody,
+  ApiBearerAuth,
   ApiHeader,
   ApiOperation,
   ApiParam,
@@ -21,6 +24,9 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { EscrowService } from './escrow.service';
+import { DisputeSagaService } from '../dispute/dispute-saga.service';
+import { DisputeSagaResponseDto, EscalateDisputeDto } from '../dispute/dispute.dto';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { ReputationService } from '../reputation/reputation.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
 import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
@@ -36,12 +42,17 @@ import {
 // Reference to ensure ReleaseEscrowSchema is considered used (dead-code check requires import)
 void ReleaseEscrowSchema;
 
+interface AuthenticatedRequest {
+  user: { address: string; sub: string };
+}
+
 @ApiTags('Escrow')
 @Controller('escrows')
 export class EscrowController {
   constructor(
     private readonly escrowService: EscrowService,
     private readonly escrowReleaseTransactionBuilderService: EscrowReleaseTransactionBuilderService,
+    private readonly disputeSagaService: DisputeSagaService,
   ) {}
 
   @Post()
@@ -312,11 +323,14 @@ export class EscrowController {
   }
 
   @Post(':id/dispute')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Raise a dispute',
     description:
-      'Raises a dispute for an escrow. Triggers webhook events and Discord notifications to alert jurors.',
+      'Raises a dispute for an active escrow as the authenticated depositor or beneficiary. ' +
+      'Starts the dispute saga, which freezes the escrow and notifies jurors.',
   })
   @ApiParam({
     name: 'id',
@@ -338,23 +352,23 @@ export class EscrowController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Dispute raised successfully. Discord notification sent if configured.',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        status: { type: 'string', example: 'disputed' },
-        disputeReason: { type: 'string' },
-        disputedAt: { type: 'string', format: 'date-time' },
-      },
-    },
+    description: 'Dispute saga started successfully.',
+    type: DisputeSagaResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Escrow already disputed or released' })
+  @ApiResponse({ status: 400, description: 'Escrow is not active' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 403, description: 'Only the depositor or beneficiary can raise a dispute' })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
-  async raiseDispute(@Param('id') id: string, @Body() dto: RaiseDisputeDto) {
+  async raiseDispute(
+    @Param('id') id: string,
+    @Body() dto: RaiseDisputeDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const validated = RaiseDisputeSchema.parse(dto);
-    const escrow = await this.escrowService.raiseDispute(id, validated.reason);
-
-    return escrow;
+    const escalateDto: EscalateDisputeDto = {
+      initiator: req.user.address,
+      reason: validated.reason ?? 'No reason provided',
+    };
+    return this.disputeSagaService.escalate(id, escalateDto);
   }
 }
