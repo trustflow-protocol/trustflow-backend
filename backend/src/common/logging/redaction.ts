@@ -46,6 +46,10 @@ const SENSITIVE_KEY_PATTERNS: readonly RegExp[] = [
   /session[-_]?id$/i,
   /^dsn$/i,
   /mnemonic|seed[-_]?phrase/i,
+  // A wallet-auth challenge nonce is the replay-protection secret: `POST /auth/verify` is
+  // worthless without it, and it is stored under `auth:nonce:used:<nonce>` in Redis. A
+  // substring match also covers `nonces` and `challengeNonce`.
+  /nonce/i,
   /salt/i,
   /pinata/i,
   /client[-_]?secret/i,

@@ -13,6 +13,7 @@ import { DiscordService } from '../webhook/discord.service';
 import { NotificationService } from '../notification/notification.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
+import { EscrowChainStateClient } from '../escrow-reconciliation/escrow-chain-state.client';
 
 // ─── Shared mock factories ────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ function buildMocks() {
 
   const escrowService = {
     findById: jest.fn().mockResolvedValue(escrow),
+    findAll: jest.fn().mockResolvedValue([escrow]),
     raiseDispute: jest.fn().mockImplementation((_id: string, reason: string) => {
       escrow.status = 'disputed';
       escrow.disputeReason = reason;
@@ -53,6 +55,10 @@ function buildMocks() {
       return Promise.resolve(escrow);
     }),
     correctStatus: jest.fn().mockImplementation((_id: string, patch: Record<string, unknown>) => {
+      Object.assign(escrow, patch);
+      return Promise.resolve(escrow);
+    }),
+    applyChainState: jest.fn().mockImplementation((_id: string, patch: Record<string, unknown>) => {
       Object.assign(escrow, patch);
       return Promise.resolve(escrow);
     }),
@@ -611,6 +617,145 @@ describe('DisputeSagaService', () => {
     it('returns the saga when one exists', async () => {
       const saga = await service.escalate('esc-001', ESCALATE_DTO);
       expect((await service.findByEscrowId('esc-001'))?.sagaId).toBe(saga.sagaId);
+    });
+  });
+
+  // ─── compensateEscalation: chain state sync (#647) ────────────────
+
+  describe('compensateEscalation() — re-read chain state and sync DB (#647)', () => {
+    it('re-syncs escrow from chain when DB write fails after on-chain transaction', async () => {
+      // Simulate an escrow that has a contract ID (linked to chain)
+      const chainEscrow = makeEscrow({ contractEscrowId: 'contract-123' });
+      escrowService.findById.mockResolvedValue(chainEscrow);
+
+      // Mock chain client that returns disputed state
+      const chainClient = {
+        getEscrow: jest.fn().mockResolvedValue({
+          status: 'disputed',
+          depositor: chainEscrow.depositor,
+          beneficiary: chainEscrow.beneficiary,
+          amountXLM: chainEscrow.amountXLM,
+        }),
+      };
+
+      // Mock applyChainState method
+      const applyChainState = jest.fn().mockResolvedValue(chainEscrow);
+      escrowService.applyChainState = applyChainState;
+      escrowService.findAll = jest.fn().mockResolvedValue([chainEscrow]);
+
+      // Rebuild service with chain client
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          DisputeSagaService,
+          { provide: EscrowService, useValue: escrowService },
+          { provide: WebhookService, useValue: webhookService },
+          { provide: NotificationService, useValue: notificationService },
+          { provide: REDIS_CLIENT, useValue: null },
+          { provide: MetricsService, useValue: { increment: jest.fn() } },
+          { provide: DiscordService, useValue: discordService },
+          { provide: EscrowChainStateClient, useValue: chainClient },
+        ],
+      }).compile();
+
+      service = module.get<DisputeSagaService>(DisputeSagaService);
+
+      // Make the persist step fail after raiseDispute succeeds
+      jest
+        .spyOn(service as unknown as SagaPersistence, 'persistSaga')
+        .mockRejectedValueOnce(new Error('DB connection lost'));
+
+      escrowService.raiseDispute.mockResolvedValueOnce({
+        ...chainEscrow,
+        status: 'disputed',
+        disputedAt: new Date().toISOString(),
+      });
+
+      // Attempt escalation - should fail at persist step but compensate by syncing from chain
+      await expect(service.escalate('esc-001', ESCALATE_DTO)).rejects.toThrow('DB connection lost');
+
+      // Verify chain state was queried during compensation
+      expect(chainClient.getEscrow).toHaveBeenCalledWith('contract-123');
+
+      // Verify the saga failed
+      const [saga] = await service.findAll();
+      expect(saga.currentStep).toBe(DisputeStep.FAILED);
+      expect(saga.compensationReason).toContain('DB connection lost');
+    });
+
+    it('logs warning and continues when chain client is unavailable', async () => {
+      const chainEscrow = makeEscrow({ contractEscrowId: 'contract-456' });
+      escrowService.findById.mockResolvedValue(chainEscrow);
+
+      // No chain client provided (simulates optional dependency not available)
+      const logSpy = jest.spyOn(
+        (service as unknown as { logger: { warn: (...args: unknown[]) => void } }).logger,
+        'warn',
+      );
+
+      jest
+        .spyOn(service as unknown as SagaPersistence, 'persistSaga')
+        .mockRejectedValueOnce(new Error('DB failure'));
+
+      escrowService.raiseDispute.mockResolvedValueOnce({
+        ...chainEscrow,
+        status: 'disputed',
+        disputedAt: new Date().toISOString(),
+      });
+
+      await expect(service.escalate('esc-001', ESCALATE_DTO)).rejects.toThrow('DB failure');
+
+      // Compensation should still complete even without chain sync capability
+      const [saga] = await service.findAll();
+      expect(saga.currentStep).toBe(DisputeStep.FAILED);
+
+      // Verify no crash occurred - service handled missing chain client gracefully
+      expect(logSpy).toHaveBeenCalled();
+    });
+
+    it('continues compensation even if chain sync itself fails', async () => {
+      const chainEscrow = makeEscrow({ contractEscrowId: 'contract-789' });
+      escrowService.findById.mockResolvedValue(chainEscrow);
+
+      const chainClient = {
+        getEscrow: jest.fn().mockRejectedValue(new Error('Chain RPC timeout')),
+      };
+
+      escrowService.findAll = jest.fn().mockResolvedValue([chainEscrow]);
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          DisputeSagaService,
+          { provide: EscrowService, useValue: escrowService },
+          { provide: WebhookService, useValue: webhookService },
+          { provide: NotificationService, useValue: notificationService },
+          { provide: REDIS_CLIENT, useValue: null },
+          { provide: MetricsService, useValue: { increment: jest.fn() } },
+          { provide: DiscordService, useValue: discordService },
+          { provide: EscrowChainStateClient, useValue: chainClient },
+        ],
+      }).compile();
+
+      service = module.get<DisputeSagaService>(DisputeSagaService);
+
+      jest
+        .spyOn(service as unknown as SagaPersistence, 'persistSaga')
+        .mockRejectedValueOnce(new Error('DB failure'));
+
+      escrowService.raiseDispute.mockResolvedValueOnce({
+        ...chainEscrow,
+        status: 'disputed',
+        disputedAt: new Date().toISOString(),
+      });
+
+      await expect(service.escalate('esc-001', ESCALATE_DTO)).rejects.toThrow('DB failure');
+
+      // Compensation should mark saga as failed even if chain sync errored
+      const [saga] = await service.findAll();
+      expect(saga.currentStep).toBe(DisputeStep.FAILED);
+      expect(webhookService.dispatch).toHaveBeenCalledWith(
+        'dispute.saga_failed',
+        expect.objectContaining({ reason: 'DB failure' }),
+      );
     });
   });
 });

@@ -27,6 +27,7 @@ import { DiscordService } from '../webhook/discord.service';
 import { NotificationService } from '../notification/notification.service';
 import { config } from '../config/env.config';
 import { getCurrentUtcDate, toUtcIsoString } from '../common/dates';
+import { EscrowChainStateClient } from '../escrow-reconciliation/escrow-chain-state.client';
 
 /** Simple keyed mutex for serializing concurrent operations. */
 class KeyedMutex {
@@ -121,6 +122,7 @@ export class DisputeSagaService implements OnModuleInit {
     private readonly metrics: MetricsService,
     @Optional() private readonly audit?: AuditService,
     @Optional() private readonly discordService?: DiscordService,
+    @Optional() private readonly chainClient?: EscrowChainStateClient,
   ) {}
 
   onModuleInit(): void {
@@ -379,6 +381,11 @@ export class DisputeSagaService implements OnModuleInit {
    * call never succeeded (it threw, or the escrow was adopted already
    * disputed) — in which case the escrow is left exactly as it is, so a
    * dispute raised by another path or saga is never undone.
+   *
+   * #647: if an on-chain transaction succeeded but the DB write failed, this
+   * compensation re-reads the chain state and syncs the DB to match. This
+   * ensures the saga state reflects the canonical on-chain contract state even
+   * when local persistence fails.
    */
   private async compensateEscalation(
     saga: DisputeSaga,
@@ -392,15 +399,34 @@ export class DisputeSagaService implements OnModuleInit {
     saga.compensationReason = reason;
 
     try {
+      // #647: If the escalation reached the chain but the DB write failed, re-read the
+      // canonical chain state and sync the DB to match. This prevents desynchronization
+      // where the contract is disputed but off-chain records remain active.
+      const escrow = await this.escrowService.findById(saga.escrowId);
+      if (escrow?.contractEscrowId && this.chainClient) {
+        try {
+          await this.syncEscrowFromChain(escrow.contractEscrowId);
+          this.logger.log(
+            `Saga ${saga.sagaId}: re-synced escrow ${saga.escrowId} from chain state after escalation failure`,
+          );
+        } catch (syncErr) {
+          this.logger.error(
+            `Saga ${saga.sagaId}: failed to sync escrow from chain during compensation`,
+            syncErr,
+          );
+          // Continue with the local revert — a failed sync is logged but shouldn't block compensation.
+        }
+      }
+
       if (frozen) {
-        const escrow = await this.escrowService.findById(saga.escrowId);
+        const currentEscrow = await this.escrowService.findById(saga.escrowId);
         // Still the dispute this saga raised (same disputedAt) — restore the
         // recorded prior status. Anything else means someone has changed the
         // escrow since, and it is theirs to keep.
         if (
-          escrow &&
-          escrow.status === 'disputed' &&
-          escrow.disputedAt === frozen.disputedAt &&
+          currentEscrow &&
+          currentEscrow.status === 'disputed' &&
+          currentEscrow.disputedAt === frozen.disputedAt &&
           saga.priorEscrowStatus
         ) {
           await this.escrowService.correctStatus(saga.escrowId, {
@@ -425,6 +451,55 @@ export class DisputeSagaService implements OnModuleInit {
       reason,
       step: DisputeStep.ESCALATION,
     });
+  }
+
+  /**
+   * Re-reads the canonical on-chain state for an escrow and updates the DB to match.
+   * Used by compensating actions when an on-chain write succeeded but the local DB
+   * update failed, preventing desynchronization between chain and off-chain state.
+   *
+   * #647: This is the recovery mechanism that ensures dispute saga state always reflects
+   * the true on-chain contract state, even when database failures occur mid-transaction.
+   */
+  private async syncEscrowFromChain(contractEscrowId: string): Promise<void> {
+    if (!this.chainClient) {
+      this.logger.warn(
+        `Cannot sync escrow ${contractEscrowId} from chain: no chain client available`,
+      );
+      return;
+    }
+
+    const chainState = await this.chainClient.getEscrow(contractEscrowId);
+    if (!chainState) {
+      this.logger.warn(
+        `Chain returned no state for escrow contract ${contractEscrowId} — may have been deleted on-chain`,
+      );
+      return;
+    }
+
+    // Find the off-chain escrow by its contract ID
+    const escrows = await this.escrowService.findAll();
+    const escrow = escrows.find(e => e.contractEscrowId === contractEscrowId);
+
+    if (!escrow) {
+      this.logger.warn(
+        `No off-chain escrow found for contract ${contractEscrowId} — skipping sync`,
+      );
+      return;
+    }
+
+    // Sync the status if it differs
+    if (escrow.status !== chainState.status) {
+      this.logger.log(
+        `Syncing escrow ${escrow.id} status from ${escrow.status} to ${chainState.status} (chain is authoritative)`,
+      );
+      await this.escrowService.applyChainState(escrow.id, { status: chainState.status });
+    }
+
+    // If the chain shows the escrow is disputed, ensure the off-chain record reflects that
+    if (chainState.status === 'disputed' && escrow.status !== 'disputed') {
+      await this.escrowService.applyChainState(escrow.id, { status: 'disputed' });
+    }
   }
 
   // ─── Step 2: Juror Assignment ─────────────────────────────────────
