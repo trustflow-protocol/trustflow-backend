@@ -21,17 +21,10 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { EscrowService } from './escrow.service';
-import { ReputationService } from '../reputation/reputation.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
 import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
 import { Idempotent } from '../common/idempotency';
-import {
-  CreateEscrowDto,
-  CreateEscrowSchema,
-  RaiseDisputeDto,
-  RaiseDisputeSchema,
-  ReleaseEscrowSchema,
-} from './escrow.dto';
+import { CreateEscrowDto, CreateEscrowSchema, ReleaseEscrowSchema } from './escrow.dto';
 
 // Reference to ensure ReleaseEscrowSchema is considered used (dead-code check requires import)
 void ReleaseEscrowSchema;
@@ -309,52 +302,5 @@ export class EscrowController {
       escrow.contractEscrowId,
       sourceAccount,
     );
-  }
-
-  @Post(':id/dispute')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Raise a dispute',
-    description:
-      'Raises a dispute for an escrow. Triggers webhook events and Discord notifications to alert jurors.',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'Escrow ID',
-    example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005',
-  })
-  @ApiBody({
-    description: 'Dispute details',
-    schema: {
-      type: 'object',
-      properties: {
-        reason: {
-          type: 'string',
-          description: 'Reason for the dispute',
-          example: 'Work not delivered as specified',
-        },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Dispute raised successfully. Discord notification sent if configured.',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        status: { type: 'string', example: 'disputed' },
-        disputeReason: { type: 'string' },
-        disputedAt: { type: 'string', format: 'date-time' },
-      },
-    },
-  })
-  @ApiResponse({ status: 400, description: 'Escrow already disputed or released' })
-  @ApiResponse({ status: 404, description: 'Escrow not found' })
-  async raiseDispute(@Param('id') id: string, @Body() dto: RaiseDisputeDto) {
-    const validated = RaiseDisputeSchema.parse(dto);
-    const escrow = await this.escrowService.raiseDispute(id, validated.reason);
-
-    return escrow;
   }
 }

@@ -3,32 +3,23 @@ import { OutboxEventDispatcher } from '../outbox/outbox-event-dispatcher.service
 import { OutboxEvent } from '../outbox/outbox.types';
 import { ESCROW_EVENTS, Escrow } from './escrow.service';
 import { ReputationService } from '../reputation/reputation.service';
-import { DiscordService } from '../webhook/discord.service';
 
 @Injectable()
 export class EscrowEventsConsumer implements OnModuleInit {
   constructor(
     private readonly dispatcher: OutboxEventDispatcher,
     private readonly reputationService: ReputationService,
-    private readonly discordService: DiscordService,
   ) {}
 
   onModuleInit() {
-    this.dispatcher.register('escrow.*', (event) => this.handleEscrowEvent(event));
+    this.dispatcher.register('escrow.*', event => this.handleEscrowEvent(event));
   }
 
   private async handleEscrowEvent(event: OutboxEvent): Promise<void> {
     const escrow = event.payload as Escrow;
 
-    if (event.type === ESCROW_EVENTS.ESCROW_DISPUTED) {
-      await this.discordService.notifyDisputeNeedsJurors({
-        escrowId: escrow.id,
-        depositor: escrow.depositor,
-        beneficiary: escrow.beneficiary,
-        amountXLM: escrow.amountXLM,
-        reason: escrow.disputeReason || 'Disputed',
-      });
-    }
+    // `escrow.disputed` no longer sends Discord here: the dispute saga sends
+    // it exactly once per dispute, from every entry point (#636).
 
     if (
       event.type === ESCROW_EVENTS.ESCROW_RELEASED ||

@@ -9,8 +9,6 @@ import {
   NotFoundException,
   UseGuards,
   Req,
-  ForbiddenException,
-  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBearerAuth } from '@nestjs/swagger';
 import { DisputeSagaService } from './dispute-saga.service';
@@ -60,8 +58,8 @@ export class DisputeSagaController {
   @ApiParam({ name: 'escrowId', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' })
   @ApiResponse({ status: 200, type: DisputeSagaResponseDto })
   @ApiResponse({ status: 404, description: 'No active dispute saga for this escrow' })
-  findByEscrow(@Param('escrowId') escrowId: string) {
-    const saga = this.sagaService.findByEscrowId(escrowId);
+  async findByEscrow(@Param('escrowId') escrowId: string) {
+    const saga = await this.sagaService.findByEscrowId(escrowId);
     if (!saga) throw new NotFoundException(`No active dispute saga for escrow ${escrowId}`);
     return saga;
   }
@@ -77,7 +75,10 @@ export class DisputeSagaController {
   })
   @ApiParam({ name: 'escrowId', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' })
   @ApiResponse({ status: 201, type: DisputeSagaResponseDto })
-  @ApiResponse({ status: 400, description: 'Escrow already released or already has active dispute' })
+  @ApiResponse({
+    status: 400,
+    description: 'Escrow already released or already has active dispute',
+  })
   @ApiResponse({ status: 403, description: 'Only depositor or beneficiary can escalate dispute' })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
   @ApiResponse({ status: 409, description: 'Active saga already exists for this escrow' })

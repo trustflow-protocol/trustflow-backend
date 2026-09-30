@@ -37,6 +37,12 @@ export interface DisputeSaga {
   /** Where the dispute originated. Defaults to 'api' for backwards compatibility. */
   origin?: 'api' | 'chain';
   reason: string;
+  /**
+   * Escrow status observed when this saga started, before it froze the escrow
+   * (#635). Compensation restores exactly this value — and only when this
+   * saga's own `raiseDispute()` is what moved the escrow to `disputed`.
+   */
+  priorEscrowStatus?: string;
   currentStep: DisputeStep;
   escalationTxHash?: string;
   assignedJurors?: string[];

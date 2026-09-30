@@ -31,13 +31,17 @@ export class IsStellarAddressValidator implements ValidatorConstraintInterface {
 }
 
 export class EscalateDisputeDto {
-  @ApiProperty({
-    description: 'Stellar address of the initiating party (ignored; derived from JWT)',
-    example: 'GXXX...',
+  /**
+   * Set by the server from the authenticated wallet (#633) — never read from
+   * the request. Still accepted in the body so existing clients that send it
+   * are not rejected by `forbidNonWhitelisted`, but its value is discarded.
+   */
+  @ApiPropertyOptional({
+    description: 'Ignored — the initiator is the authenticated wallet.',
+    deprecated: true,
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  @Validate(IsStellarAddressValidator)
   initiator!: string;
 
   @ApiProperty({ description: 'Reason for the dispute', minLength: 10, maxLength: 500 })

@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EscrowController } from './escrow.controller';
 import { EscrowService, Escrow } from './escrow.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
+import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -32,14 +33,7 @@ function buildMocks() {
     findById: jest.fn().mockResolvedValue(escrow),
     findByDepositor: jest.fn().mockResolvedValue([escrow]),
     release: jest.fn().mockResolvedValue({ ...escrow, status: 'released' }),
-    raiseDispute: jest.fn().mockResolvedValue({
-      ...escrow,
-      status: 'disputed',
-      disputeReason: 'Work not delivered',
-      disputedAt: new Date().toISOString(),
-    }),
   };
-
 
   const txBuilderService = {
     buildRelease: jest.fn().mockResolvedValue({
@@ -99,7 +93,6 @@ describe('EscrowController', () => {
     });
 
     it('rejects a self-dealing escrow (depositor === beneficiary) with 400', () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
       const dto = { depositor: DEPOSITOR, beneficiary: DEPOSITOR, amountXLM: AMOUNT };
 
       expect(() => controller.create(dto)).toThrow(BadRequestException);
@@ -107,7 +100,6 @@ describe('EscrowController', () => {
     });
 
     it('rejects a malformed address with 400 (not 500)', () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
       const dto = {
         depositor: 'not-a-stellar-address',
         beneficiary: BENEFICIARY,
@@ -174,64 +166,6 @@ describe('EscrowController', () => {
 
   // ─── POST /escrows/:id/dispute ────────────────────────────────────────────
 
-  describe('raiseDispute()', () => {
-    it('calls EscrowService.raiseDispute(), dispatches webhook, sends Discord notification, and returns the escrow', async () => {
-      const disputed = makeEscrow({
-        status: 'disputed',
-        disputeReason: 'Work not delivered',
-        disputedAt: new Date().toISOString(),
-      });
-      mocks.escrowService.raiseDispute.mockResolvedValue(disputed);
-
-      const result = await controller.raiseDispute('esc-001', { reason: 'Work not delivered' });
-
-      expect(mocks.escrowService.raiseDispute).toHaveBeenCalledWith(
-        'esc-001',
-        'Work not delivered',
-      );
-
-      expect(result).toEqual(disputed);
-    });
-
-    it('works when no reason is provided in the dto', async () => {
-      mocks.escrowService.raiseDispute.mockResolvedValue(makeEscrow({ status: 'disputed' }));
-
-      await controller.raiseDispute('esc-001', {});
-
-      expect(mocks.escrowService.raiseDispute).toHaveBeenCalledWith('esc-001', undefined);
-    });
-
-    it('propagates BadRequestException when escrow is already released', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
-      mocks.escrowService.raiseDispute.mockRejectedValue(
-        new BadRequestException('Cannot dispute a released escrow'),
-      );
-
-      await expect(controller.raiseDispute('esc-001', { reason: 'too late' })).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-
-    it('propagates BadRequestException when escrow is already disputed', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
-      mocks.escrowService.raiseDispute.mockRejectedValue(
-        new BadRequestException('Escrow is already disputed'),
-      );
-
-      await expect(controller.raiseDispute('esc-001', { reason: 'dupe' })).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-
-    it('propagates exception when service throws', async () => {
-      mocks.escrowService.raiseDispute.mockRejectedValue(new Error('unexpected'));
-
-      await expect(controller.raiseDispute('esc-001', {})).rejects.toThrow();
-    });
-  });
-
-  // ─── GET /escrows/:id/release/transaction ────────────────────────────────
-
   describe('buildReleaseTransaction()', () => {
     it('calls the tx builder with contractEscrowId and sourceAccount', async () => {
       const linked = makeEscrow({ contractEscrowId: 'on-chain-id-001' });
@@ -239,7 +173,7 @@ describe('EscrowController', () => {
 
       const result = await controller.buildReleaseTransaction('esc-001', {
         sourceAccount: DEPOSITOR,
-      } as any);
+      } as BuildReleaseTransactionQueryDto);
 
       expect(mocks.txBuilderService.buildRelease).toHaveBeenCalledWith(
         'on-chain-id-001',
@@ -252,7 +186,9 @@ describe('EscrowController', () => {
       mocks.escrowService.findById.mockResolvedValue(undefined);
 
       await expect(
-        controller.buildReleaseTransaction('esc-ghost', { sourceAccount: DEPOSITOR } as any),
+        controller.buildReleaseTransaction('esc-ghost', {
+          sourceAccount: DEPOSITOR,
+        } as BuildReleaseTransactionQueryDto),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -261,7 +197,9 @@ describe('EscrowController', () => {
       mocks.escrowService.findById.mockResolvedValue(unlinked);
 
       await expect(
-        controller.buildReleaseTransaction('esc-001', { sourceAccount: DEPOSITOR } as any),
+        controller.buildReleaseTransaction('esc-001', {
+          sourceAccount: DEPOSITOR,
+        } as BuildReleaseTransactionQueryDto),
       ).rejects.toThrow(NotFoundException);
     });
   });

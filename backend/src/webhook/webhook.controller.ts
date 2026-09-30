@@ -15,7 +15,7 @@ export class WebhookController {
       'Register a webhook endpoint to receive event notifications.\n\n' +
       'Supported events:\n' +
       '- **Gig Events (Outbox)**: gig.created, gig.accepted, gig.expired, gig.cancelled\n' +
-      '- **Dispute Events (Direct)**: dispute.raised\n' +
+      '- **Dispute Events (Outbox)**: dispute.raised — sent once per dispute by the dispute saga, from every entry point, with the escrow payload plus sagaId\n' +
       '- **Dispute Saga Events (Outbox)**: dispute.escalated, dispute.jurors_assigned, dispute.vote_cast, dispute.verdict_reached, dispute.payout_executed, dispute.saga_completed, dispute.saga_compensating, dispute.saga_failed\n' +
       '- **IPFS Events (Outbox)**: ipfs.pin.created, ipfs.pin.degraded, ipfs.pin.restored, ipfs.pin.lost, ipfs.pin.failed, ipfs.pin.removed\n' +
       '- **Reconciliation Events (Outbox)**: escrow_reconciliation.drift_detected, escrow_reconciliation.escrow_backfilled\n\n' +

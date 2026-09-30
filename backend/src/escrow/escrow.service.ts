@@ -15,7 +15,6 @@ import { REDIS_CLIENT } from '../common/redis/redis.module';
 import {
   assertTransactionApplied,
   isTransactionIntegrityError,
-  RedisTransactionError,
 } from '../common/redis/redis-transaction';
 import { MetricsService } from '../monitoring/metrics.service';
 import { OutboxService } from '../outbox/outbox.service';
@@ -68,6 +67,12 @@ export interface ChainEscrowSeed {
 export interface StatusCorrection {
   status?: EscrowStatus;
   requiresManualReview?: boolean;
+  /**
+   * Also clear `disputeReason`/`disputedAt` — used when undoing a dispute this
+   * process raised (#635), so a later release isn't scored as a dispute
+   * resolution by the reputation consumer.
+   */
+  clearDispute?: boolean;
 }
 
 const ESCROW_KEY_PREFIX = 'escrow:';
@@ -308,6 +313,10 @@ export class EscrowService implements OnModuleInit {
     if (patch.status !== undefined) escrow.status = patch.status;
     if (patch.requiresManualReview !== undefined)
       escrow.requiresManualReview = patch.requiresManualReview;
+    if (patch.clearDispute) {
+      delete escrow.disputeReason;
+      delete escrow.disputedAt;
+    }
     await this.persist(escrow);
     return escrow;
   }
@@ -414,6 +423,10 @@ export class EscrowService implements OnModuleInit {
     if (escrow.status === 'released')
       throw new BadRequestException('Cannot dispute a released escrow');
     if (escrow.status === 'disputed') throw new ConflictException('Escrow is already disputed');
+    // Only an active (funded, unreleased) escrow can start a new dispute — the
+    // same rule the contract's raise_dispute enforces (#633).
+    if (escrow.status !== 'active')
+      throw new BadRequestException(`Cannot dispute a ${escrow.status} escrow`);
 
     const beforeState = { ...escrow };
     escrow.status = 'disputed';
@@ -496,7 +509,7 @@ export class EscrowService implements OnModuleInit {
   private rethrowIfInconsistent(operation: string, escrowId: string, err: unknown): void {
     if (!isTransactionIntegrityError(err)) return;
 
-    const transactionError = err as RedisTransactionError;
+    const transactionError = err;
     this.metrics.increment(ESCROW_TRANSACTION_INCONSISTENT_METRIC, {
       operation,
       reason: transactionError.reason,

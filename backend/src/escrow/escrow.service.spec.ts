@@ -250,8 +250,13 @@ describe('EscrowService', () => {
     // ─── raiseDispute() ───────────────────────────────────────────────────────
 
     describe('raiseDispute()', () => {
-      it('transitions a "pending" escrow to "disputed" and records reason + timestamp', async () => {
+      const activeEscrow = async () => {
         const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+        return service.fund(escrow.id);
+      };
+
+      it('transitions an "active" escrow to "disputed" and records reason + timestamp', async () => {
+        const escrow = await activeEscrow();
         const disputed = await service.raiseDispute(escrow.id, 'Work not delivered');
 
         expect(disputed.status).toBe('disputed');
@@ -261,16 +266,29 @@ describe('EscrowService', () => {
       });
 
       it('works without a reason argument', async () => {
-        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+        const escrow = await activeEscrow();
         const disputed = await service.raiseDispute(escrow.id);
 
         expect(disputed.status).toBe('disputed');
         expect(disputed.disputeReason).toBeUndefined();
       });
 
+      it.each(['pending', 'cancelled'] as const)(
+        'rejects a %s escrow — only active escrows can start a dispute (#633)',
+        async status => {
+          const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+          await service.correctStatus(escrow.id, { status });
+
+          await expect(service.raiseDispute(escrow.id, 'x')).rejects.toThrow(
+            `Cannot dispute a ${status} escrow`,
+          );
+          expect((await service.findById(escrow.id))?.status).toBe(status);
+        },
+      );
+
       it('throws when the escrow is already released (guard: cannot dispute released)', async () => {
-        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
-        await service.release(escrow.id);
+        const escrow = await activeEscrow();
+        await service.correctStatus(escrow.id, { status: 'released' });
 
         await expect(service.raiseDispute(escrow.id, 'too late')).rejects.toThrow(
           'Cannot dispute a released escrow',
@@ -278,7 +296,7 @@ describe('EscrowService', () => {
       });
 
       it('throws when the escrow is already disputed (guard: cannot double-dispute)', async () => {
-        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+        const escrow = await activeEscrow();
         await service.raiseDispute(escrow.id, 'first dispute');
 
         await expect(service.raiseDispute(escrow.id, 'second dispute')).rejects.toThrow(
@@ -293,8 +311,8 @@ describe('EscrowService', () => {
       });
 
       it('does not change status when raiseDispute throws', async () => {
-        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
-        await service.release(escrow.id);
+        const escrow = await activeEscrow();
+        await service.correctStatus(escrow.id, { status: 'released' });
 
         try {
           await service.raiseDispute(escrow.id, 'after release');
@@ -304,6 +322,24 @@ describe('EscrowService', () => {
 
         const reloaded = await service.findById(escrow.id);
         expect(reloaded?.status).toBe('released');
+      });
+    });
+
+    describe('correctStatus({ clearDispute })', () => {
+      it('restores the prior status and clears the dispute fields (#635)', async () => {
+        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+        await service.fund(escrow.id);
+        await service.raiseDispute(escrow.id, 'undo me');
+
+        const restored = await service.correctStatus(escrow.id, {
+          status: 'active',
+          clearDispute: true,
+        });
+
+        expect(restored.status).toBe('active');
+        expect(restored.disputeReason).toBeUndefined();
+        expect(restored.disputedAt).toBeUndefined();
+        expect((await service.findById(escrow.id))?.disputedAt).toBeUndefined();
       });
     });
 
@@ -477,10 +513,12 @@ describe('EscrowService', () => {
       // means part of the write is already durable. Reporting success here (and falling back
       // to memory) is what produced inconsistent state.
       const redis = makeFakeRedisClient();
-      redis.mockNextExecResult(async () => [
-        [null, 'OK'],
-        [new Error('WRONGTYPE'), null],
-      ]);
+      redis.mockNextExecResult(() =>
+        Promise.resolve([
+          [null, 'OK'],
+          [new Error('WRONGTYPE'), null],
+        ]),
+      );
       service = await buildService(redis);
 
       await expect(service.create(DEPOSITOR, BENEFICIARY, AMOUNT)).rejects.toBeInstanceOf(
@@ -499,7 +537,7 @@ describe('EscrowService', () => {
 
     it('refuses to report success when exec() resolves null (an aborted transaction)', async () => {
       const redis = makeFakeRedisClient();
-      redis.mockNextExecResult(async () => null);
+      redis.mockNextExecResult(() => Promise.resolve(null));
       service = await buildService(redis);
 
       await expect(service.create(DEPOSITOR, BENEFICIARY, AMOUNT)).rejects.toBeInstanceOf(

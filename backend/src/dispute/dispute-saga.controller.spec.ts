@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { DisputeSagaController } from './dispute-saga.controller';
 import { DisputeSagaService } from './dispute-saga.service';
 import { JwtAuthGuard } from '../auth/auth.guard';
@@ -22,6 +23,10 @@ const FAKE_SAGA = {
 const ESCALATE_DTO = {
   initiator: 'GDEPOSITOR111111111111111111111111111111111111111111111',
   reason: 'Work was not delivered as agreed in the contract',
+};
+
+const REQ = {
+  user: { address: 'GDEPOSITOR111111111111111111111111111111111111111111111', sub: 'u1' },
 };
 
 const ASSIGN_JURORS_DTO = {
@@ -116,7 +121,7 @@ describe('DisputeSagaController', () => {
   // ─── GET / ────────────────────────────────────────────────────────────────
 
   describe('findAll()', () => {
-    it('delegates to sagaService.findAll() and returns the result', async () => {
+    it('delegates to sagaService.findAll() and returns the result', () => {
       mockSagaService.findAll.mockReturnValue([FAKE_SAGA]);
 
       const result = controller.findAll();
@@ -125,7 +130,7 @@ describe('DisputeSagaController', () => {
       expect(result).toEqual([FAKE_SAGA]);
     });
 
-    it('returns an empty array when no sagas exist', async () => {
+    it('returns an empty array when no sagas exist', () => {
       mockSagaService.findAll.mockReturnValue([]);
 
       expect(controller.findAll()).toEqual([]);
@@ -145,7 +150,6 @@ describe('DisputeSagaController', () => {
     });
 
     it('propagates NotFoundException thrown by the service', () => {
-      const { NotFoundException } = jest.requireActual('@nestjs/common');
       mockSagaService.findById.mockImplementation(() => {
         throw new NotFoundException('Saga not found');
       });
@@ -157,20 +161,20 @@ describe('DisputeSagaController', () => {
   // ─── GET /escrow/:escrowId ────────────────────────────────────────────────
 
   describe('findByEscrow()', () => {
-    it('passes escrowId to sagaService.findByEscrowId() and returns the result', () => {
-      mockSagaService.findByEscrowId.mockReturnValue(FAKE_SAGA);
+    it('passes escrowId to sagaService.findByEscrowId() and returns the result', async () => {
+      mockSagaService.findByEscrowId.mockResolvedValue(FAKE_SAGA);
 
-      const result = controller.findByEscrow(ESCROW_ID);
+      const result = await controller.findByEscrow(ESCROW_ID);
 
       expect(mockSagaService.findByEscrowId).toHaveBeenCalledWith(ESCROW_ID);
       expect(result).toEqual(FAKE_SAGA);
     });
 
-    it('throws NotFoundException when no active saga exists for the escrow', () => {
-      const { NotFoundException } = jest.requireActual('@nestjs/common');
-      mockSagaService.findByEscrowId.mockReturnValue(undefined);
+    it('throws NotFoundException when no active saga exists for the escrow', async () => {
+      // The service is async: a resolved `undefined` must still 404 (it never did before).
+      mockSagaService.findByEscrowId.mockResolvedValue(undefined);
 
-      expect(() => controller.findByEscrow('esc-unknown')).toThrow(NotFoundException);
+      await expect(controller.findByEscrow('esc-unknown')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -181,37 +185,45 @@ describe('DisputeSagaController', () => {
       const createdSaga = { ...FAKE_SAGA, currentStep: 'JUROR_ASSIGNMENT' };
       mockSagaService.escalate.mockResolvedValue(createdSaga);
 
-      const result = await controller.escalate(ESCROW_ID, ESCALATE_DTO);
+      const result = await controller.escalate(ESCROW_ID, ESCALATE_DTO, REQ);
 
       expect(mockSagaService.escalate).toHaveBeenCalledWith(ESCROW_ID, ESCALATE_DTO);
       expect(result).toEqual(createdSaga);
     });
 
+    it('takes the initiator from the authenticated wallet, never from the body (#633)', async () => {
+      mockSagaService.escalate.mockResolvedValue(FAKE_SAGA);
+      await controller.escalate(ESCROW_ID, { ...ESCALATE_DTO, initiator: 'GSPOOFED' }, REQ);
+      expect(mockSagaService.escalate).toHaveBeenCalledWith(ESCROW_ID, {
+        ...ESCALATE_DTO,
+        initiator: REQ.user.address,
+      });
+    });
+
     it('propagates BadRequestException when escrow is already released', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
       mockSagaService.escalate.mockRejectedValue(
         new BadRequestException('Escrow already released'),
       );
 
-      await expect(controller.escalate(ESCROW_ID, ESCALATE_DTO)).rejects.toThrow(
+      await expect(controller.escalate(ESCROW_ID, ESCALATE_DTO, REQ)).rejects.toThrow(
         BadRequestException,
       );
     });
 
     it('propagates ConflictException when active saga already exists', async () => {
-      const { ConflictException } = jest.requireActual('@nestjs/common');
       mockSagaService.escalate.mockRejectedValue(
         new ConflictException('Active saga already exists for this escrow'),
       );
 
-      await expect(controller.escalate(ESCROW_ID, ESCALATE_DTO)).rejects.toThrow(ConflictException);
+      await expect(controller.escalate(ESCROW_ID, ESCALATE_DTO, REQ)).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('propagates NotFoundException when escrow is not found', async () => {
-      const { NotFoundException } = jest.requireActual('@nestjs/common');
       mockSagaService.escalate.mockRejectedValue(new NotFoundException('Escrow not found'));
 
-      await expect(controller.escalate('esc-unknown', ESCALATE_DTO)).rejects.toThrow(
+      await expect(controller.escalate('esc-unknown', ESCALATE_DTO, REQ)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -235,7 +247,6 @@ describe('DisputeSagaController', () => {
     });
 
     it('propagates BadRequestException when saga is at wrong step', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
       mockSagaService.assignJurors.mockRejectedValue(
         new BadRequestException('Saga not at JUROR_ASSIGNMENT step'),
       );
@@ -263,7 +274,6 @@ describe('DisputeSagaController', () => {
     });
 
     it('propagates BadRequestException for a non-assigned juror', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
       mockSagaService.castVote.mockRejectedValue(new BadRequestException('Juror not assigned'));
 
       await expect(controller.castVote(SAGA_ID, CAST_VOTE_DTO)).rejects.toThrow(
@@ -272,7 +282,6 @@ describe('DisputeSagaController', () => {
     });
 
     it('propagates ConflictException on a duplicate vote', async () => {
-      const { ConflictException } = jest.requireActual('@nestjs/common');
       mockSagaService.castVote.mockRejectedValue(new ConflictException('Juror has already voted'));
 
       await expect(controller.castVote(SAGA_ID, CAST_VOTE_DTO)).rejects.toThrow(ConflictException);
@@ -302,7 +311,6 @@ describe('DisputeSagaController', () => {
     });
 
     it('propagates BadRequestException when saga has no verdict', async () => {
-      const { BadRequestException } = jest.requireActual('@nestjs/common');
       mockSagaService.executePayout.mockRejectedValue(
         new BadRequestException('No verdict recorded'),
       );
