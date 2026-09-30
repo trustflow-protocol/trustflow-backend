@@ -24,8 +24,26 @@ import { EscalateDisputeDto, AssignJurorsDto, CastVoteDto, ExecutePayoutDto } fr
 import { EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { NotificationService } from '../notification/notification.service';
-import { ReputationOutcome } from '../reputation/reputation.types';
 import { config } from '../config/env.config';
+import { getCurrentUtcDate, toUtcIsoString } from '../common/dates';
+
+/** Simple keyed mutex for serializing concurrent operations. */
+class KeyedMutex {
+  private locks: Map<string, Promise<void>> = new Map();
+
+  async lock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const current = this.locks.get(key) ?? Promise.resolve();
+    const next = current.then(fn);
+    this.locks.set(
+      key,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
+  }
+}
 
 /** Webhook event names emitted by the saga */
 export const SAGA_EVENTS = {
@@ -38,16 +56,6 @@ export const SAGA_EVENTS = {
   SAGA_COMPENSATING: 'dispute.saga_compensating',
   SAGA_FAILED: 'dispute.saga_failed',
 } as const;
-
-/** Maps a jury verdict onto the domain-neutral outcomes the reputation engine understands. */
-const REPUTATION_OUTCOME_BY_VERDICT: Record<
-  DisputeVerdict,
-  { depositor: ReputationOutcome; beneficiary: ReputationOutcome }
-> = {
-  [DisputeVerdict.BENEFICIARY_WINS]: { depositor: 'lost', beneficiary: 'won' },
-  [DisputeVerdict.DEPOSITOR_WINS]: { depositor: 'won', beneficiary: 'lost' },
-  [DisputeVerdict.SPLIT]: { depositor: 'split', beneficiary: 'split' },
-};
 
 const SAGA_KEY_PREFIX = 'saga:';
 const SAGAS_INDEX_KEY = 'sagas:index';
@@ -190,8 +198,7 @@ export class DisputeSagaService implements OnModuleInit {
       // Verify that initiator is either depositor or beneficiary, unless this is a
       // chain-originated dispute with no reliable initiator (#463): the sentinel
       // CHAIN_DISPUTE_INITIATOR is the only non-party value accepted.
-      const isChainUnknown =
-        origin === 'chain' && dto.initiator === CHAIN_DISPUTE_INITIATOR;
+      const isChainUnknown = origin === 'chain' && dto.initiator === CHAIN_DISPUTE_INITIATOR;
       if (!isChainUnknown) {
         if (dto.initiator !== escrow.depositor && dto.initiator !== escrow.beneficiary) {
           throw new ForbiddenException(
@@ -449,11 +456,11 @@ export class DisputeSagaService implements OnModuleInit {
           sagaId,
           jurorAddress: dto.jurorAddress,
           votesIn: saga.votes.length,
-          votesNeeded: saga.assignedJurors!.length,
+          votesNeeded: saga.assignedJurors.length,
         });
 
         // All jurors have voted — compute verdict (exactly once)
-        if (saga.votes.length === saga.assignedJurors!.length && !saga.verdict) {
+        if (saga.votes.length === saga.assignedJurors.length && !saga.verdict) {
           const verdict = this.computeVerdict(saga.votes);
           saga.verdict = verdict;
           this.recordStepComplete(saga, DisputeStep.VOTING);

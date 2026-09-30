@@ -201,13 +201,19 @@ const EnvSchema = z
     OUTBOX_RELAY_INTERVAL_MS: z.coerce.number().int().nonnegative().default(1000),
     OUTBOX_RELAY_BATCH_SIZE: z.coerce.number().int().positive().default(100),
     OUTBOX_RELAY_LEASE_MS: z.coerce.number().int().positive().default(30_000),
-    OUTBOX_DELIVERED_TTL_SECONDS: z.coerce.number().int().positive().default(7 * 24 * 60 * 60),
+    OUTBOX_DELIVERED_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(7 * 24 * 60 * 60),
     OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OUTBOX_QUEUE_MAX_LENGTH: z.coerce.number().int().positive().default(1000),
-    IDEMPOTENCY_KEY_TTL_SECONDS: z.coerce.number().int().positive().default(24 * 60 * 60),
+    IDEMPOTENCY_KEY_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(24 * 60 * 60),
     GIG_SEARCH_CACHE_TTL_SECONDS: optionalPositiveInt(),
-    GIG_EXPIRY_SWEEP_CONCURRENCY: z.coerce.number().int().positive().default(8),
-    GIG_EXPIRY_SWEEP_INTERVAL_MS: optionalNonnegativeInt(),
 
     // IPFS Pinning Configuration
     PINATA_JWT: z.string().optional().describe('Pinata API JWT token'),
@@ -378,7 +384,7 @@ export function validateEnv(): EnvConfig {
   }
 
   try {
-    const parsed = EnvSchema.parse(process.env) as EnvConfig;
+    const parsed = EnvSchema.parse(process.env);
     // Inject clearly-marked test-only fallback for non-production when no secret is provided
     if (!parsed.JWT_SECRET || parsed.JWT_SECRET.trim() === '') {
       if (parsed.NODE_ENV !== 'production') {

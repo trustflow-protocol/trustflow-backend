@@ -10,5 +10,5 @@ export class BuildReleaseTransactionQueryDto {
   @IsString()
   @IsNotEmpty()
   @Matches(STELLAR_ADDRESS_REGEX, { message: 'sourceAccount must be a valid Stellar address' })
-  sourceAccount: string;
+  sourceAccount!: string;
 }
