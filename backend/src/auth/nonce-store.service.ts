@@ -25,7 +25,47 @@ export class NonceStoreService {
     return this.redisClient;
   }
 
-  constructor(@Inject(REDIS_CLIENT) private readonly redisClient: Redis | null) {}
+  constructor(@Inject(REDIS_CLIENT) private readonly redisClient: Redis | null) {
+    // Only attach event listeners if we have a real Redis client (not null or mock)
+    if (this.redisClient && typeof this.redisClient.on === 'function') {
+      // Listen for reconnection events to verify TTL enforcement remains intact
+      this.redisClient.on('ready', () => {
+        this.verifyTTLConfiguration();
+      });
+    }
+  }
+
+  /**
+   * Verifies that Redis TTL configuration is correct after reconnection or Sentinel
+   * failover. This is a health check that ensures nonces will expire properly even
+   * after cluster topology changes.
+   */
+  private async verifyTTLConfiguration(): Promise<void> {
+    if (!this.redis) return;
+
+    const testKey = 'auth:nonce:ttl-verification-test';
+    try {
+      // Set a test key with TTL
+      await this.redis.set(testKey, '1', 'EX', NONCE_TTL_SECONDS);
+      
+      // Verify TTL was actually set
+      const ttl = await this.redis.ttl(testKey);
+      
+      // Clean up test key
+      await this.redis.del(testKey);
+      
+      if (ttl <= 0 || ttl > NONCE_TTL_SECONDS) {
+        this.logger.error(
+          `Redis TTL verification failed: expected ~${NONCE_TTL_SECONDS}s, got ${ttl}s. ` +
+          'Nonce expiration may not work correctly!'
+        );
+      } else {
+        this.logger.log('Redis TTL configuration verified after reconnection');
+      }
+    } catch (err) {
+      this.logger.error('Failed to verify Redis TTL configuration after reconnection', err);
+    }
+  }
 
   async store(address: string, challenge: string, _nonce: string): Promise<void> {
     const key = this.challengeKey(address);

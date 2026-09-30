@@ -235,8 +235,10 @@ export class OutboxService implements OnModuleInit {
     event.lastError = error instanceof Error ? error.message : String(error);
     const failed =
       event.attempts >= config.OUTBOX_MAX_ATTEMPTS;
-    event.status = failed ? 'failed' : 'pending';
+    // Use 'retrying' status to distinguish retry attempts from initial pending state
+    event.status = failed ? 'failed' : 'retrying';
     if (!failed) {
+      // Exponential backoff with cap at 30 seconds
       event.nextAttemptAt =
         Date.now() + Math.min(1000 * 2 ** Math.min(event.attempts - 1, 5), 30_000);
     }

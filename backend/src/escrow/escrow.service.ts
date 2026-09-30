@@ -46,6 +46,12 @@ export interface Escrow {
   splitPercentage?: number;
   /** Set by an admin-override correction (e.g. a dispute-saga compensation) that needs a human look. */
   requiresManualReview?: boolean;
+  /**
+   * Optimistic locking version incremented on every write. Reconciliation compares
+   * this with the expected version when applying chain state to prevent concurrent
+   * updates from causing double-deduction or lost writes.
+   */
+  version?: number;
 }
 
 /** Chain-verified fields the reconciler may write when repairing drift. */
@@ -287,9 +293,24 @@ export class EscrowService implements OnModuleInit {
    * reconciler to correct DB drift once the chain is already known to be ahead,
    * not for driving ordinary business-flow transitions.
    */
-  async applyChainState(id: string, patch: ChainStatePatch): Promise<Escrow> {
+  /**
+   * Applies chain-verified state updates with optimistic locking to prevent concurrent
+   * updates from causing double-deduction during reconciliation. The version field acts
+   * as an idempotency marker: if the escrow was modified between reading chain state and
+   * applying the patch, the write is rejected and the caller can retry with fresh data.
+   */
+  async applyChainState(id: string, patch: ChainStatePatch, expectedVersion?: number): Promise<Escrow> {
     const escrow = await this.findById(id);
     if (!escrow) throw new NotFoundException('Escrow not found');
+    
+    // Optimistic lock check: if caller provides expected version, ensure it matches
+    if (expectedVersion !== undefined && escrow.version !== expectedVersion) {
+      throw new ConflictException(
+        `Escrow version mismatch: expected ${expectedVersion}, found ${escrow.version}. ` +
+        'The escrow was modified concurrently; retry reconciliation with fresh chain state.'
+      );
+    }
+    
     if (patch.status !== undefined) {
       if (!ESCROW_STATUSES.includes(patch.status)) {
         throw new BadRequestException(`Invalid escrow status: ${String(patch.status)}`);
@@ -297,6 +318,8 @@ export class EscrowService implements OnModuleInit {
       escrow.status = patch.status;
     }
     if (patch.amountXLM !== undefined) escrow.amountXLM = patch.amountXLM;
+    
+    // Version is auto-incremented by persist()
     await this.persist(escrow);
     return escrow;
   }
@@ -453,6 +476,9 @@ export class EscrowService implements OnModuleInit {
 
   /** Writes an escrow's current field values without touching any index (its id/depositor never change). */
   private async persist(escrow: Escrow, eventType?: string): Promise<void> {
+    // Auto-increment version for optimistic locking on every write
+    escrow.version = (escrow.version ?? 0) + 1;
+    
     const event = eventType
       ? this.outbox?.create(eventType, 'escrow', escrow.id, escrow)
       : undefined;

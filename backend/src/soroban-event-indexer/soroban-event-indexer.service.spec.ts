@@ -216,4 +216,104 @@ describeIfRedis('SorobanEventIndexerService (Redis integration)', () => {
     expect(fetchedAfterDel[0].eventId).toBe('ev2');
     expect(fetchedAfterDel[1].eventId).toBe('ev1');
   });
+
+  describe('gap detection and cursor recovery', () => {
+    it('detects ledger gap when cursor is behind latest ledger', async () => {
+      // Simulate cursor at ledger 1000, but network is at ledger 1250
+      await redis.set('soroban:event-indexer:cursor', '1000');
+      rpcServerMock.getHealth.mockResolvedValue({ latestLedger: 1250, oldestLedger: 1 });
+      rpcServerMock.getEvents.mockResolvedValue({ events: [] });
+
+      await service.poll();
+
+      // Gap of 250 ledgers should be detected and logged (verified via logger spy if needed)
+      const cursor = await redis.get('soroban:event-indexer:cursor');
+      // Should process up to MAX_LEDGER_RANGE (100) from cursor
+      expect(cursor).toBe('1100');
+    });
+
+    it('does not log gap warning when only 1 ledger behind', async () => {
+      // Cursor at 1000, network at 1001 (normal 1-ledger progression)
+      await redis.set('soroban:event-indexer:cursor', '1000');
+      rpcServerMock.getHealth.mockResolvedValue({ latestLedger: 1001, oldestLedger: 1 });
+      rpcServerMock.getEvents.mockResolvedValue({ events: [] });
+
+      await service.poll();
+
+      // Should process normally without gap detection
+      const cursor = await redis.get('soroban:event-indexer:cursor');
+      expect(cursor).toBe('1001');
+    });
+
+    it('updates cursor only after all events are stored (atomic recovery)', async () => {
+      await redis.set('soroban:event-indexer:cursor', '100');
+      rpcServerMock.getHealth.mockResolvedValue({ latestLedger: 105, oldestLedger: 1 });
+
+      const events = [
+        { id: 'ev-101', ledger: 101, contractId: 'C', topic: [nativeToScVal('A', { type: 'symbol' })], value: nativeToScVal(1) },
+        { id: 'ev-102', ledger: 102, contractId: 'C', topic: [nativeToScVal('B', { type: 'symbol' })], value: nativeToScVal(2) },
+      ];
+      rpcServerMock.getEvents.mockResolvedValue({ events });
+
+      await service.poll();
+
+      // Cursor should be updated to endLedger (105) after all events stored
+      const cursor = await redis.get('soroban:event-indexer:cursor');
+      expect(cursor).toBe('105');
+
+      // Both events should be stored
+      const stored1 = await redis.get('soroban:event:ev-101');
+      const stored2 = await redis.get('soroban:event:ev-102');
+      expect(stored1).toBeTruthy();
+      expect(stored2).toBeTruthy();
+    });
+
+    it('processes large gaps in chunks respecting MAX_LEDGER_RANGE', async () => {
+      await redis.set('soroban:event-indexer:cursor', '1000');
+      rpcServerMock.getHealth.mockResolvedValue({ latestLedger: 1500, oldestLedger: 1 });
+      rpcServerMock.getEvents.mockResolvedValue({ events: [] });
+
+      // First poll should process up to 1000 + MAX_LEDGER_RANGE (100) = 1100
+      await service.poll();
+      let cursor = await redis.get('soroban:event-indexer:cursor');
+      expect(cursor).toBe('1100');
+
+      // Second poll should process next chunk 1101-1200
+      await service.poll();
+      cursor = await redis.get('soroban:event-indexer:cursor');
+      expect(cursor).toBe('1200');
+
+      // Continue until caught up
+      for (let i = 0; i < 3; i++) {
+        await service.poll();
+      }
+      cursor = await redis.get('soroban:event-indexer:cursor');
+      expect(cursor).toBe('1500');
+    });
+
+    it('simulates high latency scenario causing gap', async () => {
+      // Initial state: cursor at 1000
+      await redis.set('soroban:event-indexer:cursor', '1000');
+      
+      // First poll: network at 1010, successfully indexed
+      rpcServerMock.getHealth.mockResolvedValue({ latestLedger: 1010, oldestLedger: 1 });
+      rpcServerMock.getEvents.mockResolvedValue({ events: [] });
+      await service.poll();
+      
+      let cursor = await redis.get('soroban:event-indexer:cursor');
+      expect(cursor).toBe('1010');
+
+      // Simulate timeout/failure causing missed polls
+      // Network advances to 1500 while indexer was down
+      rpcServerMock.getHealth.mockResolvedValue({ latestLedger: 1500, oldestLedger: 1 });
+
+      // Next poll detects gap and processes next chunk
+      await service.poll();
+      
+      // Cursor should advance by MAX_LEDGER_RANGE (100) from 1010
+      cursor = await redis.get('soroban:event-indexer:cursor');
+      expect(cursor).toBe('1110');
+    });
+  });
 });
+

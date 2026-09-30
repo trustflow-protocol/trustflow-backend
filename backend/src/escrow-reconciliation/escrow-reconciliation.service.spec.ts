@@ -110,14 +110,18 @@ describe('EscrowReconciliationService', () => {
         contractEscrowId: 'chain-esc-1',
         repaired: true,
       });
-      expect(escrowService.applyChainState).toHaveBeenCalledWith(escrow.id, {
-        status: 'released',
-        amountXLM: '100',
-      });
+      expect(escrowService.applyChainState).toHaveBeenCalledWith(
+        escrow.id,
+        {
+          status: 'released',
+          amountXLM: '100',
+        },
+        escrow.version, // expected version for optimistic locking
+      );
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         RECONCILIATION_EVENTS.DRIFT_DETECTED,
         expect.objectContaining({ driftCount: 1 }),
-      );
+      });
     });
   });
 
@@ -328,6 +332,89 @@ describe('EscrowReconciliationService', () => {
         message: 'network',
       });
       expect(run.checked).toBe(1);
+    });
+  });
+
+  describe('concurrent modification protection', () => {
+    it('passes expected version to applyChainState for optimistic locking', async () => {
+      const escrow = makeEscrow({ status: 'active', amountXLM: '1000', version: 5 });
+      escrowService.findAll.mockResolvedValue([escrow]);
+      chainClient.getEscrow.mockResolvedValue(
+        makeChainRecord({ status: 'released', amountXLM: '800' }),
+      );
+      escrowService.applyChainState.mockResolvedValue({ ...escrow, version: 6 });
+
+      const run = await service.reconcile();
+
+      expect(run.driftCount).toBe(2); // status + amount
+      expect(escrowService.applyChainState).toHaveBeenCalledWith(
+        'esc-1',
+        { status: 'released', amountXLM: '800' },
+        5, // expected version captured at read time
+      );
+    });
+
+    it('records repair failure when concurrent update causes version conflict', async () => {
+      const escrow = makeEscrow({ status: 'active', amountXLM: '1000', version: 5 });
+      escrowService.findAll.mockResolvedValue([escrow]);
+      chainClient.getEscrow.mockResolvedValue(
+        makeChainRecord({ status: 'released', amountXLM: '800' }),
+      );
+
+      // Simulate another process updating the escrow between detection and repair
+      const conflictError = new Error(
+        'Escrow version mismatch: expected 5, found 6. The escrow was modified concurrently'
+      );
+      conflictError.name = 'ConflictException';
+      escrowService.applyChainState.mockRejectedValue(conflictError);
+
+      const run = await service.reconcile();
+
+      expect(run.driftCount).toBe(2);
+      expect(run.repairedCount).toBe(0);
+      expect(run.drifts[0].repaired).toBe(false);
+      expect(run.drifts[0].repairError).toContain('version mismatch');
+      expect(run.drifts[1].repaired).toBe(false);
+      expect(run.drifts[1].repairError).toContain('version mismatch');
+    });
+
+    it('prevents double-deduction when reconciliation races with milestone release', async () => {
+      // Scenario: Reconciler reads escrow (1000 XLM, version 3), then a milestone release
+      // deducts 200 XLM and increments version to 4, then reconciler tries to apply
+      // stale chain state (800 XLM) with expectedVersion=3 → should fail
+      const escrowBeforeRelease = makeEscrow({
+        status: 'active',
+        amountXLM: '1000',
+        version: 3,
+      });
+      
+      escrowService.findAll.mockResolvedValue([escrowBeforeRelease]);
+      
+      // Chain read happens during release, sees intermediate state
+      chainClient.getEscrow.mockResolvedValue(makeChainRecord({ amountXLM: '800' }));
+      
+      // By the time reconciler tries to write, release has completed and version is 4
+      const conflictError = new Error('Escrow version mismatch: expected 3, found 4');
+      conflictError.name = 'ConflictException';
+      escrowService.applyChainState.mockRejectedValue(conflictError);
+
+      const run = await service.reconcile();
+
+      // Drift was detected but repair failed due to version conflict
+      expect(run.driftCount).toBe(1);
+      expect(run.repairedCount).toBe(0);
+      expect(run.drifts[0]).toMatchObject({
+        driftType: DriftType.AMOUNT_MISMATCH,
+        repaired: false,
+      });
+      expect(run.drifts[0].repairError).toContain('version mismatch');
+      
+      // Critical: The stale 800 XLM was NOT written, preventing double-deduction
+      expect(escrowService.applyChainState).toHaveBeenCalledWith(
+        escrowBeforeRelease.id,
+        expect.objectContaining({ amountXLM: '800' }),
+        3, // stale version
+      );
     });
   });
 });

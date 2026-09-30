@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { Escrow, EscrowService } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { mapWithConcurrency } from '../common/concurrency';
+import { amountsEqual } from '../common/amount';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { EscrowReconciliationStateStore } from './escrow-reconciliation-state.store';
 import {
@@ -161,7 +162,8 @@ export class EscrowReconciliationService {
       }
 
       if (fieldDrifts.length > 0) {
-        await this.repair(fieldDrifts, escrow.id, chainEscrow.record);
+        // Pass the version we saw when detecting drift for optimistic locking
+        await this.repair(fieldDrifts, escrow.id, chainEscrow.record, escrow.version);
         drifts.push(...fieldDrifts);
       }
     }
@@ -252,12 +254,17 @@ export class EscrowReconciliationService {
     fieldDrifts: DriftRecord[],
     escrowId: string,
     chainEscrow: ChainEscrowRecord,
+    expectedVersion?: number,
   ): Promise<void> {
     try {
-      await this.escrowService.applyChainState(escrowId, {
-        status: chainEscrow.status,
-        amountXLM: chainEscrow.amountXLM,
-      });
+      await this.escrowService.applyChainState(
+        escrowId,
+        {
+          status: chainEscrow.status,
+          amountXLM: chainEscrow.amountXLM,
+        },
+        expectedVersion,
+      );
       for (const drift of fieldDrifts) drift.repaired = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
