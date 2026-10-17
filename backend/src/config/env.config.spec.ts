@@ -250,4 +250,56 @@ describe('Environment Configuration', () => {
     // The validation should accept MAINNET, but stellar.config.ts normalizes it to PUBLIC
     expect(config.STELLAR_NETWORK).toBe('MAINNET');
   });
+
+  it('defaults DB_RETRY_ATTEMPTS to 5 and DB_RETRY_BACKOFF_MS to 1000 and coerces valid overrides', () => {
+    process.env = {
+      JWT_SECRET: 'test-secret-at-least-16-chars',
+    };
+    const { validateEnv: validateDefault, resetEnvConfig } =
+      jest.requireActual<typeof import('./env.config')>('./env.config');
+    const defaults = validateDefault();
+    expect(defaults.DB_RETRY_ATTEMPTS).toBe(5);
+    expect(defaults.DB_RETRY_BACKOFF_MS).toBe(1000);
+
+    resetEnvConfig();
+    process.env = {
+      JWT_SECRET: 'test-secret-at-least-16-chars',
+      DB_RETRY_ATTEMPTS: '',
+      DB_RETRY_BACKOFF_MS: '   ',
+    };
+    const blanks = validateDefault();
+    expect(blanks.DB_RETRY_ATTEMPTS).toBe(5);
+    expect(blanks.DB_RETRY_BACKOFF_MS).toBe(1000);
+
+    resetEnvConfig();
+    process.env = {
+      JWT_SECRET: 'test-secret-at-least-16-chars',
+      DB_RETRY_ATTEMPTS: '3',
+      DB_RETRY_BACKOFF_MS: '250',
+    };
+    const custom = validateDefault();
+    expect(custom.DB_RETRY_ATTEMPTS).toBe(3);
+    expect(custom.DB_RETRY_BACKOFF_MS).toBe(250);
+  });
+
+  it('rejects malformed or non-positive DB_RETRY_ATTEMPTS and DB_RETRY_BACKOFF_MS', () => {
+    const { validateEnv: freshValidateEnv, resetEnvConfig } =
+      jest.requireActual<typeof import('./env.config')>('./env.config');
+
+    for (const bad of ['abc', '0', '-2', '1.5']) {
+      resetEnvConfig();
+      process.env = {
+        JWT_SECRET: 'test-secret-at-least-16-chars',
+        DB_RETRY_ATTEMPTS: bad,
+      };
+      expect(() => freshValidateEnv()).toThrow('DB_RETRY_ATTEMPTS');
+
+      resetEnvConfig();
+      process.env = {
+        JWT_SECRET: 'test-secret-at-least-16-chars',
+        DB_RETRY_BACKOFF_MS: bad,
+      };
+      expect(() => freshValidateEnv()).toThrow('DB_RETRY_BACKOFF_MS');
+    }
+  });
 });
