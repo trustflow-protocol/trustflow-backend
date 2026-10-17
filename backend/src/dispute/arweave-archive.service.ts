@@ -5,7 +5,7 @@ import { config } from '../config/env.config';
 import { MetricsService } from '../monitoring/metrics.service';
 import { WebhookService } from '../webhook/webhook.service';
 
-const MAX_JSON_SIZE = 256 * 1024; // 256 KB per Arweave bundle chunk recommendation
+const MAX_JSON_BYTES = 256 * 1024; // 256 KiB per Arweave bundle chunk recommendation
 
 /** Abstraction for Arweave upload to allow mocking in tests */
 export interface ArweaveUploader {
@@ -32,12 +32,16 @@ export class ArweaveArchiveService implements OnModuleInit {
     // Check if Arweave is configured at module init
     const arweaveJwt = config.ARWEAVE_JWT;
     if (arweaveJwt) {
-      this.logger.log('Arweave archive service enabled — will upload dispute evidence on saga completion');
+      this.logger.log(
+        'Arweave archive service enabled — will upload dispute evidence on saga completion',
+      );
       // In a full implementation, we would initialize the arweave library here
       // with the wallet key. For now, we set up a lightweight uploader.
       this.uploader = this.createUploader(arweaveJwt);
     } else {
-      this.logger.log('Arweave archive service running in simulated mode (no ARWEAVE_JWT configured)');
+      this.logger.log(
+        'Arweave archive service running in simulated mode (no ARWEAVE_JWT configured)',
+      );
     }
   }
 
@@ -71,13 +75,16 @@ export class ArweaveArchiveService implements OnModuleInit {
     if (!this.uploader) {
       // Simulated mode: no actual upload, but we still compute the archive hash
       this.metrics?.increment('arweave_archive_simulated_total', { result: 'success' });
-      this.logger.log(`Arweave archive simulated for saga ${saga.sagaId} — no credentials configured`);
+      this.logger.log(
+        `Arweave archive simulated for saga ${saga.sagaId} — no credentials configured`,
+      );
       return undefined;
     }
 
     try {
       const archiveData = this.buildArchiveData(saga);
       const jsonString = JSON.stringify(archiveData);
+      const jsonBytes = Buffer.byteLength(jsonString, 'utf8');
       const tags: [string, string][] = [
         ['App-Name', 'TrustFlow'],
         ['Content-Type', 'application/json'],
@@ -88,8 +95,10 @@ export class ArweaveArchiveService implements OnModuleInit {
         ['Step', saga.currentStep],
       ];
 
-      if (jsonString.length > MAX_JSON_SIZE) {
-        this.logger.warn(`Archive data exceeds ${MAX_JSON_SIZE / 1024}KB, truncating for Arweave bundle`);
+      if (jsonBytes > MAX_JSON_BYTES) {
+        this.logger.warn(
+          `Archive data is ${jsonBytes} bytes, above the recommended ${MAX_JSON_BYTES / 1024} KiB Arweave bundle chunk size; passing the full payload to the uploader without truncation`,
+        );
       }
 
       const txId = await this.uploader.upload(jsonString, tags);
