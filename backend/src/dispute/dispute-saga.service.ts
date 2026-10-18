@@ -521,6 +521,9 @@ export class DisputeSagaService implements OnModuleInit {
       if (unique.length < 3) {
         throw new BadRequestException('At least 3 distinct juror addresses are required');
       }
+      if (unique.length % 2 === 0) {
+        throw new BadRequestException('Juror count must be odd to prevent vote ties');
+      }
 
       // Prevent escrow parties from being assigned as jurors to avoid conflicts of interest
       const escrow = await this.escrowService.findById(saga.escrowId);

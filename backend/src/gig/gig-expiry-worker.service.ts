@@ -5,8 +5,11 @@ import { DEFAULT_GIG_EXPIRY_SWEEP_INTERVAL_MS } from './gig.entity';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
 import { mapWithConcurrency, countRejected } from '../common/concurrency';
 import { config } from '../config/env.config';
+import { MetricsService } from '../monitoring/metrics.service';
+import { SentryService } from '../sentry/sentry.service';
 
 const LOCK_KEY = 'lock:gig-expiry-sweep';
+const LOCK_RENEWAL_INTERVAL_MS = 10_000;
 
 /**
  * Periodically sweeps the DB for open gig solicitations whose response deadline has

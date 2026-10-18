@@ -14,6 +14,7 @@ import { GigService } from '../gig/gig.service';
 import { GigStatus } from '../gig/gig.entity';
 import { UploadDeliverableDto } from './deliverable.dto';
 import { Deliverable, DeliverableStatus } from './deliverable.entity';
+import { PinStatus } from '../ipfs-pinning/ipfs-pinning.types';
 
 const DELIVERABLE_KEY_PREFIX = 'deliverable:';
 const DELIVERABLES_BY_GIG_PREFIX = 'deliverables:gig:';
@@ -49,6 +50,7 @@ export class DeliverableService {
       filename: dto.filename,
     });
 
+    const deliverableStatus = this.mapPinStatusToDeliverableStatus(pinResult.status);
     const deliverable: Deliverable = {
       id,
       gigId: dto.gigId,
@@ -56,7 +58,7 @@ export class DeliverableService {
       cid: pinResult.cid,
       filename: dto.filename,
       size: pinResult.size,
-      status: DeliverableStatus.PINNED,
+      status: deliverableStatus,
       createdAt: now,
       updatedAt: now,
     };
@@ -180,5 +182,18 @@ export class DeliverableService {
 
   private gigKey(gigId: string): string {
     return `${DELIVERABLES_BY_GIG_PREFIX}${gigId}`;
+  }
+
+  private mapPinStatusToDeliverableStatus(pinStatus: PinStatus): DeliverableStatus {
+    switch (pinStatus) {
+      case PinStatus.HEALTHY:
+        return DeliverableStatus.PINNED;
+      case PinStatus.DEGRADED:
+        return DeliverableStatus.PENDING;
+      case PinStatus.FAILED:
+        return DeliverableStatus.FAILED;
+      default:
+        return DeliverableStatus.FAILED;
+    }
   }
 }

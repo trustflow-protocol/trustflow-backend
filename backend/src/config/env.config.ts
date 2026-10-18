@@ -438,10 +438,10 @@ const EnvSchema = z
     if (isProduction) {
       if (!secret || secret.trim() === '') {
         issue('JWT_SECRET', 'JWT_SECRET is required in production');
-      } else if (secret.length < 32) {
-        issue('JWT_SECRET', 'JWT_SECRET must be at least 32 characters in production');
       } else if (PLACEHOLDER_JWT_SECRETS.has(secret.trim().toLowerCase())) {
         issue('JWT_SECRET', 'JWT_SECRET must not be a placeholder value in production');
+      } else if (secret.length < 32) {
+        issue('JWT_SECRET', 'JWT_SECRET must be at least 32 characters in production');
       }
     } else {
       // Development/test: if a value is explicitly provided it must still meet minimum length
