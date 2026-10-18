@@ -72,8 +72,8 @@ const EnvSchema = z
 
     // Stellar Network Configuration
     STELLAR_NETWORK: z.enum(['TESTNET', 'PUBLIC', 'MAINNET']).default('TESTNET'),
-    STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
-    SOROBAN_RPC_URL: z.string().url().default('https://soroban-testnet.stellar.org'),
+    STELLAR_HORIZON_URL: z.string().url().optional(),
+    SOROBAN_RPC_URL: z.string().url().optional(),
     TRUSTFLOW_CONTRACT_ID: z
       .string()
       .regex(/^C[A-Z2-7]{55}$/, 'TRUSTFLOW_CONTRACT_ID must be a valid Stellar contract address')
@@ -426,17 +426,43 @@ const EnvSchema = z
       issue('JWT_SECRET_PREVIOUS', 'JWT_SECRET_PREVIOUS must differ from JWT_SECRET');
     }
 
+    // Apply network-appropriate defaults for Stellar RPC URLs if not explicitly provided
+    if (!data.STELLAR_HORIZON_URL) {
+      data.STELLAR_HORIZON_URL = isPublicNetwork
+        ? 'https://horizon.stellar.org'
+        : 'https://horizon-testnet.stellar.org';
+    }
+    if (!data.SOROBAN_RPC_URL) {
+      data.SOROBAN_RPC_URL = isPublicNetwork
+        ? 'https://soroban-mainnet.stellar.org'
+        : 'https://soroban-testnet.stellar.org';
+    }
+
+    // Validate that URLs match the selected network after defaults are applied
     if (isPublicNetwork) {
-      if (!data.STELLAR_HORIZON_URL || /testnet/i.test(data.STELLAR_HORIZON_URL)) {
+      if (/testnet/i.test(data.STELLAR_HORIZON_URL)) {
         issue(
           'STELLAR_HORIZON_URL',
           'STELLAR_HORIZON_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
         );
       }
-      if (!data.SOROBAN_RPC_URL || /testnet/i.test(data.SOROBAN_RPC_URL)) {
+      if (/testnet/i.test(data.SOROBAN_RPC_URL)) {
         issue(
           'SOROBAN_RPC_URL',
           'SOROBAN_RPC_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
+        );
+      }
+    } else {
+      if (/mainnet|public/i.test(data.STELLAR_HORIZON_URL)) {
+        issue(
+          'STELLAR_HORIZON_URL',
+          'STELLAR_HORIZON_URL must point to the TESTNET when STELLAR_NETWORK is TESTNET',
+        );
+      }
+      if (/mainnet|public/i.test(data.SOROBAN_RPC_URL)) {
+        issue(
+          'SOROBAN_RPC_URL',
+          'SOROBAN_RPC_URL must point to the TESTNET when STELLAR_NETWORK is TESTNET',
         );
       }
     }
