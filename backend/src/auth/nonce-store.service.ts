@@ -67,27 +67,47 @@ export class NonceStoreService {
     }
   }
 
-  async store(address: string, challenge: string, _nonce: string): Promise<void> {
+  /**
+   * Stores `challenge` as the pending challenge for `address` and returns the challenge the
+   * caller should sign. A live challenge is never replaced (#369): `/auth/challenge` is
+   * unauthenticated, so replacing on every request let anyone cancel another wallet's
+   * in-flight login by asking for a fresh challenge. Instead the existing, still-valid
+   * challenge is returned — it is not secret, only the wallet's key can sign it.
+   */
+  async store(address: string, challenge: string, _nonce: string): Promise<string> {
     const key = this.challengeKey(address);
 
     if (this.redis) {
       try {
         const result = await this.redis.set(key, challenge, 'EX', NONCE_TTL_SECONDS, 'NX');
-        if (!result) {
-          this.logger.warn(`Challenge already exists for ${this.maskAddress(address)}, replacing`);
-          await this.redis.set(key, challenge, 'EX', NONCE_TTL_SECONDS);
+        if (result) return challenge;
+
+        const existing = await this.redis.get(key);
+        if (existing) {
+          this.logger.debug(
+            `Live challenge already pending for ${this.maskAddress(address)}, reusing it`,
+          );
+          return existing;
         }
-        return;
+        // Expired between the SET NX and the GET — claim the slot again.
+        const retry = await this.redis.set(key, challenge, 'EX', NONCE_TTL_SECONDS, 'NX');
+        return retry ? challenge : ((await this.redis.get(key)) ?? challenge);
       } catch (err) {
         this.logger.warn('Redis unavailable for nonce store, falling back to memory');
       }
+    }
+
+    this.cleanupExpiredEntries();
+    const existing = this.inMemoryChallenges.get(key);
+    if (existing && Date.now() <= existing.expiresAt) {
+      return existing.challenge;
     }
 
     this.inMemoryChallenges.set(key, {
       challenge,
       expiresAt: Date.now() + NONCE_TTL_SECONDS * 1000,
     });
-    this.cleanupExpiredEntries();
+    return challenge;
   }
 
   async consume(address: string): Promise<string | null> {

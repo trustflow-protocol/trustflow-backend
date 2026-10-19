@@ -1,0 +1,37 @@
+# Coverage status checks for backend PRs (#397). Jest's coverageThreshold in
+# backend/package.json is the hard gate; these checks surface trend and PR delta.
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "40...80"
+  status:
+    project:
+      backend:
+        flags: [backend]
+        target: auto        # compare against the base commit
+        threshold: 1%       # allow 1% noise before failing
+    patch:
+      backend:
+        flags: [backend]
+        target: 70%         # new/changed lines must be reasonably covered
+        threshold: 5%
+
+flags:
+  backend:
+    paths:
+      - backend/src/
+    carryforward: true
+
+comment:
+  layout: "diff, flags, files"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "backend/src/**/*.spec.ts"
+  - "backend/src/**/*-spec.ts"
+  - "backend/src/**/*.module.ts"
+  - "backend/src/**/index.ts"

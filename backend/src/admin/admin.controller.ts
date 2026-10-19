@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from './admin.guard';
@@ -41,10 +41,15 @@ export class AdminController {
   @Get('escrows')
   @ApiOperation({ summary: 'Escrow analytics: totals and status breakdown' })
   @ApiResponse({ status: 200, type: EscrowAnalyticsDto })
+  @ApiResponse({ status: 400, description: 'Invalid limit parameter' })
   @ApiResponse({ status: 401, description: 'Missing or invalid JWT' })
   @ApiResponse({ status: 403, description: 'Caller is authenticated but not an admin address' })
-  getEscrowAnalytics(@Query('limit') limit = 50, @Query('cursor') cursor?: string) {
-    return this.adminService.getEscrowAnalytics(limit, cursor);
+  getEscrowAnalytics(@Query('limit') limit?: string | number, @Query('cursor') cursor?: string) {
+    const parsedLimit = limit !== undefined ? parseInt(String(limit), 10) : 50;
+    if (isNaN(parsedLimit) || parsedLimit <= 0) {
+      throw new BadRequestException('limit must be a positive integer');
+    }
+    return this.adminService.getEscrowAnalytics(parsedLimit, cursor);
   }
 
   @Get('gigs')

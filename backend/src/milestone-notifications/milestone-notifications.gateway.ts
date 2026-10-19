@@ -15,6 +15,16 @@ import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { OUTBOX_GATEWAY_CHANNEL } from '../outbox/outbox-publisher.service';
 import { OutboxEvent } from '../outbox/outbox.types';
 import { EventDedupService } from './event-dedup.service';
+import { config } from '../config/env.config';
+
+/** Gig ids are `gig-<ts>-<rand>` today; accept any short id of safe characters (#393). */
+const GIG_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const ROOM_PREFIX = 'gig:';
+
+export interface SubscriptionAck {
+  event: 'subscribed' | 'unsubscribed' | 'error';
+  data: { gigId?: string; error?: string };
+}
 
 export interface ClientEventPayload {
   v: number;
@@ -22,6 +32,12 @@ export interface ClientEventPayload {
   data: unknown;
 }
 
+/*
+ * Handshake auth (#393): subscriptions stay unauthenticated for now — the events carry gig
+ * status already visible over the public REST API. Abuse is bounded instead by payload
+ * validation and the per-socket room cap (WS_MAX_ROOMS_PER_CLIENT). If private payloads
+ * are ever broadcast, add an AuthService.validateToken check in handleConnection.
+ */
 @WebSocketGateway({ cors: { origin: '*' } })
 export class MilestoneNotificationsGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy
@@ -189,21 +205,82 @@ export class MilestoneNotificationsGateway
     this.logger.log(`Client connected: ${client.id} (${this.clients.size} total)`);
   }
 
-  handleDisconnect(client: Socket) {
+  handleDisconnect(client: Socket, reason?: string) {
+    // Socket.IO removes a disconnected socket from all its rooms itself; this only tracks
+    // the connection count for observability (#393).
     this.clients.delete(client.id);
-    this.logger.log(`Client disconnected: ${client.id} (${this.clients.size} remaining)`);
+    this.logger.log(
+      `Client disconnected: ${client.id} (reason=${reason ?? 'unknown'}, ${this.clients.size} remaining)`,
+    );
+  }
+
+  /** Current connection and gig-room counts, for logs/metrics and the gateway spec. */
+  getStats(): { connections: number; rooms: number } {
+    const rooms = this.server?.sockets?.adapter?.rooms;
+    let gigRooms = 0;
+    if (rooms) {
+      for (const name of rooms.keys()) {
+        if (name.startsWith(ROOM_PREFIX)) gigRooms++;
+      }
+    }
+    return { connections: this.clients.size, rooms: gigRooms };
   }
 
   @SubscribeMessage('subscribe:gig')
-  handleSubscribeGig(@ConnectedSocket() client: Socket, @MessageBody() data: { gigId: string }) {
-    void client.join(`gig:${data.gigId}`);
-    return { event: 'subscribed', data: { gigId: data.gigId } };
+  handleSubscribeGig(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: unknown,
+  ): SubscriptionAck {
+    const gigId = this.parseGigId(data);
+    if (!gigId) return this.errorAck('invalid gigId');
+
+    const room = `${ROOM_PREFIX}${gigId}`;
+    const joined = this.gigRoomCount(client);
+    const alreadyJoined = client.rooms?.has?.(room) ?? false;
+    if (!alreadyJoined && joined >= config.WS_MAX_ROOMS_PER_CLIENT) {
+      this.logger.warn(
+        `Client ${client.id} hit the room cap (${config.WS_MAX_ROOMS_PER_CLIENT}); rejecting ${room}`,
+      );
+      return this.errorAck('room limit reached', gigId);
+    }
+
+    void client.join(room);
+    const stats = this.getStats();
+    this.logger.debug(
+      `Client ${client.id} joined ${room} (connections=${stats.connections}, rooms=${stats.rooms})`,
+    );
+    return { event: 'subscribed', data: { gigId } };
   }
 
   @SubscribeMessage('unsubscribe:gig')
-  handleUnsubscribeGig(@ConnectedSocket() client: Socket, @MessageBody() data: { gigId: string }) {
-    void client.leave(`gig:${data.gigId}`);
-    return { event: 'unsubscribed', data: { gigId: data.gigId } };
+  handleUnsubscribeGig(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: unknown,
+  ): SubscriptionAck {
+    const gigId = this.parseGigId(data);
+    if (!gigId) return this.errorAck('invalid gigId');
+
+    void client.leave(`${ROOM_PREFIX}${gigId}`);
+    return { event: 'unsubscribed', data: { gigId } };
+  }
+
+  /** Returns a valid gig id from an untrusted payload, or null — never throws. */
+  private parseGigId(data: unknown): string | null {
+    if (typeof data !== 'object' || data === null) return null;
+    const gigId = (data as { gigId?: unknown }).gigId;
+    return typeof gigId === 'string' && GIG_ID_PATTERN.test(gigId) ? gigId : null;
+  }
+
+  private gigRoomCount(client: Socket): number {
+    let count = 0;
+    for (const room of client.rooms ?? []) {
+      if (room.startsWith(ROOM_PREFIX)) count++;
+    }
+    return count;
+  }
+
+  private errorAck(error: string, gigId?: string): SubscriptionAck {
+    return { event: 'error', data: gigId ? { gigId, error } : { error } };
   }
 
   emitMilestoneUpdate(gigId: string, type: string, data: unknown) {

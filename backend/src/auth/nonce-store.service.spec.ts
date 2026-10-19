@@ -66,18 +66,32 @@ describe('NonceStoreService', () => {
         expect(await service.isNonceReplay(TEST_NONCE)).toBe(false);
       });
 
-      it('should replace existing challenge if NX fails', async () => {
-        mockRedis.set.mockResolvedValueOnce(null).mockResolvedValueOnce('OK');
+      // #369: a live challenge must not be replaced, or anyone could cancel another
+      // wallet's pending login by requesting a new challenge for its address.
+      it('should keep and return the existing live challenge if NX fails', async () => {
+        mockRedis.set.mockResolvedValueOnce(null);
+        mockRedis.get.mockResolvedValueOnce(TEST_CHALLENGE);
 
-        await service.store(TEST_ADDRESS, TEST_CHALLENGE, TEST_NONCE);
+        const active = await service.store(TEST_ADDRESS, 'attacker challenge', 'other-nonce');
 
-        expect(mockRedis.set).toHaveBeenCalledTimes(2);
-        expect(mockRedis.set).toHaveBeenCalledWith(
+        expect(active).toBe(TEST_CHALLENGE);
+        expect(mockRedis.set).toHaveBeenCalledTimes(1);
+        expect(mockRedis.set).not.toHaveBeenCalledWith(
           `auth:nonce:${TEST_ADDRESS}`,
-          TEST_CHALLENGE,
+          'attacker challenge',
           'EX',
           60,
         );
+      });
+
+      it('should claim the slot again if the existing challenge expired in between', async () => {
+        mockRedis.set.mockResolvedValueOnce(null).mockResolvedValueOnce('OK');
+        mockRedis.get.mockResolvedValueOnce(null);
+
+        const active = await service.store(TEST_ADDRESS, TEST_CHALLENGE, TEST_NONCE);
+
+        expect(active).toBe(TEST_CHALLENGE);
+        expect(mockRedis.set).toHaveBeenCalledTimes(2);
       });
 
       it('should fallback to memory when Redis fails', async () => {
@@ -264,6 +278,18 @@ describe('NonceStoreService', () => {
 
       const result = await memoryService.consume(TEST_ADDRESS);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('pending-challenge protection without Redis (#369)', () => {
+    it('does not let a second request replace a live challenge', async () => {
+      const memoryService = new NonceStoreService(null);
+      const first = await memoryService.store(TEST_ADDRESS, TEST_CHALLENGE, TEST_NONCE);
+      const second = await memoryService.store(TEST_ADDRESS, 'attacker challenge', 'n2');
+
+      expect(first).toBe(TEST_CHALLENGE);
+      expect(second).toBe(TEST_CHALLENGE);
+      expect(await memoryService.consume(TEST_ADDRESS)).toBe(TEST_CHALLENGE);
     });
   });
 });

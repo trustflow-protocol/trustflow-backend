@@ -2,10 +2,13 @@ import { Controller, Post, Body, Get, Query, HttpCode, HttpStatus, UnauthorizedE
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { VerifyDto } from './dto/verify.dto';
+import { ChallengeDto } from './dto/challenge.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { ChallengeResponseDto } from './dto/challenge-response.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
-import { RateLimitOnRedisError } from '../common/rate-limit/rate-limit.decorator';
+import { RateLimit, RateLimitOnRedisError } from '../common/rate-limit/rate-limit.decorator';
+import { config } from '../config/env.config';
+import { ValidationErrorResponseDto } from '../common/validation/validation-error.dto';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -16,6 +19,11 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Get('challenge')
+  // Stricter than the global default (#369). Thunks so the env is read per request.
+  @RateLimit(
+    () => config.AUTH_CHALLENGE_RATE_LIMIT_POINTS,
+    () => config.AUTH_CHALLENGE_RATE_LIMIT_DURATION,
+  )
   @ApiOperation({
     summary: 'Get authentication challenge',
     description:
@@ -36,15 +44,20 @@ export class AuthController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid Stellar address format',
+    description: 'Missing or invalid Stellar address',
+    type: ValidationErrorResponseDto,
   })
-  async getChallenge(@Query('address') address: string): Promise<ChallengeResponseDto> {
-    if (!address) throw new Error('address required');
-    return { challenge: await this.authService.generateChallenge(address) };
+  @ApiResponse({ status: 429, description: 'Too many challenge requests (see Retry-After)' })
+  async getChallenge(@Query() query: ChallengeDto): Promise<ChallengeResponseDto> {
+    return { challenge: await this.authService.generateChallenge(query.address) };
   }
 
   @Post('verify')
   @HttpCode(HttpStatus.OK)
+  @RateLimit(
+    () => config.AUTH_VERIFY_RATE_LIMIT_POINTS,
+    () => config.AUTH_VERIFY_RATE_LIMIT_DURATION,
+  )
   @ApiOperation({
     summary: 'Verify wallet signature',
     description:
@@ -66,9 +79,11 @@ export class AuthController {
     status: 401,
     description: 'Invalid signature, expired challenge, or replay attempt blocked',
   })
+  @ApiResponse({ status: 400, description: 'Invalid request body', type: ValidationErrorResponseDto })
+  @ApiResponse({ status: 429, description: 'Too many verification attempts (see Retry-After)' })
   async verify(@Body() verifyDto: VerifyDto): Promise<TokenResponseDto> {
     const valid = await this.authService.verifySignature(verifyDto.address, verifyDto.signature);
-    if (!valid) throw new Error('Invalid signature');
+    if (!valid) throw new UnauthorizedException('Invalid signature');
     const refreshToken = await this.authService.generateRefreshToken(verifyDto.address);
     return {
       token: this.authService.generateToken(verifyDto.address, 3600),

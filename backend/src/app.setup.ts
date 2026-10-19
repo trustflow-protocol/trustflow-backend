@@ -11,6 +11,7 @@ import { MetricsHttpInterceptor } from './monitoring/metrics-http.interceptor';
 import { RequestTimeoutInterceptor } from './common/http/request-timeout.interceptor';
 import { CorrelationIdStore } from './common/logging/correlation-id.store';
 import { config } from './config/env.config';
+import { classValidatorExceptionFactory } from './common/validation/validation-error';
 
 const logger = new SanitizedLogger('AppSetup');
 
@@ -57,6 +58,14 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
   // `security-headers.spec.ts`, which asserts the strict per-path behavior, never exercised
   // this function so the regression went unnoticed.
   app.use(createSecurityHeadersMiddleware());
+
+  // Behind a load balancer `request.ip` is the proxy's address unless Express is told to
+  // trust it, which would put every client in one rate-limit bucket. See TRUST_PROXY in
+  // env.config.ts and "Proxy / client IP" in API_DOCUMENTATION.md (#369).
+  const trustProxy = parseTrustProxy(config.TRUST_PROXY);
+  if (trustProxy !== false) {
+    (app as unknown as { set(key: string, value: unknown): void }).set('trust proxy', trustProxy);
+  }
 
   // Explicit body-size limit for JSON payloads.
   // The IPFS pin endpoint accepts base64-encoded deliverable content; 10 MB decoded
@@ -115,6 +124,8 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
       whitelist: true,
       transform: true,
       forbidNonWhitelisted: true,
+      // Same `{ statusCode, message, errors: [{ field, message }] }` shape as Zod failures (#368)
+      exceptionFactory: classValidatorExceptionFactory,
     }),
   );
 
@@ -135,6 +146,19 @@ export function configureApp(app: INestApplication, options: ConfigureAppOptions
     const indexer = app.get(SorobanEventIndexerService);
     indexer.start();
   }
+}
+
+/**
+ * Maps the TRUST_PROXY string onto Express's accepted forms: boolean, hop count, or an
+ * address list. Only trust what is actually in front of the app — `true` lets any client
+ * spoof `X-Forwarded-For` when the service is reachable directly.
+ */
+export function parseTrustProxy(value: string | undefined): boolean | number | string[] {
+  const v = (value ?? 'false').trim().toLowerCase();
+  if (v === '' || v === 'false') return false;
+  if (v === 'true') return true;
+  if (/^\d+$/.test(v)) return Number(v);
+  return v.split(',').map(part => part.trim()).filter(Boolean);
 }
 
 /**

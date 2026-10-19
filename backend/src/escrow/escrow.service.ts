@@ -22,6 +22,7 @@ import { AuditService } from '../audit/audit.service';
 import { config } from '../config/env.config';
 
 const ESCROW_KEY_PREFIX = 'escrow:';
+const MILESTONE_KEY_PREFIX = 'milestone:';
 export const ESCROWS_INDEX_KEY = 'escrows:index';
 const ESCROWS_BY_DEPOSITOR_PREFIX = 'escrows:by-depositor:';
 const ESCROWS_BY_CONTRACT_PREFIX = 'escrow:contract:';
@@ -518,6 +519,21 @@ export class EscrowService implements OnModuleInit {
     milestone.approver = signerAddress;
     milestone.approvedAt = new Date().toISOString();
 
+    if (this.redis) {
+      try {
+        const results = await this.redis
+          .multi()
+          .set(this.milestoneKey(id), JSON.stringify(milestone))
+          .exec();
+        assertTransactionApplied(results);
+        return milestone;
+      } catch (err) {
+        this.rethrowIfInconsistent('approveMilestone', id, err);
+        this.logFallback('approveMilestone', err);
+      }
+    }
+
+    this.milestones.set(id, milestone);
     return milestone;
   }
 
@@ -550,6 +566,10 @@ export class EscrowService implements OnModuleInit {
 
   private escrowKey(id: string): string {
     return `${ESCROW_KEY_PREFIX}${id}`;
+  }
+
+  private milestoneKey(id: string): string {
+    return `${MILESTONE_KEY_PREFIX}${id}`;
   }
 
   private depositorKey(address: string): string {

@@ -69,7 +69,7 @@ The TrustFlow Backend API provides off-chain services for the TrustFlow gig econ
 All non-monitoring endpoints are protected by a Redis-backed distributed token bucket so limits remain coordinated across multiple API nodes.
 
 - **Per-IP limits**: Every request consumes from a route-specific bucket keyed by client IP.
-- **Per-wallet limits**: Requests that include wallet identity consume a second route-specific bucket keyed by wallet address. Wallet identity is read from JWT user data, request body, query string, or route params.
+- **Per-wallet limits**: Requests with a verified bearer JWT consume a second route-specific bucket keyed by wallet address. Wallet identity comes only from the verified token, never from the body, query string or route params.
 - **Abuse detection**: Empty-bucket attempts are tracked in a Redis sorted set over a sliding abuse window.
 - **Lockouts**: Repeated violations create temporary Redis lockout keys and return `429 Too Many Requests` without consuming more bucket state.
 
@@ -84,10 +84,40 @@ All non-monitoring endpoints are protected by a Redis-backed distributed token b
 }
 ```
 
+A rejected request also carries `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0` and `X-RateLimit-Reset` headers. Every rejection is logged (scope, route and a masked identity) and counted in `rate_limit_rejections_total{route,scope}` on `/metrics`.
+
+### Auth route limits
+
+`GET /auth/challenge` and `POST /auth/verify` have their own per-IP limits, stricter than the global default of 100 requests / 60 s:
+
+| Route | Env vars | Default |
+| ----- | -------- | ------- |
+| `GET /auth/challenge` | `AUTH_CHALLENGE_RATE_LIMIT_POINTS` / `AUTH_CHALLENGE_RATE_LIMIT_DURATION` | 10 per 60 s |
+| `POST /auth/verify` | `AUTH_VERIFY_RATE_LIMIT_POINTS` / `AUTH_VERIFY_RATE_LIMIT_DURATION` | 10 per 60 s |
+
+**Pending-challenge protection:** an address has at most one live challenge (60 s TTL). Asking for a new challenge while one is pending returns the *same* challenge instead of replacing it, so a third party cannot cancel another wallet's in-flight login by calling `/auth/challenge?address=<victim>`. The challenge is not secret; only the wallet's key can sign it.
+
+### Proxy / client IP
+
+The per-IP bucket uses Express's `request.ip`. Behind a load balancer or reverse proxy, that is the proxy's address unless Express is told to trust it, and then every client shares one bucket. Set `TRUST_PROXY` to match the deployment:
+
+| Deployment | `TRUST_PROXY` |
+| ---------- | ------------- |
+| Exposed directly (no proxy) | `false` (default) |
+| One load balancer / ingress in front | `1` |
+| Known proxy addresses | `10.0.0.0/8,192.168.1.10` (comma-separated IPs/CIDRs) |
+
+Do not use `true` unless the app is unreachable except through the proxy: it trusts any `X-Forwarded-For` value, so a client could pick its own IP bucket.
+
 ### Configuration
 
 ```env
 REDIS_URL=redis://localhost:6379
+TRUST_PROXY=1
+AUTH_CHALLENGE_RATE_LIMIT_POINTS=10
+AUTH_CHALLENGE_RATE_LIMIT_DURATION=60
+AUTH_VERIFY_RATE_LIMIT_POINTS=10
+AUTH_VERIFY_RATE_LIMIT_DURATION=60
 RATE_LIMIT_ABUSE_WINDOW_SECONDS=300
 RATE_LIMIT_ABUSE_THRESHOLD=5
 RATE_LIMIT_LOCKOUT_SECONDS=900
@@ -706,15 +736,39 @@ curl -X POST http://localhost:3001/webhooks \
 
 ---
 
+## ❗ Validation Errors
+
+Every endpoint returns the same `400` body for invalid input, whether the request is validated by a class-validator DTO (global `ValidationPipe`) or by a Zod schema inside the handler:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "errors": [
+    { "field": "address", "message": "address must be a valid Stellar public key (G...)" },
+    { "field": "milestones.0.amount", "message": "Expected number, received string" }
+  ],
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "path": "/v1/escrows"
+}
+```
+
+- `field` is the dotted path to the invalid value; `(root)` means the body itself was invalid.
+- Unknown properties on class-validator DTOs are reported as errors on that field (`forbidNonWhitelisted`).
+- Validation failures are client errors: they are never returned as `500` and are not reported to Sentry.
+
+---
+
 ## 🔧 Response Codes
 
 | Code | Description                           |
 | ---- | ------------------------------------- |
 | 200  | Success                               |
 | 201  | Created                               |
-| 400  | Bad Request - Invalid input           |
+| 400  | Bad Request - Invalid input (see Validation Errors) |
 | 401  | Unauthorized - Invalid or missing JWT |
 | 404  | Not Found - Resource doesn't exist    |
+| 429  | Too Many Requests - see `Retry-After` |
 | 500  | Internal Server Error                 |
 | 503  | Service Unavailable                   |
 

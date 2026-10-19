@@ -27,7 +27,17 @@ export const SkipRateLimit = () => SetMetadata(SKIP_RATE_LIMIT, true);
 export const RateLimitOnRedisError = (policy: RateLimitRedisErrorPolicy) =>
   SetMetadata(RATE_LIMIT_ON_REDIS_ERROR, policy);
 
-export const RateLimit = (points: number, duration: number, options: RateLimitOptions = {}) =>
+/**
+ * A fixed limit, or a thunk resolved by the guard on each request — use the thunk form for
+ * env-configured values so they are not read at class-load time, before `validateEnv()`.
+ */
+export type RateLimitValue = number | (() => number);
+
+export const RateLimit = (
+  points: RateLimitValue,
+  duration: RateLimitValue,
+  options: RateLimitOptions = {},
+) =>
   applyDecorators(
     SetMetadata(RATE_LIMIT_POINTS, points),
     SetMetadata(RATE_LIMIT_DURATION, duration),

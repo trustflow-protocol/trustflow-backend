@@ -12,6 +12,7 @@ import {
   RATE_LIMIT_DURATION,
   RATE_LIMIT_ON_REDIS_ERROR,
   RateLimitRedisErrorPolicy,
+  RateLimit,
 } from './rate-limit.decorator';
 import { validateEnv, getConfig, TEST_ONLY_JWT_SECRET } from '../../config/env.config';
 import { MetricsService } from '../../monitoring/metrics.service';
@@ -469,6 +470,60 @@ describe('RateLimitGuard', () => {
       expect(mockRedis.rateLimitCheck).toHaveBeenCalledTimes(1);
     });
 
+    // #369: 429s carry Retry-After / X-RateLimit-* and are logged + counted.
+    it('should set Retry-After and X-RateLimit-* headers, log and count a rejection', async () => {
+      const metrics = { increment: jest.fn() };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          RateLimitGuard,
+          { provide: REDIS_CLIENT, useValue: mockRedis },
+          { provide: Reflector, useValue: createReflector() },
+          { provide: MetricsService, useValue: metrics },
+        ],
+      }).compile();
+      const metricGuard = module.get<RateLimitGuard>(RateLimitGuard);
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      mockRedis.queueResults([[null, [0, 12]]]);
+
+      const { context, response } = mockContext({ ip: '203.0.113.77' });
+      await expect(metricGuard.canActivate(context)).rejects.toThrow(HttpException);
+
+      expect(response.setHeader).toHaveBeenCalledWith('Retry-After', '12');
+      expect(response.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
+      expect(response.setHeader).toHaveBeenCalledWith('X-RateLimit-Reset', '12');
+      expect(metrics.increment).toHaveBeenCalledWith('rate_limit_rejections_total', {
+        route: expect.stringContaining('auth'),
+        scope: 'ip',
+      });
+      const logged = warn.mock.calls.map(call => String(call[0])).join('\n');
+      expect(logged).toContain('Rate limit exceeded');
+      expect(logged).toContain('scope=ip');
+      expect(logged).not.toContain('203.0.113.77');
+    });
+
+    it('should resolve thunk-valued @RateLimit() limits (env-configured auth routes)', async () => {
+      const reflector = {
+        getAllAndOverride: jest.fn((key: string) => {
+          if (key === RATE_LIMIT_POINTS) return () => 3;
+          if (key === RATE_LIMIT_DURATION) return () => 60;
+          return undefined;
+        }),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          RateLimitGuard,
+          { provide: REDIS_CLIENT, useValue: mockRedis },
+          { provide: Reflector, useValue: reflector },
+        ],
+      }).compile();
+      const thunkGuard = module.get<RateLimitGuard>(RateLimitGuard);
+      mockRedis.queueResults([[null, [1, 0]]]);
+
+      await expect(thunkGuard.canActivate(mockContext().context)).resolves.toBe(true);
+      expect(mockRedis.rateLimitCheck.mock.calls[0][3]).toBe(3);
+      expect(mockRedis.rateLimitCheck.mock.calls[0][4]).toBe(60_000);
+    });
+
   });
 
   describe('when Redis fails', () => {
@@ -746,5 +801,67 @@ describe('RateLimitGuard Supertest integration', () => {
       expect.any(Number),
       expect.any(String),
     );
+  });
+});
+
+/**
+ * #369 — repeated GET /auth/challenge from one IP is rejected once the configured auth limit
+ * is used up, independently of the global default. The Redis bucket is simulated in memory.
+ */
+describe('Auth challenge rate limit (#369)', () => {
+  const LIMIT = 3;
+  let app: INestApplication;
+
+  @Controller('auth')
+  class FakeAuthController {
+    @Get('challenge')
+    @RateLimit(() => LIMIT, () => 60)
+    challenge() {
+      return { challenge: 'x' };
+    }
+  }
+
+  function countingRedis() {
+    const used = new Map<string, number>();
+    const queued: string[] = [];
+    const pipelineObj = {
+      rateLimitCheck: (bucket: string, _l: string, _a: string, points: number) => {
+        const count = (used.get(bucket) ?? 0) + 1;
+        used.set(bucket, count);
+        queued.push(count <= points ? 'allow' : 'deny');
+        return pipelineObj;
+      },
+      exec: jest.fn(async () =>
+        queued.splice(0).map(result => [null, result === 'allow' ? [1, 0] : [0, 42]]),
+      ),
+    };
+    return { defineCommand: jest.fn(), pipeline: () => pipelineObj };
+  }
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [FakeAuthController],
+      providers: [
+        Reflector,
+        { provide: JwtService, useValue: jwtService },
+        { provide: REDIS_CLIENT, useValue: countingRedis() },
+        { provide: APP_GUARD, useClass: RateLimitGuard },
+      ],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('returns 429 with Retry-After after the configured number of challenges', async () => {
+    for (let i = 0; i < LIMIT; i++) {
+      await request(app.getHttpServer()).get('/auth/challenge').expect(200);
+    }
+    const res = await request(app.getHttpServer()).get('/auth/challenge').expect(429);
+    expect(res.headers['retry-after']).toBe('42');
+    expect(res.body.retryAfter).toBe(42);
   });
 });

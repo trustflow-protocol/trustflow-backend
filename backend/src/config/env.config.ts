@@ -252,6 +252,24 @@ const EnvSchema = z
     RATE_LIMIT_ABUSE_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
     RATE_LIMIT_ABUSE_THRESHOLD: z.coerce.number().int().positive().default(5),
     RATE_LIMIT_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
+    // Auth-route limits (#369): stricter than the global 100/60s default, per IP.
+    AUTH_CHALLENGE_RATE_LIMIT_POINTS: z.coerce.number().int().positive().default(10),
+    AUTH_CHALLENGE_RATE_LIMIT_DURATION: z.coerce.number().int().positive().default(60),
+    AUTH_VERIFY_RATE_LIMIT_POINTS: z.coerce.number().int().positive().default(10),
+    AUTH_VERIFY_RATE_LIMIT_DURATION: z.coerce.number().int().positive().default(60),
+    TRUST_PROXY: z.preprocess(
+      blankToUndefined,
+      z
+        .string()
+        .default('false')
+        .describe(
+          "Express 'trust proxy' setting: 'false' (direct exposure), 'true', a hop count such as '1' (one load balancer), or a comma-separated list of proxy IPs/CIDRs. Needed behind a load balancer so request.ip is the client, not the proxy.",
+        ),
+    ),
+
+    // WebSocket gateway (#393)
+    WS_MAX_ROOMS_PER_CLIENT: z.coerce.number().int().positive().default(50),
+
     RATE_LIMIT_ON_REDIS_ERROR: z.preprocess(
       blankToUndefined,
       z

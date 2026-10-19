@@ -12,6 +12,11 @@ import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
 import { SentryService } from '../../sentry/sentry.service';
 import { CorrelationIdStore } from '../logging/correlation-id.store';
+import {
+  isZodError,
+  validationException,
+  zodErrorToFieldErrors,
+} from '../validation/validation-error';
 
 /**
  * Extracts a usable HTTP status from an error that isn't a NestJS `HttpException` but still
@@ -40,6 +45,12 @@ export class SentryExceptionFilter implements ExceptionFilter {
   ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
+    // A failed Zod `.parse()` in a handler is bad client input, not a server fault (#368):
+    // answer with the shared field-level 400 instead of a 500 that pages Sentry.
+    if (isZodError(exception)) {
+      exception = validationException(zodErrorToFieldErrors(exception));
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request & { correlationId?: string }>();

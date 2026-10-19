@@ -70,10 +70,26 @@ Implemented a comprehensive GitHub Actions CI pipeline that automatically runs b
 
 **Jest Configuration**:
 
-- Test pattern: `*.spec.ts` files
+- Test pattern: `*.spec.ts` and `*-spec.ts` files (`testRegex: .*[.-]spec\.ts$`), so every spec-like file under `src/` runs
 - Transform with ts-jest
-- Coverage threshold: 50% (branches, functions, lines, statements)
-- Excludes: `*.spec.ts`, `*.module.ts`, `index.ts`
+- Coverage thresholds (see `coverageThreshold` in `package.json`, #397):
+  - Global: branches 30%, functions 35%, lines 40%, statements 40%
+  - Per-path (critical modules): branches 50%, functions/lines/statements 60% for
+    `src/escrow/`, `src/dispute/`, `src/auth/`, `src/gig/`, `src/outbox/`,
+    `src/common/rate-limit/`, `src/common/idempotency/`
+- Excludes from coverage: `*.spec.ts`, `*-spec.ts`, `*.module.ts`, `index.ts`
+
+### Testing requirements
+
+- CI runs `npm run test:ci` (`jest --ci --coverage`); Jest fails the job if the global
+  **or any per-path** threshold is not met.
+- Ratchet plan: raise the global floor by ~10 points each time measured coverage clears it
+  comfortably, until it reaches 80%; per-path thresholds move toward 80% the same way.
+  Never lower a threshold to make a PR pass — add tests instead.
+- Every new service/controller in a critical module ships with a sibling `*.spec.ts`.
+- Coverage is uploaded to Codecov (`fail_ci_if_error: true`); `codecov.yml` at the repo
+  root adds a **project** status (no drop vs. base beyond 1%) and a **patch** status (70% of
+  changed lines covered) to every backend PR, with the trend visible on the PR comment.
 
 ### 3. TypeScript Configuration
 
@@ -269,18 +285,9 @@ git commit -m "Add package-lock.json"
 
 ### Issue: Coverage threshold not met
 
-**Solution**: Add more tests or adjust threshold in `package.json`:
-
-```json
-"coverageThreshold": {
-  "global": {
-    "branches": 40,
-    "functions": 40,
-    "lines": 40,
-    "statements": 40
-  }
-}
-```
+**Solution**: Add tests for the uncovered code. Jest's output names the global or per-path
+threshold that failed. Thresholds live in `coverageThreshold` in `package.json` and only
+ever move up (see "Testing requirements" above).
 
 ## Testing the CI
 

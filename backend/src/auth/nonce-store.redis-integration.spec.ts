@@ -95,12 +95,12 @@ describeIfRedis('NonceStoreService (Redis integration)', () => {
 
     await service.store(TEST_ADDRESS, firstChallenge, TEST_NONCE);
 
-    // Attempt to store a second challenge — NonceStoreService replaces it
-    await service.store(TEST_ADDRESS, secondChallenge, `${TEST_NONCE}-2`);
+    // A second request must not replace the live challenge (#369) — it gets the first back
+    const returned = await service.store(TEST_ADDRESS, secondChallenge, `${TEST_NONCE}-2`);
+    expect(returned).toBe(firstChallenge);
 
-    // Should get the second one (replaced)
     const consumed = await service.consume(TEST_ADDRESS);
-    expect(consumed).toBe(secondChallenge);
+    expect(consumed).toBe(firstChallenge);
   });
 
   it('isolates challenges by address', async () => {

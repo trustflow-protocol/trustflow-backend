@@ -1,3 +1,4 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -31,15 +32,12 @@ describe('AuthController', () => {
 
   describe('getChallenge', () => {
     it('should return a challenge for a valid address', async () => {
-      const result = await controller.getChallenge(TEST_ADDRESS);
+      const result = await controller.getChallenge({ address: TEST_ADDRESS });
 
       expect(result).toEqual({ challenge: TEST_CHALLENGE });
       expect(mockAuthService.generateChallenge).toHaveBeenCalledWith(TEST_ADDRESS);
     });
 
-    it('should throw when address is missing', async () => {
-      await expect(controller.getChallenge('')).rejects.toThrow('address required');
-    });
   });
 
   describe('verify', () => {
@@ -65,7 +63,7 @@ describe('AuthController', () => {
           address: TEST_ADDRESS,
           signature: 'invalid',
         }),
-      ).rejects.toThrow('Invalid signature');
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 });

@@ -19,6 +19,18 @@ import { RateTier, RATE_LIMIT_TIERS, HIGH_REPUTATION_THRESHOLD } from './rate-ti
 import './rate-limit.d';
 import { getJwtVerificationSecrets } from '../auth/jwt-secrets';
 
+type RateLimitValue = number | (() => number) | undefined;
+
+function resolveLimit(value: RateLimitValue): number | undefined {
+  return typeof value === 'function' ? value() : value;
+}
+
+/** Keeps enough of an IP/wallet to correlate log lines without writing it out in full. */
+export function maskIdentity(value: string): string {
+  if (value.length <= 8) return '****';
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
 const DEFAULT_POINTS = 100;
 const DEFAULT_DURATION = 60;
 /** At most one Redis-error log line per this interval; the rest are only counted. */
@@ -225,16 +237,20 @@ export class RateLimitGuard implements CanActivate {
     }
 
     // Use tier-specific points/duration if not explicitly overridden via decorator
-    const requestedPoints =
-      this.reflector.getAllAndOverride<number>('rate_limit_points', [
+    // Decorator values may be thunks so env-configured limits (e.g. the auth routes) are read
+    // at request time rather than when the controller class is first loaded.
+    const requestedPoints = resolveLimit(
+      this.reflector.getAllAndOverride<RateLimitValue>('rate_limit_points', [
         context.getHandler(),
         context.getClass(),
-      ]);
-    const requestedDuration =
-      this.reflector.getAllAndOverride<number>('rate_limit_duration', [
+      ]),
+    );
+    const requestedDuration = resolveLimit(
+      this.reflector.getAllAndOverride<RateLimitValue>('rate_limit_duration', [
         context.getHandler(),
         context.getClass(),
-      ]);
+      ]),
+    );
 
     const tierConfig = getTierConfig(
       tier,
@@ -282,6 +298,17 @@ export class RateLimitGuard implements CanActivate {
       const [allowed, retryAfter] = decisions[i];
       if (Number(allowed) !== 1) {
         const identity = identities[i];
+        const retryAfterSeconds = Math.max(1, Math.ceil(Number(retryAfter)));
+        const response = context.switchToHttp().getResponse();
+        response?.setHeader?.('Retry-After', String(retryAfterSeconds));
+        response?.setHeader?.('X-RateLimit-Limit', String(tierConfig.points));
+        response?.setHeader?.('X-RateLimit-Remaining', '0');
+        response?.setHeader?.('X-RateLimit-Reset', String(retryAfterSeconds));
+        this.metrics?.increment('rate_limit_rejections_total', { route, scope: identity.scope });
+        this.logger.warn(
+          `Rate limit exceeded (scope=${identity.scope}, route=${route}, ` +
+            `identity=${maskIdentity(identity.value)}, retryAfter=${retryAfterSeconds}s)`,
+        );
         throw new HttpException(
           {
             statusCode: HttpStatus.TOO_MANY_REQUESTS,

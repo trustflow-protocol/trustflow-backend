@@ -187,7 +187,9 @@ jobs:
         with:
           directory: ./backend/coverage
           flags: backend
-          fail_ci_if_error: false
+          # #397: an upload failure fails the job whenever the token is available. Fork PRs
+          # get no secrets, so there it stays non-blocking instead of failing every run.
+          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
   docker:

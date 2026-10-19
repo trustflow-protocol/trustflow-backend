@@ -59,11 +59,25 @@ describe('Auth (E2E)', () => {
       expect(res.body.challenge).toContain('Sign this message to authenticate with TrustFlow:');
     });
 
-    it('returns 400 or error when address is missing', async () => {
-      const res = await request(app.getHttpServer()).get('/v1/auth/challenge').expect(500);
+    // #368: validated through ChallengeDto, so a field-level 400 rather than a 500
+    it('returns a field-level 400 when address is missing', async () => {
+      const res = await request(app.getHttpServer()).get('/v1/auth/challenge').expect(400);
 
-      // The controller throws a raw Error('address required') which NestJS turns into 500
-      expect(res.status).toBe(500);
+      expect(res.body).toMatchObject({ statusCode: 400, message: 'Validation failed' });
+      expect(res.body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ field: 'address' })]),
+      );
+    });
+
+    it('returns a field-level 400 for a malformed address', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/v1/auth/challenge')
+        .query({ address: 'not-a-stellar-key' })
+        .expect(400);
+
+      expect(res.body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ field: 'address' })]),
+      );
     });
   });
 
@@ -92,7 +106,7 @@ describe('Auth (E2E)', () => {
       jest.restoreAllMocks();
     });
 
-    it('returns 500 for an invalid signature', async () => {
+    it('returns 401 for an invalid signature', async () => {
       // Get a challenge first
       await request(app.getHttpServer())
         .get('/v1/auth/challenge')
@@ -105,7 +119,7 @@ describe('Auth (E2E)', () => {
       const res = await request(app.getHttpServer())
         .post('/v1/auth/verify')
         .send({ address: TEST_ADDRESS, signature: 'invalid-sig' })
-        .expect(500);
+        .expect(401);
 
       jest.restoreAllMocks();
     });
@@ -116,7 +130,10 @@ describe('Auth (E2E)', () => {
         .send({ signature: 'SGVsbG8gV29ybGQh' })
         .expect(400);
 
-      expect(res.body.message).toBeDefined();
+      expect(res.body.message).toBe('Validation failed');
+      expect(res.body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ field: 'address' })]),
+      );
     });
 
     it('rejects request with missing signature field', async () => {
@@ -125,7 +142,9 @@ describe('Auth (E2E)', () => {
         .send({ address: TEST_ADDRESS })
         .expect(400);
 
-      expect(res.body.message).toBeDefined();
+      expect(res.body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ field: 'signature' })]),
+      );
     });
   });
 
