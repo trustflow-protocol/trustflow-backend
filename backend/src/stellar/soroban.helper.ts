@@ -40,7 +40,7 @@ export async function withSorobanFailover<T>(
           .filter(Boolean)
           .map((url: string) => url.trim()),
       ]
-    : config.SOROBAN_RPC_URL.split(',').map((url: string) => url.trim());
+    : config.SOROBAN_RPC_URL!.split(',').map((url: string) => url.trim());
 
   // Remove duplicates
   const uniqueEndpoints = [...new Set(endpoints.filter(Boolean))];

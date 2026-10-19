@@ -58,12 +58,12 @@ export function getStellarConfig(): StellarConfig {
 
   cachedStellarConfig = {
     network: normalizedNetwork as StellarNetworkValue,
-    horizonUrl: config.STELLAR_HORIZON_URL,
-    sorobanRpcUrl: config.SOROBAN_RPC_URL,
-    horizonEndpoints: (config.STELLAR_HORIZON_ENDPOINTS || config.STELLAR_HORIZON_URL)
+    horizonUrl: config.STELLAR_HORIZON_URL!,
+    sorobanRpcUrl: config.SOROBAN_RPC_URL!,
+    horizonEndpoints: (config.STELLAR_HORIZON_ENDPOINTS || config.STELLAR_HORIZON_URL!)
       .split(',')
       .map(url => url.trim()),
-    sorobanRpcEndpoints: (config.SOROBAN_RPC_ENDPOINTS || config.SOROBAN_RPC_URL)
+    sorobanRpcEndpoints: (config.SOROBAN_RPC_ENDPOINTS || config.SOROBAN_RPC_URL!)
       .split(',')
       .map(url => url.trim()),
     contractId: config.TRUSTFLOW_CONTRACT_ID || '',

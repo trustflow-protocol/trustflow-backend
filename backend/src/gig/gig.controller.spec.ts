@@ -2,6 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GigController } from './gig.controller';
 import { GigService } from './gig.service';
 import { GigStatus } from './gig.entity';
+import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+
+/**
+ * Mock authenticated request matching the shape expected by the controller.
+ */
+interface AuthenticatedRequest {
+  user: { address: string; sub: string };
+}
 
 describe('GigController', () => {
   let controller: GigController;
@@ -14,6 +22,7 @@ describe('GigController', () => {
     accept: jest.fn(),
     cancel: jest.fn(),
     update: jest.fn(),
+    remove: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -32,17 +41,22 @@ describe('GigController', () => {
   });
 
   describe('create', () => {
+    const creatorAddress = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
     const dto = {
-      creator: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      creator: creatorAddress,
       title: 'Build a Soroban escrow audit report',
       budgetXLM: '250',
+    };
+
+    const mockReq: AuthenticatedRequest = {
+      user: { address: creatorAddress, sub: 'user-123' },
     };
 
     it('creates the gig via the service; durable delivery is handled by the outbox relay', async () => {
       const gig = { id: 'gig-1', ...dto, status: GigStatus.OPEN };
       mockGigService.create.mockResolvedValue(gig);
 
-      const result = await controller.create(dto);
+      const result = await controller.create(dto, mockReq);
 
       expect(result).toEqual(gig);
       expect(mockGigService.create).toHaveBeenCalledWith(dto);
@@ -50,8 +64,17 @@ describe('GigController', () => {
 
     it('rejects an invalid creator address before hitting the service', async () => {
       await expect(
-        controller.create({ ...dto, creator: 'not-a-stellar-address' }),
+        controller.create({ ...dto, creator: 'not-a-stellar-address' }, mockReq),
       ).rejects.toThrow();
+      expect(mockGigService.create).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException when creator does not match authenticated wallet', async () => {
+      const differentUser: AuthenticatedRequest = {
+        user: { address: 'GDIFFERENTADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', sub: 'user-456' },
+      };
+
+      await expect(controller.create(dto, differentUser)).rejects.toThrow(ForbiddenException);
       expect(mockGigService.create).not.toHaveBeenCalled();
     });
   });
@@ -151,41 +174,141 @@ describe('GigController', () => {
   });
 
   describe('accept', () => {
+    const creatorAddress = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+    const responderAddress = 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY';
+
+    const mockReq: AuthenticatedRequest = {
+      user: { address: responderAddress, sub: 'responder-123' },
+    };
+
     it('accepts via the service; durable delivery is handled by the outbox relay', async () => {
-      const responder = 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY';
-      const gig = { id: 'gig-1', status: GigStatus.ACCEPTED, acceptedBy: responder };
-      mockGigService.accept.mockResolvedValue(gig);
+      const gig = {
+        id: 'gig-1',
+        creator: creatorAddress,
+        status: GigStatus.OPEN,
+        acceptedBy: undefined,
+      };
+      mockGigService.findById.mockResolvedValue(gig);
 
-      const result = await controller.accept('gig-1', { responder });
+      const acceptedGig = { ...gig, status: GigStatus.ACCEPTED, acceptedBy: responderAddress };
+      mockGigService.accept.mockResolvedValue(acceptedGig);
 
-      expect(result).toEqual(gig);
-      expect(mockGigService.accept).toHaveBeenCalledWith('gig-1', responder);
+      const result = await controller.accept('gig-1', { responder: responderAddress }, mockReq);
+
+      expect(result).toEqual(acceptedGig);
+      expect(mockGigService.accept).toHaveBeenCalledWith('gig-1', responderAddress);
+    });
+
+    it('throws ForbiddenException when responder does not match authenticated wallet', async () => {
+      const gig = {
+        id: 'gig-1',
+        creator: creatorAddress,
+        status: GigStatus.OPEN,
+      };
+      mockGigService.findById.mockResolvedValue(gig);
+
+      const differentUser: AuthenticatedRequest = {
+        user: { address: 'GDIFFERENTADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', sub: 'user-789' },
+      };
+
+      await expect(
+        controller.accept('gig-1', { responder: responderAddress }, differentUser),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockGigService.accept).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when trying to accept own gig', async () => {
+      const gig = {
+        id: 'gig-1',
+        creator: creatorAddress,
+        status: GigStatus.OPEN,
+      };
+      mockGigService.findById.mockResolvedValue(gig);
+
+      const creatorReq: AuthenticatedRequest = {
+        user: { address: creatorAddress, sub: 'creator-123' },
+      };
+
+      await expect(
+        controller.accept('gig-1', { responder: creatorAddress }, creatorReq),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockGigService.accept).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when gig does not exist', async () => {
+      mockGigService.findById.mockResolvedValue(null);
+
+      await expect(
+        controller.accept('gig-999', { responder: responderAddress }, mockReq),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockGigService.accept).not.toHaveBeenCalled();
     });
   });
 
   describe('cancel', () => {
+    const creatorAddress = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+
+    const mockReq: AuthenticatedRequest = {
+      user: { address: creatorAddress, sub: 'creator-123' },
+    };
+
     it('cancels via the service; durable delivery is handled by the outbox relay', async () => {
-      const gig = { id: 'gig-1', status: GigStatus.CANCELLED };
-      mockGigService.cancel.mockResolvedValue(gig);
+      const gig = { id: 'gig-1', creator: creatorAddress, status: GigStatus.OPEN };
+      mockGigService.findById.mockResolvedValue(gig);
 
-      const result = await controller.cancel('gig-1');
+      const cancelledGig = { ...gig, status: GigStatus.CANCELLED };
+      mockGigService.cancel.mockResolvedValue(cancelledGig);
 
-      expect(result).toEqual(gig);
+      const result = await controller.cancel('gig-1', mockReq);
+
+      expect(result).toEqual(cancelledGig);
       expect(mockGigService.cancel).toHaveBeenCalledWith('gig-1');
+    });
+
+    it('throws ForbiddenException when user is not the creator', async () => {
+      const gig = { id: 'gig-1', creator: creatorAddress, status: GigStatus.OPEN };
+      mockGigService.findById.mockResolvedValue(gig);
+
+      const differentUser: AuthenticatedRequest = {
+        user: { address: 'GDIFFERENTADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', sub: 'user-456' },
+      };
+
+      await expect(controller.cancel('gig-1', differentUser)).rejects.toThrow(ForbiddenException);
+      expect(mockGigService.cancel).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when gig does not exist', async () => {
+      mockGigService.findById.mockResolvedValue(null);
+
+      await expect(controller.cancel('gig-999', mockReq)).rejects.toThrow(NotFoundException);
+      expect(mockGigService.cancel).not.toHaveBeenCalled();
     });
   });
 
   describe('update', () => {
+    const creatorAddress = 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+
+    const mockReq: AuthenticatedRequest = {
+      user: { address: creatorAddress, sub: 'creator-123' },
+    };
+
     it('validates and forwards responseWindowHours to the service (#432)', async () => {
-      const gig = { id: 'gig-1', title: 'New title', status: GigStatus.OPEN };
-      mockGigService.update.mockResolvedValue(gig);
+      const gig = { id: 'gig-1', creator: creatorAddress, title: 'Old title', status: GigStatus.OPEN };
+      mockGigService.findById.mockResolvedValue(gig);
 
-      const result = await controller.update('gig-1', {
-        title: 'New title',
-        responseWindowHours: 12,
-      } as any);
+      const updatedGig = { ...gig, title: 'New title' };
+      mockGigService.update.mockResolvedValue(updatedGig);
 
-      expect(result).toEqual(gig);
+      const result = await controller.update(
+        'gig-1',
+        {
+          title: 'New title',
+          responseWindowHours: 12,
+        } as any,
+        mockReq,
+      );
+
+      expect(result).toEqual(updatedGig);
       expect(mockGigService.update).toHaveBeenCalledWith('gig-1', {
         title: 'New title',
         responseWindowHours: 12,
@@ -193,14 +316,45 @@ describe('GigController', () => {
     });
 
     it('rejects a non-positive responseWindowHours before hitting the service', async () => {
-      await expect(controller.update('gig-1', { responseWindowHours: 0 } as any)).rejects.toThrow();
+      const gig = { id: 'gig-1', creator: creatorAddress, status: GigStatus.OPEN };
+      mockGigService.findById.mockResolvedValue(gig);
+
+      await expect(
+        controller.update('gig-1', { responseWindowHours: 0 } as any, mockReq),
+      ).rejects.toThrow();
       expect(mockGigService.update).not.toHaveBeenCalled();
     });
 
     it('rejects a responseWindowHours beyond the 30-day cap before hitting the service', async () => {
+      const gig = { id: 'gig-1', creator: creatorAddress, status: GigStatus.OPEN };
+      mockGigService.findById.mockResolvedValue(gig);
+
       await expect(
-        controller.update('gig-1', { responseWindowHours: 24 * 30 + 1 } as any),
+        controller.update('gig-1', { responseWindowHours: 24 * 30 + 1 } as any, mockReq),
       ).rejects.toThrow();
+      expect(mockGigService.update).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException when user is not the creator', async () => {
+      const gig = { id: 'gig-1', creator: creatorAddress, status: GigStatus.OPEN };
+      mockGigService.findById.mockResolvedValue(gig);
+
+      const differentUser: AuthenticatedRequest = {
+        user: { address: 'GDIFFERENTADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', sub: 'user-456' },
+      };
+
+      await expect(
+        controller.update('gig-1', { title: 'New title' } as any, differentUser),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockGigService.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when gig does not exist', async () => {
+      mockGigService.findById.mockResolvedValue(null);
+
+      await expect(
+        controller.update('gig-999', { title: 'New title' } as any, mockReq),
+      ).rejects.toThrow(NotFoundException);
       expect(mockGigService.update).not.toHaveBeenCalled();
     });
   });

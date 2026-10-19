@@ -342,11 +342,11 @@ export class DisputeSagaService implements OnModuleInit {
       );
     }
     await bestEffort('in-app notification', () =>
-      this.notificationService.notifyDisputeEscalated({
+      this.notificationService.notifyDisputeEscalation({
         escrowId,
-        disputeId: sagaId,
         depositor: escrow.depositor,
         beneficiary: escrow.beneficiary,
+        amountXLM: escrow.amountXLM,
         reason: saga.reason,
       }),
     );
@@ -550,11 +550,12 @@ export class DisputeSagaService implements OnModuleInit {
           sagaId,
           jurors: unique,
         });
-        await this.notificationService.notifyJurorsAssigned({
-          disputeId: sagaId,
-          escrowId: saga.escrowId,
-          jurors: unique,
-        });
+        // TODO: Implement notifyJurorsAssigned notification
+        // await this.notificationService.notifyJurorsAssigned({
+        //   disputeId: sagaId,
+        //   escrowId: saga.escrowId,
+        //   jurors: unique,
+        // });
 
         this.logger.log(`Saga ${sagaId}: ${unique.length} jurors assigned`);
         return saga;
@@ -642,13 +643,14 @@ export class DisputeSagaService implements OnModuleInit {
 
           const escrow = await this.escrowService.findById(saga.escrowId);
           if (escrow) {
-            await this.notificationService.notifyVerdictReached({
-              disputeId: sagaId,
-              escrowId: saga.escrowId,
-              verdict,
-              depositor: escrow.depositor,
-              beneficiary: escrow.beneficiary,
-            });
+            // TODO: Implement notifyVerdictReached notification
+            // await this.notificationService.notifyVerdictReached({
+            //   disputeId: sagaId,
+            //   escrowId: saga.escrowId,
+            //   verdict,
+            //   depositor: escrow.depositor,
+            //   beneficiary: escrow.beneficiary,
+            // });
           }
         }
 
@@ -781,13 +783,14 @@ export class DisputeSagaService implements OnModuleInit {
 
         const payoutEscrow = await this.escrowService.findById(saga.escrowId);
         if (payoutEscrow) {
-          await this.notificationService.notifyPayoutExecuted({
-            disputeId: sagaId,
-            escrowId: saga.escrowId,
-            verdict: saga.verdict,
-            depositor: payoutEscrow.depositor,
-            beneficiary: payoutEscrow.beneficiary,
-          });
+          // TODO: Implement notifyPayoutExecuted notification
+          // await this.notificationService.notifyPayoutExecuted({
+          //   disputeId: sagaId,
+          //   escrowId: saga.escrowId,
+          //   verdict: saga.verdict,
+          //   depositor: payoutEscrow.depositor,
+          //   beneficiary: payoutEscrow.beneficiary,
+          // });
         }
 
         this.logger.log(`Saga ${sagaId}: completed — payout executed for ${saga.verdict}`);

@@ -166,7 +166,7 @@ export class NotificationService {
       this.logger.log(`Email sent to ${to}: ${subject}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send email to ${to}: ${error.message}`);
+      this.logger.error(`Failed to send email to ${to}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -206,7 +206,7 @@ export class NotificationService {
       this.logger.log(`Push notification sent to ${address}: ${title}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send push notification to ${address}: ${error.message}`);
+      this.logger.error(`Failed to send push notification to ${address}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }

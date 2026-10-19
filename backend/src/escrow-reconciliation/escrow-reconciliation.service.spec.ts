@@ -121,7 +121,7 @@ describe('EscrowReconciliationService', () => {
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         RECONCILIATION_EVENTS.DRIFT_DETECTED,
         expect.objectContaining({ driftCount: 1 }),
-      });
+      );
     });
   });
 

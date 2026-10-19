@@ -29,6 +29,7 @@ import {
 } from './gig.entity';
 import { OutboxService } from '../outbox/outbox.service';
 import { config } from '../config/env.config';
+import { amountGreaterThanOrEqual, amountLessThanOrEqual } from '../common/amount';
 
 const GIG_KEY_PREFIX = 'gig:';
 const GIGS_INDEX_KEY = 'gigs:index';

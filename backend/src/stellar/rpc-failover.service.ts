@@ -17,9 +17,9 @@ export class RpcFailoverService {
   private readonly logger = new SanitizedLogger(RpcFailoverService.name);
   private horizonEndpoints: EndpointStatus[] = [];
   private sorobanEndpoints: EndpointStatus[] = [];
-  private currentHorizonEndpoint: string;
-  private currentSorobanEndpoint: string;
-  private healthCheckInterval: NodeJS.Timeout;
+  private currentHorizonEndpoint!: string;
+  private currentSorobanEndpoint!: string;
+  private healthCheckInterval!: NodeJS.Timeout;
   private readonly HEALTH_CHECK_INTERVAL_MS = 30000; // 30 seconds
   private readonly MAX_FAILURES_BEFORE_UNHEALTHY = 3;
 

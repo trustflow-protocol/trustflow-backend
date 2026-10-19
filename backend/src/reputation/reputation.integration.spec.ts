@@ -5,6 +5,7 @@ import { EscrowController } from '../escrow/escrow.controller';
 import { EscrowService } from '../escrow/escrow.service';
 import { DisputeModule } from '../dispute/dispute.module';
 import { DisputeSagaService } from '../dispute/dispute-saga.service';
+import { EscrowDisputeController } from '../dispute/escrow-dispute.controller';
 import { ReputationModule } from './reputation.module';
 import { ReputationController } from './reputation.controller';
 
@@ -23,6 +24,7 @@ describe('Reputation engine integration', () => {
   let module: TestingModule;
   let escrowController: EscrowController;
   let escrowService: EscrowService;
+  let escrowDisputeController: EscrowDisputeController;
   let disputeSagaService: DisputeSagaService;
   let reputationController: ReputationController;
 
@@ -36,6 +38,7 @@ describe('Reputation engine integration', () => {
 
     escrowController = module.get(EscrowController);
     escrowService = module.get(EscrowService);
+    escrowDisputeController = module.get(EscrowDisputeController);
     disputeSagaService = module.get(DisputeSagaService);
     reputationController = module.get(ReputationController);
   });
@@ -65,7 +68,18 @@ describe('Reputation engine integration', () => {
     const beneficiary = 'GBENEFICIARY222222222222222222222222222222222222222INTEG';
 
     const escrow = await escrowService.create(depositor, beneficiary, '100');
-    await escrowController.raiseDispute(escrow.id, { reason: 'not delivered' });
+    
+    // Mock authenticated request for the depositor raising the dispute
+    const mockReq = { user: { address: depositor, sub: 'depositor-sub' } };
+    await escrowDisputeController.raiseDispute(
+      escrow.id,
+      {
+        escrowId: escrow.id,
+        reason: 'Work not delivered as specified - minimum 10 chars',
+        signerAddress: depositor,
+      },
+      mockReq as any,
+    );
 
     expect((await reputationController.getScore(depositor)).eventCount).toBe(0);
     expect((await reputationController.getScore(beneficiary)).eventCount).toBe(0);
