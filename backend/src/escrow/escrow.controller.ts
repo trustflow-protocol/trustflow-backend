@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -347,6 +348,8 @@ export class EscrowController {
     },
   })
   @ApiResponse({ status: 400, description: 'Invalid or missing sourceAccount' })
+  @ApiResponse({ status: 400, description: 'Escrow is not in active status' })
+  @ApiResponse({ status: 403, description: 'Source account is not authorized to release the escrow' })
   @ApiResponse({ status: 404, description: 'Escrow not found or not linked to an on-chain escrow' })
   @ApiResponse({ status: 503, description: 'TRUSTFLOW_CONTRACT_ID is not configured' })
   async buildReleaseTransaction(
@@ -357,6 +360,20 @@ export class EscrowController {
     if (!escrow) throw new NotFoundException(`Escrow ${id} not found`);
     if (!escrow.contractEscrowId) {
       throw new NotFoundException(`Escrow ${id} is not yet linked to an on-chain escrow`);
+    }
+
+    // Only active escrows can be released
+    if (escrow.status !== 'active') {
+      throw new BadRequestException(
+        `Escrow ${id} is not in active status (current: ${escrow.status}). Only active escrows can be released.`,
+      );
+    }
+
+    // Only the depositor or beneficiary can release the escrow
+    if (sourceAccount !== escrow.depositor && sourceAccount !== escrow.beneficiary) {
+      throw new ForbiddenException(
+        `Source account ${sourceAccount} is not authorized to release escrow ${id}. Only the depositor or beneficiary can release.`,
+      );
     }
 
     return this.escrowReleaseTransactionBuilderService.buildRelease(

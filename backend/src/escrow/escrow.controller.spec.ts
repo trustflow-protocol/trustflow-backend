@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EscrowController } from './escrow.controller';
 import { EscrowService, Escrow } from './escrow.service';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
@@ -201,6 +201,62 @@ describe('EscrowController', () => {
           sourceAccount: DEPOSITOR,
         } as BuildReleaseTransactionQueryDto),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it.each([
+      { status: 'pending', description: 'pending' },
+      { status: 'released', description: 'released' },
+      { status: 'disputed', description: 'disputed' },
+      { status: 'cancelled', description: 'cancelled' },
+    ])('throws BadRequestException when escrow status is $description', async ({ status }) => {
+      const inactive = makeEscrow({
+        contractEscrowId: 'on-chain-id-001',
+        status: status as Escrow['status'],
+      });
+      mocks.escrowService.findById.mockResolvedValue(inactive);
+
+      await expect(
+        controller.buildReleaseTransaction('esc-001', {
+          sourceAccount: DEPOSITOR,
+        } as BuildReleaseTransactionQueryDto),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws ForbiddenException when sourceAccount is neither depositor nor beneficiary', async () => {
+      const linked = makeEscrow({ contractEscrowId: 'on-chain-id-001' });
+      mocks.escrowService.findById.mockResolvedValue(linked);
+
+      const unauthorizedAccount = 'GUNAU5L7HWC5X7F5Z2L7ZJ2K3X5Y7Z2K3X5Y7Z2K3X5Y7Z';
+
+      await expect(
+        controller.buildReleaseTransaction('esc-001', {
+          sourceAccount: unauthorizedAccount,
+        } as BuildReleaseTransactionQueryDto),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows depositor to request release transaction', async () => {
+      const linked = makeEscrow({ contractEscrowId: 'on-chain-id-001' });
+      mocks.escrowService.findById.mockResolvedValue(linked);
+
+      const result = await controller.buildReleaseTransaction('esc-001', {
+        sourceAccount: DEPOSITOR,
+      } as BuildReleaseTransactionQueryDto);
+
+      expect(mocks.txBuilderService.buildRelease).toHaveBeenCalled();
+      expect(result).toHaveProperty('xdr');
+    });
+
+    it('allows beneficiary to request release transaction', async () => {
+      const linked = makeEscrow({ contractEscrowId: 'on-chain-id-001' });
+      mocks.escrowService.findById.mockResolvedValue(linked);
+
+      const result = await controller.buildReleaseTransaction('esc-001', {
+        sourceAccount: BENEFICIARY,
+      } as BuildReleaseTransactionQueryDto);
+
+      expect(mocks.txBuilderService.buildRelease).toHaveBeenCalled();
+      expect(result).toHaveProperty('xdr');
     });
   });
 });
