@@ -2,13 +2,15 @@ import { Module } from '@nestjs/common';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
-import { EscrowResolver } from './escrow.resolver';
+import { EscrowResolver, MilestoneResolver, DeliverableResolver, EscrowPage } from './escrow.resolver';
 import { EscrowService } from '../escrow.service';
 import { EscrowType } from './types/escrow.type';
 import { MilestoneType } from './types/milestone.type';
 import { DeliverableType } from './types/deliverable.type';
+import { JurorVoteType } from './types/juror-vote.type';
 import { UserProfileType } from './types/user-profile.type';
 import { DataLoaderModule } from './dataloader/dataloader.module';
+import { config } from '../../config/env.config';
 
 @Module({
   imports: [
@@ -16,17 +18,21 @@ import { DataLoaderModule } from './dataloader/dataloader.module';
       driver: ApolloDriver,
       autoSchemaFile: join(process.cwd(), 'src/escrow/graphql/schema.gql'),
       sortSchema: true,
-      playground: process.env.NODE_ENV !== 'production',
+      playground: config.NODE_ENV !== 'production',
       context: ({ req, res }) => ({ req, res }),
     }),
     DataLoaderModule,
   ],
   providers: [
     EscrowResolver,
+    MilestoneResolver,
+    DeliverableResolver,
+    EscrowPage,
     EscrowService,
     EscrowType,
     MilestoneType,
     DeliverableType,
+    JurorVoteType,
     UserProfileType,
   ],
   exports: [GraphQLModule],

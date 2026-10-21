@@ -31,9 +31,12 @@ import { OutboxModule } from './outbox/outbox.module';
 import { AuditModule } from './audit/audit.module';
 import { TracingModule } from './monitoring/tracing.module';
 
+import { CacheModule } from './common/cache.module';
+
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    CacheModule,
     LoggingModule,
     ShutdownModule,
     SentryModule,

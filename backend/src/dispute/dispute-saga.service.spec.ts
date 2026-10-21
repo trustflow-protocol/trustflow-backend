@@ -14,6 +14,7 @@ import { NotificationService } from '../notification/notification.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { EscrowChainStateClient } from '../escrow-reconciliation/escrow-chain-state.client';
+import { ArweaveArchiveService } from './arweave-archive.service';
 
 // ─── Shared mock factories ────────────────────────────────────────────────────
 
@@ -123,6 +124,10 @@ describe('DisputeSagaService', () => {
         { provide: EscrowService, useValue: escrowService },
         { provide: WebhookService, useValue: webhookService },
         { provide: NotificationService, useValue: notificationService },
+        {
+          provide: ArweaveArchiveService,
+          useValue: { archiveDispute: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: REDIS_CLIENT, useValue: null },
         { provide: MetricsService, useValue: { increment: jest.fn() } },
         { provide: DiscordService, useValue: discordService },

@@ -1,15 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { GraphQLModule } from '@nestjs/graphql';
-import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
-import { join } from 'path';
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
-import { EscrowResolver, MilestoneResolver, DeliverableResolver, EscrowPage } from './escrow.resolver';
-import { EscrowType } from './types/escrow.type';
-import { MilestoneType } from './types/milestone.type';
-import { DeliverableType } from './types/deliverable.type';
-import { JurorVoteType } from './types/juror-vote.type';
-import { UserProfileType } from './types/user-profile.type';
+import { EscrowGraphQLModule } from './escrow-graphql.module';
 import { EscrowService } from '../escrow.service';
 import { MilestoneLoader } from './dataloader/milestone.loader';
 import { DeliverableLoader } from './dataloader/deliverable.loader';
@@ -46,25 +38,19 @@ describe('EscrowGraphQL Integration', () => {
 
   beforeAll(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      imports: [
-        GraphQLModule.forRoot<ApolloDriverConfig>({
-          driver: ApolloDriver,
-          autoSchemaFile: join(process.cwd(), 'src/escrow/graphql/schema.gql'),
-          sortSchema: true,
-        }),
-      ],
-      providers: [
-        EscrowResolver,
-        MilestoneResolver,
-        DeliverableResolver,
-        EscrowPage,
-        { provide: EscrowService, useValue: mockEscrowService },
-        { provide: MilestoneLoader, useValue: mockMilestoneLoader },
-        { provide: DeliverableLoader, useValue: mockDeliverableLoader },
-        { provide: JurorVoteLoader, useValue: mockJurorVoteLoader },
-        { provide: UserProfileLoader, useValue: mockUserProfileLoader },
-      ],
-    }).compile();
+      imports: [EscrowGraphQLModule],
+    })
+      .overrideProvider(EscrowService)
+      .useValue(mockEscrowService)
+      .overrideProvider(MilestoneLoader)
+      .useValue(mockMilestoneLoader)
+      .overrideProvider(DeliverableLoader)
+      .useValue(mockDeliverableLoader)
+      .overrideProvider(JurorVoteLoader)
+      .useValue(mockJurorVoteLoader)
+      .overrideProvider(UserProfileLoader)
+      .useValue(mockUserProfileLoader)
+      .compile();
 
     app = module.createNestApplication();
     await app.init();
