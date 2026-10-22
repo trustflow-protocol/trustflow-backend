@@ -310,7 +310,7 @@ export class GigService implements OnModuleInit {
   async accept(id: string, responder: string): Promise<Gig> {
     return this.mutateWithRetry(id, async gig => {
       if (gig.status !== GigStatus.OPEN) {
-        throw new ConflictException(`Cannot accept a gig with status "${gig.status}"`);
+        throw new BadRequestException(`Cannot accept a gig with status "${gig.status}"`);
       }
       gig.status = GigStatus.ACCEPTED;
       gig.acceptedBy = responder;
@@ -324,7 +324,7 @@ export class GigService implements OnModuleInit {
   async cancel(id: string): Promise<Gig> {
     return this.mutateWithRetry(id, async gig => {
       if (gig.status !== GigStatus.OPEN) {
-        throw new ConflictException(`Cannot cancel a gig with status "${gig.status}"`);
+        throw new BadRequestException(`Cannot cancel a gig with status "${gig.status}"`);
       }
       gig.status = GigStatus.CANCELLED;
       gig.cancelledAt = new Date().toISOString();
@@ -337,7 +337,7 @@ export class GigService implements OnModuleInit {
   async update(id: string, dto: UpdateGigDto): Promise<Gig> {
     return this.mutateWithRetry(id, async gig => {
       if (gig.status !== GigStatus.OPEN) {
-        throw new ConflictException(`Cannot update a gig with status "${gig.status}"`);
+        throw new BadRequestException(`Cannot update a gig with status "${gig.status}"`);
       }
       if (dto.title !== undefined) gig.title = dto.title;
       if (dto.budgetXLM !== undefined) gig.budgetXLM = dto.budgetXLM;
@@ -355,7 +355,7 @@ export class GigService implements OnModuleInit {
   async remove(id: string): Promise<void> {
     return this.mutateWithRetry(id, async gig => {
       if (gig.status === GigStatus.ACCEPTED) {
-        throw new ConflictException('Cannot delete an accepted gig');
+        throw new BadRequestException('Cannot delete an accepted gig');
       }
       if (this.redis) {
         try {
