@@ -43,6 +43,8 @@ export interface PaginatedGigs {
   total: number;
   page: number;
   limit: number;
+  /** Whether additional pages exist after this one. */
+  hasMore: boolean;
 }
 
 export const DEFAULT_GIG_SEARCH_PAGE = 1;

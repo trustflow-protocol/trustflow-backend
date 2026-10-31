@@ -79,5 +79,38 @@ describe('pagination', () => {
       expect(result.items).toEqual([]);
       expect(result.total).toBe(items.length);
     });
+
+    it('reports hasMore=true when a later page still holds rows', () => {
+      const result = paginate(items, { page: 2, limit: 20 });
+
+      expect(result.hasMore).toBe(true);
+      expect(result.items).toHaveLength(20);
+    });
+
+    it('reports hasMore=false on the exact last page when total is a multiple of page size', () => {
+      // 40 items, page size 20: page 2 is the final FULL page.
+      const exact = Array.from({ length: 40 }, (_, index) => index + 1);
+
+      expect(paginate(exact, { page: 1, limit: 20 }).hasMore).toBe(true);
+      expect(paginate(exact, { page: 2, limit: 20 }).hasMore).toBe(false);
+      expect(paginate(exact, { page: 2, limit: 20 }).items).toHaveLength(20);
+    });
+
+    it('reports hasMore=false on the final partial page', () => {
+      // 45 items, page size 20: page 3 holds only 5 rows and has no successor.
+      const uneven = Array.from({ length: 45 }, (_, index) => index + 1);
+
+      expect(paginate(uneven, { page: 2, limit: 20 }).hasMore).toBe(true);
+      expect(paginate(uneven, { page: 3, limit: 20 }).hasMore).toBe(false);
+      expect(paginate(uneven, { page: 3, limit: 20 }).items).toHaveLength(5);
+    });
+
+    it('reports hasMore=false for an empty collection', () => {
+      const result = paginate([], { page: 1, limit: 20 });
+
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
+      expect(result.hasMore).toBe(false);
+    });
   });
 });

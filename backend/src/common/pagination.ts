@@ -6,6 +6,16 @@ export interface PaginatedResponse<T> {
   total: number;
   page: number;
   limit: number;
+  /**
+   * Whether additional pages exist after this one.
+   *
+   * Computed as `page * limit < total` so it is `false` once the last row has
+   * been returned, even when `total` is an exact multiple of `limit`. A naive
+   * `<=` comparison (or a count that drifts from the filtered list) would flip
+   * this to `true` on the final full page and make clients issue one extra,
+   * empty request.
+   */
+  hasMore: boolean;
 }
 
 export interface PaginationQuery {
@@ -40,5 +50,6 @@ export function paginate<T>(items: T[], query: PaginationQuery = {}): PaginatedR
     total: items.length,
     page,
     limit,
+    hasMore: page * limit < items.length,
   };
 }
