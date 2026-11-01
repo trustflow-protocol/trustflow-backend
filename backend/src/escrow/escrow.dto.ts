@@ -1,14 +1,23 @@
 import { z } from 'zod';
+import { parseAmount } from '../common/amount';
 import { IsStellarPublicKey } from '../common/validators/is-stellar-public-key.validator';
 
 /** Shared across every Stellar address field in this module so the format check can't drift. */
 export const STELLAR_ADDRESS_REGEX = /^G[A-Z2-7]{55}$/;
 
+/** Decimal XLM string with up to 7 places (stroop precision). */
+export const XLM_AMOUNT_REGEX = /^\d+(\.\d{1,7})?$/;
+
 export const CreateEscrowSchema = z
   .object({
     depositor: z.string().regex(STELLAR_ADDRESS_REGEX, 'Invalid Stellar address'),
     beneficiary: z.string().regex(STELLAR_ADDRESS_REGEX, 'Invalid Stellar address'),
-    amountXLM: z.string().regex(/^\d+(\.\d{1,7})?$/, 'Invalid XLM amount'),
+    amountXLM: z
+      .string()
+      .regex(XLM_AMOUNT_REGEX, 'Invalid XLM amount')
+      .refine(value => parseAmount(value).isGreaterThan(0), {
+        message: 'Amount must be greater than zero',
+      }),
     deadlineBlocks: z.number().int().positive().optional(),
   })
   .refine(data => data.depositor !== data.beneficiary, {
