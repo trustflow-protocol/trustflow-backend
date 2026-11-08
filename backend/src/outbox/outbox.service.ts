@@ -288,9 +288,13 @@ export class OutboxService {
     type: string,
     payload: unknown,
     dedupKey?: string,
+    schemaVersion: number = 1,
   ): void {
     const event = this.create(type, 'webhook', dedupKey ?? type, payload);
     if (dedupKey) (event as OutboxEvent).dedupKey = dedupKey;
+    if (schemaVersion !== undefined) {
+      (event as any).schemaVersion = schemaVersion;
+    }
     this.append(event).catch(err =>
       this.logger.error(`sendWebhook: failed to append event ${event.id}: ${err}`),
     );

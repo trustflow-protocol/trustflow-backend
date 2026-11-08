@@ -307,12 +307,23 @@ export class WebhookSubscriptionController {
   // ── helpers ──────────────────────────────────────────────────────────────────
 
   private toResponseDto(sub: WebhookSubscription): WebhookSubscriptionResponseDto {
+    const hasPreviousSecret = Boolean(
+      sub.previousSecret &&
+        sub.previousSecretExpiresAt &&
+        sub.previousSecretExpiresAt.getTime() > Date.now(),
+    );
     return {
       id: sub.id,
       dappId: sub.dappId,
       url: sub.url,
       topics: [...sub.topics],
       ...(sub.secret ? { secret: maskSecret(sub.secret) } : {}),
+      ...(hasPreviousSecret
+        ? {
+            hasPreviousSecret: true,
+            previousSecretExpiresAt: sub.previousSecretExpiresAt!.toISOString(),
+          }
+        : {}),
       createdAt: sub.createdAt.toISOString(),
       updatedAt: sub.updatedAt.toISOString(),
     };

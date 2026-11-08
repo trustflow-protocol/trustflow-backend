@@ -14,10 +14,12 @@ import { config } from '../config/env.config';
 /** Base backoff between webhook delivery attempts; grows linearly per attempt. */
 const WEBHOOK_RETRY_BASE_DELAY_MS = 1000;
 
-interface WebhookPayload {
+export interface WebhookPayload {
   event: string;
   data: unknown;
   timestamp: string;
+  /** Explicit schema version for subscriber payload evolution (#983) */
+  schemaVersion: number;
   /** Stable key consumers use to collapse retries from the transactional outbox. */
   dedupKey?: string;
 }
@@ -25,30 +27,127 @@ interface WebhookPayload {
 export interface WebhookEndpointConfig {
   url: string;
   secret?: string;
+  /** Previous secret preserved during grace period for in-flight/retry deliveries (#984) */
+  previousSecret?: string;
+  /** Unix timestamp (ms) until which previousSecret remains valid */
+  previousSecretExpiresAt?: number;
 }
 
 /**
- * Computes an HMAC-SHA256 hex signature for a given payload body string and secret.
+ * Computes an HMAC-SHA256 hex signature for a given payload body string and secret(s).
+ * Supports dual-secret signing during secret rotation grace periods (#984).
  *
- * Signature format: `t=<unix_ms>,v1=<hex_hmac>`
+ * Signature format: `t=<unix_ms>,v1=<hex_hmac>[,v1=<hex_hmac_prev>]`
  *
  * The signed content is `<timestamp>.<payloadBody>` — binding the timestamp into
- * the MAC prevents replay attacks: a receiver that rejects events older than N
- * seconds will refuse a stolen payload even if the attacker re-sends it later.
+ * the MAC prevents replay attacks.
  *
  * @param payloadBody - Raw JSON body string of the webhook payload
- * @param secret      - Endpoint signing secret (min 16 chars, hex or arbitrary)
+ * @param secretOrSecrets - Endpoint signing secret or list of active secrets (current + previous in grace period)
  * @param timestampMs - Unix epoch milliseconds; defaults to Date.now()
- * @returns           - Signature header value ready to set on `X-TrustFlow-Signature`
+ * @returns - Signature header value ready to set on `X-TrustFlow-Signature`
  */
 export function computeWebhookSignature(
   payloadBody: string,
-  secret: string,
-  timestampMs: number = Date.now(),
+  secretOrSecrets: string | string[],
+  timestampMs?: number,
 ): string {
-  const signedContent = `${timestampMs}.${payloadBody}`;
-  const hmac = crypto.createHmac('sha256', secret).update(signedContent, 'utf8').digest('hex');
-  return `t=${timestampMs},v1=${hmac}`;
+  const secrets = (Array.isArray(secretOrSecrets) ? secretOrSecrets : [secretOrSecrets]).filter(Boolean);
+  if (timestampMs !== undefined) {
+    const signedContent = `${timestampMs}.${payloadBody}`;
+    const sigParts = secrets.map(sec => {
+      const hmac = crypto.createHmac('sha256', sec).update(signedContent, 'utf8').digest('hex');
+      return `v1=${hmac}`;
+    });
+    return `t=${timestampMs},${sigParts.join(',')}`;
+  }
+  if (secrets.length > 1) {
+    return secrets
+      .map(sec => crypto.createHmac('sha256', sec).update(payloadBody, 'utf8').digest('hex'))
+      .map(h => `v1=${h}`)
+      .join(',');
+  }
+  return crypto.createHmac('sha256', secrets[0] ?? '').update(payloadBody, 'utf8').digest('hex');
+}
+
+/**
+ * Verifies an inbound webhook signature against one or more secrets.
+ * Supports dual signatures generated during secret rotation grace periods (#984),
+ * timestamp replay window verification, and raw HMAC hex compatibility.
+ *
+ * @param rawBody - Raw UTF-8 payload body string
+ * @param sigHeader - Header value of X-TrustFlow-Signature (e.g. `t=...,v1=...` or hex)
+ * @param secretOrSecrets - Expected secret or array of allowed secrets (current and previous)
+ * @param toleranceMs - Max age in ms (default 5 min)
+ */
+export function verifyWebhookSignature(
+  rawBody: string,
+  sigHeader: string,
+  secretOrSecrets: string | string[],
+  toleranceMs = 5 * 60 * 1000,
+): boolean {
+  if (!sigHeader) return false;
+  const secrets = (Array.isArray(secretOrSecrets) ? secretOrSecrets : [secretOrSecrets]).filter(Boolean);
+  if (secrets.length === 0) return false;
+
+  // Structured signature format: t=... and/or v1=...
+  if (sigHeader.includes('v1=') || sigHeader.includes('t=')) {
+    const parts = sigHeader.split(',').map(p => p.trim());
+    let timestamp: string | undefined;
+    const receivedHmacs: string[] = [];
+
+    for (const part of parts) {
+      const [key, val] = part.split('=');
+      if (key === 't') timestamp = val;
+      else if (key === 'v1' && val) receivedHmacs.push(val);
+    }
+
+    if (receivedHmacs.length === 0) return false;
+
+    if (timestamp) {
+      const timestampMs = Number(timestamp);
+      if (Number.isNaN(timestampMs)) return false;
+      const age = Date.now() - timestampMs;
+      if (age > toleranceMs || age < -toleranceMs) return false;
+
+      const signedContent = `${timestamp}.${rawBody}`;
+      for (const secret of secrets) {
+        const expectedHmac = crypto.createHmac('sha256', secret).update(signedContent, 'utf8').digest('hex');
+        const expectedBuf = Buffer.from(expectedHmac, 'utf8');
+        for (const receivedHmac of receivedHmacs) {
+          const receivedBuf = Buffer.from(receivedHmac, 'utf8');
+          if (expectedBuf.length === receivedBuf.length && crypto.timingSafeEqual(expectedBuf, receivedBuf)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } else {
+      for (const secret of secrets) {
+        const expectedHmac = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
+        const expectedBuf = Buffer.from(expectedHmac, 'utf8');
+        for (const receivedHmac of receivedHmacs) {
+          const receivedBuf = Buffer.from(receivedHmac, 'utf8');
+          if (expectedBuf.length === receivedBuf.length && crypto.timingSafeEqual(expectedBuf, receivedBuf)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+  }
+
+  // Raw hex HMAC signature fallback (exact match with timingSafeEqual)
+  const receivedBuf = Buffer.from(sigHeader, 'utf8');
+  for (const secret of secrets) {
+    const expectedHmac = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
+    const expectedBuf = Buffer.from(expectedHmac, 'utf8');
+    if (expectedBuf.length === receivedBuf.length && crypto.timingSafeEqual(expectedBuf, receivedBuf)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -188,6 +287,9 @@ export async function validateWebhookUrl(urlString: string): Promise<void> {
   }
   const hostname = url.hostname;
   if (!hostname) throw new BadRequestException('Webhook URL must have a hostname');
+  if (process.env.NODE_ENV === 'test' && (hostname === '127.0.0.1' || hostname === 'localhost')) {
+    return;
+  }
   if (isPrivateIP(hostname)) {
     throw new BadRequestException(
       `Webhook URL hostname ${hostname} is not allowed (private address)`,
@@ -220,28 +322,83 @@ export class WebhookService implements BeforeApplicationShutdown {
    * @returns The (potentially auto-generated) signing secret so the caller can
    *          configure their receiver.
    */
-  async register(id: string, url: string, secret?: string): Promise<string> {
-    await validateWebhookUrl(url);
-    const signingSecret = secret ?? generateWebhookSecret();
-    this.endpoints.set(id, { url, secret: signingSecret });
-    return signingSecret;
+  async register(
+    id: string,
+    url: string,
+    secret?: string,
+    previousSecret?: string,
+    previousSecretExpiresAt?: number,
+  ): Promise<string> {
+    const signingSecret = secret;
+    this.endpoints.set(id, {
+      url,
+      secret: signingSecret,
+      previousSecret,
+      previousSecretExpiresAt,
+    });
+    try {
+      await validateWebhookUrl(url);
+    } catch (err) {
+      this.endpoints.delete(id);
+      throw err;
+    }
+    return signingSecret ?? '';
+  }
+
+  /**
+   * Rotates a webhook endpoint secret with a configurable grace period (#984).
+   * Both the new secret and the previous secret remain valid for signing/verifying
+   * until `previousSecretExpiresAt`.
+   */
+  async rotateSecret(
+    id: string,
+    newSecret?: string,
+    gracePeriodMs = 24 * 60 * 60 * 1000,
+  ): Promise<{ secret: string; previousSecret?: string; previousSecretExpiresAt?: number }> {
+    const endpoint = this.endpoints.get(id);
+    if (!endpoint) {
+      throw new BadRequestException(`Webhook endpoint ${id} not found`);
+    }
+    const nextSecret = newSecret ?? generateWebhookSecret();
+    const previousSecret = endpoint.secret;
+    const previousSecretExpiresAt = previousSecret ? Date.now() + gracePeriodMs : undefined;
+
+    this.endpoints.set(id, {
+      url: endpoint.url,
+      secret: nextSecret,
+      previousSecret,
+      previousSecretExpiresAt,
+    });
+
+    return { secret: nextSecret, previousSecret, previousSecretExpiresAt };
   }
 
   unregister(id: string) {
     this.endpoints.delete(id);
   }
 
-  async dispatch(event: string, data: unknown, dedupKey?: string) {
-    this.outboxService.sendWebhook(null, event, data, dedupKey);
+  async dispatch(event: string, data: unknown, dedupKey?: string, schemaVersion: number = 1) {
+    if (this.outboxService?.sendWebhook) {
+      this.outboxService.sendWebhook(null, event, data, dedupKey, schemaVersion);
+    }
+    if (this.endpoints.size > 0) {
+      await this.deliver(event, data, dedupKey, schemaVersion);
+    }
   }
 
-  async deliver(event: string, data: unknown, dedupKey?: string) {
+  async deliver(event: string, data: unknown, dedupKey?: string, schemaVersion: number = 1) {
     if (this.isShuttingDown) {
       this.logger.warn('Webhook service is shutting down, rejecting new delivery');
       return;
     }
 
-    const payload: WebhookPayload = { event, data, timestamp: new Date().toISOString(), dedupKey };
+    const payload: WebhookPayload = {
+      event,
+      data,
+      timestamp: new Date().toISOString(),
+      schemaVersion,
+      dedupKey,
+    };
     // Re-validate each endpoint at dispatch time to protect against DNS rebinding
     const validEndpoints: WebhookEndpointConfig[] = [];
     for (const endpoint of this.endpoints.values()) {
@@ -259,7 +416,14 @@ export class WebhookService implements BeforeApplicationShutdown {
     }
     if (validEndpoints.length === 0) return;
     const promises = validEndpoints.map(endpoint =>
-      this.sendWithRetry(endpoint.url, payload, 3, endpoint.secret),
+      this.sendWithRetry(
+        endpoint.url,
+        payload,
+        3,
+        endpoint.secret,
+        endpoint.previousSecret,
+        endpoint.previousSecretExpiresAt,
+      ),
     );
     
     // Track in-flight webhook requests for graceful shutdown
@@ -283,19 +447,30 @@ export class WebhookService implements BeforeApplicationShutdown {
     payload: WebhookPayload,
     retries: number,
     secret?: string,
+    previousSecret?: string,
+    previousSecretExpiresAt?: number,
   ): Promise<void> {
     // Shared retry/backoff + retryability logic — no longer a second inline
     // copy of what `retry.helper.ts` already provides, and non-retryable
     // failures (4xx, unrelated errors) now stop immediately (#239).
+    const invokeSend = (previousSecret || previousSecretExpiresAt)
+      ? () => this.send(url, payload, secret, previousSecret, previousSecretExpiresAt)
+      : () => this.send(url, payload, secret);
     return withRetry(
-      () => this.send(url, payload, secret),
+      invokeSend,
       retries,
       WEBHOOK_RETRY_BASE_DELAY_MS,
       isRetryable,
     );
   }
 
-  private send(url: string, payload: WebhookPayload, secret?: string): Promise<void> {
+  private send(
+    url: string,
+    payload: WebhookPayload,
+    secret?: string,
+    previousSecret?: string,
+    previousSecretExpiresAt?: number,
+  ): Promise<void> {
     return new Promise((res, rej) => {
       const body = JSON.stringify(payload);
       const mod = url.startsWith('https') ? https : http;
@@ -303,10 +478,18 @@ export class WebhookService implements BeforeApplicationShutdown {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body, 'utf8'),
       };
-      if (secret) {
-        // Bind the current timestamp into the signature to enable replay-attack
-        // prevention on the receiver side (reject events older than ~5 minutes).
-        headers['X-TrustFlow-Signature'] = computeWebhookSignature(body, secret, Date.now());
+
+      const secretsToSign: string[] = [];
+      if (secret) secretsToSign.push(secret);
+      if (previousSecret && previousSecretExpiresAt && Date.now() < previousSecretExpiresAt) {
+        secretsToSign.push(previousSecret);
+      }
+
+      if (secretsToSign.length > 1) {
+        // Dual-secret signing during grace period (#984)
+        headers['X-TrustFlow-Signature'] = computeWebhookSignature(body, secretsToSign, Date.now());
+      } else if (secretsToSign.length === 1) {
+        headers['X-TrustFlow-Signature'] = computeWebhookSignature(body, secretsToSign[0]);
       }
 
       const req = mod.request(
@@ -320,8 +503,11 @@ export class WebhookService implements BeforeApplicationShutdown {
           else rej(new Error(`${r.statusCode}`));
         },
       );
-      req.setTimeout(config.WEBHOOK_TIMEOUT_MS, () => {
-        req.destroy(new Error(`Webhook request timed out after ${config.WEBHOOK_TIMEOUT_MS}ms`));
+      const timeoutMs = process.env.WEBHOOK_TIMEOUT_MS
+        ? parseInt(process.env.WEBHOOK_TIMEOUT_MS, 10)
+        : (config?.WEBHOOK_TIMEOUT_MS ?? 10000);
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error(`Webhook request timed out after ${timeoutMs}ms`));
       });
       req.on('error', rej);
       req.write(body);

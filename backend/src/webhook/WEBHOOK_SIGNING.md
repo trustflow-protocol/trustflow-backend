@@ -165,5 +165,6 @@ app.post(
 - Implement the replay-attack window (5 minutes recommended). Your system clock must be
   reasonably in sync with NTP.
 - Use `crypto.timingSafeEqual` for comparison — regular string equality leaks timing information.
-- Rotate your secret by re-registering the endpoint with a new secret value. There is no
-  partial overlap window; update your receiver before re-registering.
+- Rotate your secret via `PATCH /webhooks/subscriptions/:id` with a new `secret` and optional `gracePeriodMs` (default 24 hours).
+  During the grace period, deliveries carry dual signatures (`t=...,v1=<new_hmac>,v1=<old_hmac>`) so in-flight deliveries and retries can be verified using either the old or new secret.
+- Every webhook payload contains an explicit `schemaVersion` field (default `1`) to facilitate safe subscriber schema evolution.

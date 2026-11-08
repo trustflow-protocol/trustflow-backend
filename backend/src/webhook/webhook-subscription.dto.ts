@@ -39,6 +39,12 @@ export const UpdateWebhookSubscriptionSchema = z
       .min(16, 'Secret must be at least 16 characters')
       .max(256)
       .optional(),
+    gracePeriodMs: z
+      .number()
+      .int()
+      .positive('Grace period must be positive')
+      .max(7 * 24 * 60 * 60 * 1000, 'Grace period cannot exceed 7 days')
+      .optional(),
   })
   .refine(data => Object.keys(data).length > 0, {
     message: 'At least one field must be provided',
@@ -50,6 +56,8 @@ export const WebhookSubscriptionResponseSchema = z.object({
   url: z.string(),
   topics: z.array(z.string()),
   secret: z.string().optional(),
+  hasPreviousSecret: z.boolean().optional(),
+  previousSecretExpiresAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -91,6 +99,16 @@ export class WebhookSubscriptionResponseDto {
     description: 'Signing secret, masked (first 4 characters only)',
   })
   secret?: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether a previous secret is currently active under a grace period',
+  })
+  hasPreviousSecret?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Expiration timestamp for the previous secret grace period (ISO-8601)',
+  })
+  previousSecretExpiresAt?: string;
 
   @ApiProperty({ description: 'Creation timestamp (ISO-8601)' })
   createdAt!: string;

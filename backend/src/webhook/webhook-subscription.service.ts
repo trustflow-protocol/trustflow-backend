@@ -21,6 +21,10 @@ export interface WebhookSubscription {
   topics: string[];
   /** HMAC-SHA256 secret used to sign outbound payloads. Never exposed in API responses. */
   secret?: string;
+  /** Previous secret preserved during grace period for in-flight/retry deliveries (#984) */
+  previousSecret?: string;
+  /** Expiration timestamp for the previous secret grace period */
+  previousSecretExpiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -98,16 +102,25 @@ export class WebhookSubscriptionService {
     }
     if (data.url !== undefined) await validateWebhookUrl(data.url);
 
+    const isRotatingSecret = data.secret !== undefined && data.secret !== existing.secret;
+    const gracePeriodMs = data.gracePeriodMs ?? 24 * 60 * 60 * 1000;
+
     const updated: WebhookSubscription = {
       ...existing,
       ...(data.dappId !== undefined ? { dappId: data.dappId } : {}),
       ...(data.url !== undefined ? { url: data.url } : {}),
       ...(data.topics !== undefined ? { topics: data.topics } : {}),
       ...(data.secret !== undefined ? { secret: data.secret } : {}),
+      ...(isRotatingSecret && existing.secret
+        ? {
+            previousSecret: existing.secret,
+            previousSecretExpiresAt: new Date(Date.now() + gracePeriodMs),
+          }
+        : {}),
       updatedAt: new Date(),
     };
     this.subscriptions.set(id, updated);
-    this.logger.log(`Updated webhook subscription ${id}`);
+    this.logger.log(`Updated webhook subscription ${id}${isRotatingSecret ? ' (secret rotated with grace period)' : ''}`);
     return updated;
   }
 

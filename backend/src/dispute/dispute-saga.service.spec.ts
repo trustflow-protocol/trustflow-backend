@@ -5,7 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
-import { DisputeSagaService } from './dispute-saga.service';
+import { DisputeSagaService, SAGA_EVENTS } from './dispute-saga.service';
 import { DisputeSaga, DisputeStep, DisputeVerdict } from './dispute.types';
 import { Escrow, EscrowService, EscrowStatus } from '../escrow/escrow.service';
 import { WebhookService } from '../webhook/webhook.service';
@@ -506,6 +506,24 @@ describe('DisputeSagaService', () => {
       await service.castVote(sagaId, { jurorAddress: JURORS[1], vote: 'beneficiary' });
       const saga = await service.castVote(sagaId, { jurorAddress: JURORS[2], vote: 'split' });
       expect(saga.verdict).toBe(DisputeVerdict.SPLIT);
+    });
+
+    it('ensures dispute status is committed and queryable before VERDICT_REACHED webhook fires (#985)', async () => {
+      let stateAtDispatch: DisputeSaga | undefined;
+      (webhookService.dispatch as jest.Mock).mockImplementation(async (event: string, payload: any) => {
+        if (event === SAGA_EVENTS.VERDICT_REACHED) {
+          // Immediately query DB back when webhook arrives
+          stateAtDispatch = await service.findById(sagaId);
+        }
+      });
+
+      await service.castVote(sagaId, { jurorAddress: JURORS[0], vote: 'depositor' });
+      await service.castVote(sagaId, { jurorAddress: JURORS[1], vote: 'depositor' });
+      await service.castVote(sagaId, { jurorAddress: JURORS[2], vote: 'beneficiary' });
+
+      expect(stateAtDispatch).toBeDefined();
+      expect(stateAtDispatch!.verdict).toBe(DisputeVerdict.DEPOSITOR_WINS);
+      expect(stateAtDispatch!.currentStep).toBe(DisputeStep.PAYOUT);
     });
 
     it('throws BadRequestException when address is not an assigned juror', async () => {

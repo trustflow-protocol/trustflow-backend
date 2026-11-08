@@ -118,7 +118,8 @@ export class WebhookProcessor implements OnModuleInit, OnModuleDestroy {
    */
   private async processEvent(event: any): Promise<void> {
     try {
-      await this.webhookService.deliver(event.type, event.payload, event.dedupKey);
+      const schemaVersion = event.schemaVersion ?? event.payload?.schemaVersion ?? 1;
+      await this.webhookService.deliver(event.type, event.payload, event.dedupKey, schemaVersion);
       await this.outbox.markDelivered(event, true);
       this.metrics.increment('webhook_delivery_total', {
         result: 'delivered',

@@ -634,6 +634,19 @@ export class DisputeSagaService implements OnModuleInit {
         saga.votes = [...(saga.votes ?? []), vote];
         this.touch(saga);
 
+        // All jurors have voted — compute verdict (exactly once)
+        const isLastVote = saga.votes.length === saga.assignedJurors.length && !saga.verdict;
+        let computedVerdict: DisputeVerdict | undefined;
+        if (isLastVote) {
+          computedVerdict = this.computeVerdict(saga.votes);
+          saga.verdict = computedVerdict;
+          this.recordStepComplete(saga, DisputeStep.VOTING);
+          saga.currentStep = DisputeStep.PAYOUT;
+        }
+
+        // Commit the updated dispute status to database before dispatching webhooks (#985)
+        await this.persistSaga(saga);
+
         await this.webhookService.dispatch(SAGA_EVENTS.VOTE_CAST, {
           sagaId,
           jurorAddress: dto.jurorAddress,
@@ -641,15 +654,12 @@ export class DisputeSagaService implements OnModuleInit {
           votesNeeded: saga.assignedJurors.length,
         });
 
-        // All jurors have voted — compute verdict (exactly once)
-        if (saga.votes.length === saga.assignedJurors.length && !saga.verdict) {
-          const verdict = this.computeVerdict(saga.votes);
-          saga.verdict = verdict;
-          this.recordStepComplete(saga, DisputeStep.VOTING);
-          saga.currentStep = DisputeStep.PAYOUT;
-
-          await this.webhookService.dispatch(SAGA_EVENTS.VERDICT_REACHED, { sagaId, verdict });
-          this.logger.log(`Saga ${sagaId}: verdict reached — ${verdict}`);
+        if (isLastVote && computedVerdict) {
+          await this.webhookService.dispatch(SAGA_EVENTS.VERDICT_REACHED, {
+            sagaId,
+            verdict: computedVerdict,
+          });
+          this.logger.log(`Saga ${sagaId}: verdict reached — ${computedVerdict}`);
 
           const escrow = await this.escrowService.findById(saga.escrowId);
           if (escrow) {
@@ -657,14 +667,13 @@ export class DisputeSagaService implements OnModuleInit {
             // await this.notificationService.notifyVerdictReached({
             //   disputeId: sagaId,
             //   escrowId: saga.escrowId,
-            //   verdict,
+            //   verdict: computedVerdict,
             //   depositor: escrow.depositor,
             //   beneficiary: escrow.beneficiary,
             // });
           }
         }
 
-        await this.persistSaga(saga);
         return saga;
       } catch (error) {
         await this.compensateVoting(saga, dto.jurorAddress, error);

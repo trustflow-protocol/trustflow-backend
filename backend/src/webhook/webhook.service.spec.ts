@@ -3,7 +3,12 @@ import * as net from 'net';
 import * as crypto from 'crypto';
 import { AddressInfo } from 'net';
 import { Test, TestingModule } from '@nestjs/testing';
-import { WebhookService, computeWebhookSignature } from './webhook.service';
+import {
+  WebhookService,
+  computeWebhookSignature,
+  verifyWebhookSignature,
+} from './webhook.service';
+import { OutboxService } from '../outbox/outbox.service';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,7 +52,15 @@ describe('WebhookService', () => {
     process.env.WEBHOOK_TIMEOUT_MS = '500';
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [WebhookService],
+      providers: [
+        WebhookService,
+        {
+          provide: OutboxService,
+          useValue: {
+            sendWebhook: jest.fn(),
+          },
+        },
+      ],
     }).compile();
 
     service = module.get<WebhookService>(WebhookService);
@@ -215,7 +228,7 @@ describe('WebhookService', () => {
       expect(receivedHeaders).toBeDefined();
       const signatureHeader = receivedHeaders!['x-trustflow-signature'];
       expect(signatureHeader).toBeDefined();
-      expect(signatureHeader).toBe(computeWebhookSignature(receivedBody, secret));
+      expect(verifyWebhookSignature(receivedBody, signatureHeader as string, secret)).toBe(true);
 
       await close();
     });
@@ -261,9 +274,9 @@ describe('WebhookService', () => {
 
       await service.dispatch('escrow.created', { id: 'esc-mix' });
 
-      expect(signedHeaders!['x-trustflow-signature']).toBe(
-        computeWebhookSignature(signedBody, secret),
-      );
+      expect(
+        verifyWebhookSignature(signedBody, signedHeaders!['x-trustflow-signature'] as string, secret),
+      ).toBe(true);
       expect(unsignedHeaders!['x-trustflow-signature']).toBeUndefined();
 
       await serverA.close();
@@ -394,4 +407,118 @@ describe('WebhookService', () => {
       await close();
     });
   });
+
+  // ─── verifyWebhookSignature() ─────────────────────────────────────────────
+
+  describe('verifyWebhookSignature()', () => {
+    const secret = 'super-secret-key-123456';
+    const payload = JSON.stringify({ event: 'escrow.created', schemaVersion: 1, data: { id: 'esc-1' } });
+
+    it('verifies a valid single signature header', () => {
+      const now = Date.now();
+      const header = computeWebhookSignature(payload, secret, now);
+      expect(verifyWebhookSignature(payload, header, secret)).toBe(true);
+    });
+
+    it('verifies against multiple secrets during secret rotation grace period (#984)', () => {
+      const oldSecret = 'old-secret-key-123456';
+      const newSecret = 'new-secret-key-123456';
+      const now = Date.now();
+      // Outbound delivery signed with both new and previous secrets
+      const header = computeWebhookSignature(payload, [newSecret, oldSecret], now);
+
+      // Receiver configured with oldSecret can verify
+      expect(verifyWebhookSignature(payload, header, oldSecret)).toBe(true);
+      // Receiver configured with newSecret can also verify
+      expect(verifyWebhookSignature(payload, header, newSecret)).toBe(true);
+      // Receiver with wrong secret is rejected
+      expect(verifyWebhookSignature(payload, header, 'wrong-secret-1234567')).toBe(false);
+    });
+
+    it('rejects tampered payload body', () => {
+      const now = Date.now();
+      const header = computeWebhookSignature(payload, secret, now);
+      const tamperedPayload = payload.replace('esc-1', 'esc-999');
+      expect(verifyWebhookSignature(tamperedPayload, header, secret)).toBe(false);
+    });
+
+    it('rejects stale timestamps outside tolerance window (replay attack prevention)', () => {
+      const staleTimestamp = Date.now() - 10 * 60 * 1000; // 10 minutes ago
+      const header = computeWebhookSignature(payload, secret, staleTimestamp);
+      expect(verifyWebhookSignature(payload, header, secret, 5 * 60 * 1000)).toBe(false);
+    });
+  });
+
+  // ─── rotateSecret() — grace period (#984) ──────────────────────────────────
+
+  describe('rotateSecret() — grace period (#984)', () => {
+    it('preserves previousSecret and sets expiration timestamp during rotation', async () => {
+      const { url, close } = await serverWithStatus(200);
+      const initialSecret = 'initial-signing-secret-1234';
+      const newSecret = 'new-rotated-secret-567890';
+      const gracePeriodMs = 60 * 1000; // 1 minute grace period
+
+      await service.register('hook-rot', url, initialSecret);
+      const rotationResult = await service.rotateSecret('hook-rot', newSecret, gracePeriodMs);
+
+      expect(rotationResult.secret).toBe(newSecret);
+      expect(rotationResult.previousSecret).toBe(initialSecret);
+      expect(rotationResult.previousSecretExpiresAt).toBeGreaterThan(Date.now());
+
+      await close();
+    });
+
+    it('sends dual signatures during grace period so both secrets verify (#984)', async () => {
+      let receivedHeader: string | undefined;
+      let receivedBody = '';
+      const oldSecret = 'old-signing-secret-1234';
+      const newSecret = 'new-rotated-secret-567890';
+
+      const { url, close } = await startServer((req, res) => {
+        receivedHeader = req.headers['x-trustflow-signature'] as string;
+        req.on('data', c => (receivedBody += c));
+        req.on('end', () => res.writeHead(200).end());
+      });
+
+      await service.register('hook-dual', url, oldSecret);
+      await service.rotateSecret('hook-dual', newSecret, 60 * 1000); // 1m grace period
+
+      await service.dispatch('escrow.updated', { id: 'esc-dual' });
+
+      expect(receivedHeader).toBeDefined();
+      expect(receivedHeader).toContain(',v1='); // Contains two signatures
+      // Both secrets are valid
+      expect(verifyWebhookSignature(receivedBody, receivedHeader!, oldSecret)).toBe(true);
+      expect(verifyWebhookSignature(receivedBody, receivedHeader!, newSecret)).toBe(true);
+
+      await close();
+    });
+  });
+
+  // ─── schemaVersion (#983) ──────────────────────────────────────────────────
+
+  describe('schemaVersion (#983)', () => {
+    it('includes explicit schemaVersion: 1 in delivery payloads by default', async () => {
+      let receivedPayload: any;
+
+      const { url, close } = await startServer((req, res) => {
+        let body = '';
+        req.on('data', c => (body += c));
+        req.on('end', () => {
+          receivedPayload = JSON.parse(body);
+          res.writeHead(200).end();
+        });
+      });
+
+      await service.register('hook-version', url);
+      await service.dispatch('milestone.completed', { milestoneId: 'm-1' });
+
+      expect(receivedPayload).toBeDefined();
+      expect(receivedPayload.schemaVersion).toBe(1);
+      expect(receivedPayload.event).toBe('milestone.completed');
+
+      await close();
+    });
+  });
 });
+
