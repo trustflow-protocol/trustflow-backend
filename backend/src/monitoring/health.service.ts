@@ -131,10 +131,7 @@ export class HealthService {
     const controller = new AbortController();
     let timeoutId: NodeJS.Timeout | undefined;
     try {
-      timeoutId = setTimeout(
-        () => controller.abort(),
-        config.STELLAR_HEALTH_CHECK_TIMEOUT_MS,
-      );
+      timeoutId = setTimeout(() => controller.abort(), config.STELLAR_HEALTH_CHECK_TIMEOUT_MS);
       const url = config.STELLAR_HORIZON_URL;
       const r = await fetch(`${url}/`, { signal: controller.signal });
       return r.ok;
@@ -160,6 +157,17 @@ export class HealthService {
     return result;
   }
 
+  /** Adapt an already-computed boolean check to a Terminus indicator without re-pinging. */
+  private terminusIndicator(name: string, healthy: boolean): () => Promise<IndicatorResult> {
+    return () => {
+      try {
+        return Promise.resolve(this.indicatorFromCheck(name, healthy));
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    };
+  }
+
   private async checkPostgresIndicator(): Promise<IndicatorResult> {
     return this.indicatorFromCheck('postgres', await this.checkDatabase());
   }
@@ -179,10 +187,7 @@ export class HealthService {
     const controller = new AbortController();
     let timeoutId: NodeJS.Timeout | undefined;
     try {
-      timeoutId = setTimeout(
-        () => controller.abort(),
-        config.STELLAR_HEALTH_CHECK_TIMEOUT_MS,
-      );
+      timeoutId = setTimeout(() => controller.abort(), config.STELLAR_HEALTH_CHECK_TIMEOUT_MS);
       const r = await fetch(sorobanUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -190,7 +195,7 @@ export class HealthService {
         signal: controller.signal,
       });
       if (!r.ok) return { soroban_rpc: { status: 'down' } };
-      const body: any = await r.json();
+      const body = (await r.json()) as { result?: { status?: string } };
       return {
         soroban_rpc: { status: body?.result?.status === 'healthy' ? 'up' : 'down' },
       };
@@ -207,9 +212,9 @@ export class HealthService {
     if (this.healthCheckService) {
       try {
         const result = await this.healthCheckService.check([
-          async () => this.indicatorFromCheck('postgres', checks.database),
-          async () => this.indicatorFromCheck('redis', checks.redis),
-          async () => this.checkSorobanRpcIndicator(),
+          this.terminusIndicator('postgres', checks.database),
+          this.terminusIndicator('redis', checks.redis),
+          () => this.checkSorobanRpcIndicator(),
         ]);
         return result as HealthCheckResult;
       } catch (error) {
@@ -229,12 +234,8 @@ export class HealthService {
       redis: { status: checks.redis ? 'up' : 'down' },
       ...soroban,
     };
-    const info = Object.fromEntries(
-      Object.entries(details).filter(([, v]) => v.status === 'up'),
-    );
-    const error = Object.fromEntries(
-      Object.entries(details).filter(([, v]) => v.status !== 'up'),
-    );
+    const info = Object.fromEntries(Object.entries(details).filter(([, v]) => v.status === 'up'));
+    const error = Object.fromEntries(Object.entries(details).filter(([, v]) => v.status !== 'up'));
     return {
       status: Object.keys(error).length === 0 ? 'ok' : 'error',
       info,

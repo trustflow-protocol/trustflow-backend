@@ -17,10 +17,11 @@ export class HealthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Liveness probe',
-    description: 'Returns 200 if the process is up. Does not check external dependencies. Used for Kubernetes liveness probes.',
+    description:
+      'Returns 200 if the process is up. Does not check external dependencies. Used for Kubernetes liveness probes.',
   })
   @ApiResponse({ status: 200, description: 'Process is alive' })
-  async getLiveness(): Promise<import('./health.service').LivenessProbe> {
+  getLiveness(): import('./health.service').LivenessProbe {
     return this.health.liveness();
   }
 
