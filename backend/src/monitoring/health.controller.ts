@@ -50,7 +50,9 @@ export class HealthController {
   @ApiResponse({ status: 503, description: 'Service is unhealthy' })
   async getHealth(): Promise<import('./health.service').HealthStatus> {
     const result = await this.health.check();
-    if (result.status === 'down') {
+    // Matches the documented contract above (503 if down or degraded):
+    // a single failed dependency such as Redis must not return 200 (#887).
+    if (result.status !== 'ok') {
       throw new ServiceUnavailableException(result);
     }
     return result;
