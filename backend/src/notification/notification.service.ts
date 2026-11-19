@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as https from 'https';
-import { withRetry } from '../webhook/retry.helper';
+import { withRetry, isRetryable } from '../webhook/retry.helper';
+import { config } from '../config/env.config';
 
 export interface NotificationPreference {
   emailEnabled: boolean;
@@ -176,6 +177,7 @@ export class NotificationService {
           }),
         3,
         500,
+        isRetryable,
       );
       this.logger.log(`Email sent to ${to}: ${subject}`);
       return true;
@@ -216,6 +218,7 @@ export class NotificationService {
           }),
         2,
         300,
+        isRetryable,
       );
       this.logger.log(`Push notification sent to ${address}: ${title}`);
       return true;
@@ -378,11 +381,18 @@ export class NotificationService {
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve();
           } else {
-            reject(new Error(`Resend API returned ${res.statusCode}: ${data}`));
+            // "HTTP ddd" so `isRetryable` (retry.helper.ts) can extract the status code and
+            // classify 5xx/429 as retryable, matching the webhook delivery path (#975).
+            reject(new Error(`HTTP ${res.statusCode}: Resend API returned: ${data}`));
           }
         });
       });
 
+      req.setTimeout(config.NOTIFICATION_TIMEOUT_MS, () => {
+        req.destroy(
+          new Error(`ETIMEDOUT: Resend API request timed out after ${config.NOTIFICATION_TIMEOUT_MS}ms`),
+        );
+      });
       req.on('error', reject);
       req.write(body);
       req.end();
@@ -415,11 +425,16 @@ export class NotificationService {
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve();
           } else {
-            reject(new Error(`FCM API returned ${res.statusCode}: ${data}`));
+            reject(new Error(`HTTP ${res.statusCode}: FCM API returned: ${data}`));
           }
         });
       });
 
+      req.setTimeout(config.NOTIFICATION_TIMEOUT_MS, () => {
+        req.destroy(
+          new Error(`ETIMEDOUT: FCM API request timed out after ${config.NOTIFICATION_TIMEOUT_MS}ms`),
+        );
+      });
       req.on('error', reject);
       req.write(body);
       req.end();

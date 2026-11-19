@@ -137,4 +137,94 @@ describe('NotificationService', () => {
       expect(spyBuild).not.toHaveBeenCalled();
     });
   });
+
+  describe('email/push retry classification (#975)', () => {
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalPushKey = process.env.PUSH_SERVER_KEY;
+
+    beforeEach(() => {
+      process.env.RESEND_API_KEY = 'test-resend-key';
+      process.env.PUSH_SERVER_KEY = 'test-push-key';
+    });
+
+    afterEach(() => {
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalPushKey === undefined) delete process.env.PUSH_SERVER_KEY;
+      else process.env.PUSH_SERVER_KEY = originalPushKey;
+    });
+
+    it('retries a transient email timeout up to the max attempts before giving up', async () => {
+      const svc = new NotificationService();
+      const spy = jest
+        .spyOn(svc as any, 'sendResendRequest')
+        .mockRejectedValue(new Error('ETIMEDOUT: Resend API request timed out after 10000ms'));
+
+      const result = await (svc as any).sendEmail('user@example.com', 'subject', '<p>body</p>');
+
+      expect(result).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(3);
+    });
+
+    it('recovers an email send that times out once before a later attempt succeeds', async () => {
+      const svc = new NotificationService();
+      const spy = jest
+        .spyOn(svc as any, 'sendResendRequest')
+        .mockRejectedValueOnce(new Error('ETIMEDOUT: Resend API request timed out after 10000ms'))
+        .mockResolvedValueOnce(undefined);
+
+      const result = await (svc as any).sendEmail('user@example.com', 'subject', '<p>body</p>');
+
+      expect(result).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry a permanent (4xx) email failure', async () => {
+      const svc = new NotificationService();
+      const spy = jest
+        .spyOn(svc as any, 'sendResendRequest')
+        .mockRejectedValue(new Error('HTTP 401: Resend API returned: unauthorized'));
+
+      const result = await (svc as any).sendEmail('user@example.com', 'subject', '<p>body</p>');
+
+      expect(result).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries a 5xx email failure like a transient error', async () => {
+      const svc = new NotificationService();
+      const spy = jest
+        .spyOn(svc as any, 'sendResendRequest')
+        .mockRejectedValue(new Error('HTTP 503: Resend API returned: service unavailable'));
+
+      const result = await (svc as any).sendEmail('user@example.com', 'subject', '<p>body</p>');
+
+      expect(result).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(3);
+    });
+
+    it('retries a transient push notification failure up to its max attempts', async () => {
+      const svc = new NotificationService();
+      const spy = jest
+        .spyOn(svc as any, 'sendPushRequest')
+        .mockRejectedValue(new Error('ECONNRESET'));
+
+      const result = await (svc as any).sendPushNotification('GADDR', 'title', 'body');
+
+      expect(result).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry a permanent push notification failure', async () => {
+      const svc = new NotificationService();
+      const spy = jest
+        .spyOn(svc as any, 'sendPushRequest')
+        .mockRejectedValue(new Error('HTTP 400: FCM API returned: invalid token'));
+
+      const result = await (svc as any).sendPushNotification('GADDR', 'title', 'body');
+
+      expect(result).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

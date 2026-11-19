@@ -58,6 +58,9 @@ export function createRedisClient(
 
   // Ensure pipeline and multi batches respect REDIS_COMMAND_TIMEOUT_MS (#907)
   const origMulti = client.multi.bind(client);
+  // `Redis#multi` is overloaded (a `{ pipeline: false }` call resolves to `Promise<"OK">`
+  // rather than a `ChainableCommander`); this wrapper only ever returns the chainable form,
+  // so it's cast back to the original member type rather than widening the public signature.
   client.multi = function (...args: any[]) {
     const pipeline = origMulti(...args);
     const origExec = pipeline.exec.bind(pipeline);
@@ -76,7 +79,7 @@ export function createRedisClient(
       });
     };
     return pipeline;
-  };
+  } as typeof client.multi;
 
   const origPipeline = client.pipeline.bind(client);
   client.pipeline = function (...args: any[]) {

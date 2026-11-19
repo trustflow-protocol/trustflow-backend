@@ -269,7 +269,14 @@ export class ReputationService {
     try {
       const amount = parseAmount(amountXLM).toNumber();
       if (!Number.isFinite(amount) || amount <= 0) return 0;
-      return Math.min(Math.sqrt(amount), REPUTATION_MAX_AMOUNT_WEIGHT);
+      // Logarithmic rather than merely bounded-sqrt scaling (#977): a sqrt cap this low
+      // (10, reached at just 100 XLM) made every gig at or above a fairly ordinary budget
+      // contribute identically — a 100 XLM gig and a 50,000 XLM gig both saturated the cap
+      // and scored the same. log10 keeps differentiating budgets across many more orders
+      // of magnitude before the cap (now reached only around 1 billion XLM) ever applies,
+      // so the cap still exists purely as a whale/overflow guard, not as the thing nearly
+      // every real gig collides into.
+      return Math.min(1 + Math.log10(Math.max(amount, 1)), REPUTATION_MAX_AMOUNT_WEIGHT);
     } catch {
       return 0;
     }

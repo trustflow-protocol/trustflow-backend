@@ -65,16 +65,53 @@ describe('OutboxService — core API (in-memory fallback)', () => {
   });
 
   describe('reclaimExpired', () => {
-    it('moves processing items back to pending so they can be re-claimed', async () => {
+    it('moves processing items back to pending once their lease has actually expired', async () => {
       const event = service.create('t', 'x', 'id-1', {});
       await service.append(event);
-      await service.claimDue(Date.now(), 30_000, 1);
+      const now = Date.now();
+      await service.claimDue(now, 30_000, 1);
 
-      const reclaimed = await service.reclaimExpired(Date.now() + 999, 10);
+      const reclaimed = await service.reclaimExpired(now + 30_001, 10);
       expect(reclaimed).toHaveLength(1);
 
-      const claimed2 = await service.claimDue(Date.now() + 999, 30_000, 10);
+      const claimed2 = await service.claimDue(now + 30_001, 30_000, 10);
       expect(claimed2[0].id).toBe(event.id);
+    });
+
+    it('does not reclaim a claim whose lease has not expired yet (#976)', async () => {
+      // A message claimed moments ago by a consumer that is still legitimately
+      // mid-dispatch must not be treated the same as one orphaned by a crash.
+      const event = service.create('t', 'x', 'id-1', {});
+      await service.append(event);
+      const now = Date.now();
+      await service.claimDue(now, 30_000, 1);
+
+      const reclaimed = await service.reclaimExpired(now + 999, 10);
+      expect(reclaimed).toHaveLength(0);
+
+      const claimed2 = await service.claimDue(now + 999, 30_000, 10);
+      expect(claimed2).toHaveLength(0);
+    });
+
+    it('reclaims a batch orphaned by a crashed consumer once its lease expires (#976)', async () => {
+      const a = service.create('t', 'x', 'a', {});
+      const b = service.create('t', 'x', 'b', {});
+      await service.append(a);
+      await service.append(b);
+      const now = Date.now();
+      const claimed = await service.claimDue(now, 5_000, 10);
+      expect(claimed).toHaveLength(2);
+
+      // Simulate the consumer crashing: nothing ever calls markDelivered/retry.
+      // Before the lease expires, the batch must stay claimed and unreclaimable.
+      expect(await service.reclaimExpired(now + 1_000, 10)).toHaveLength(0);
+
+      // Once the lease window has passed, another consumer can pick the batch back up.
+      const reclaimed = await service.reclaimExpired(now + 5_001, 10);
+      expect(reclaimed.sort()).toEqual([a.id, b.id].sort());
+
+      const reclaimedBatch = await service.claimDue(now + 5_001, 5_000, 10);
+      expect(reclaimedBatch.map(e => e.id).sort()).toEqual([a.id, b.id].sort());
     });
   });
 

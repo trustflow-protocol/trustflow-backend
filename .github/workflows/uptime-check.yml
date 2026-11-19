@@ -1,0 +1,45 @@
+name: Synthetic Uptime Check
+
+# Periodically verifies the deployed API is actually healthy, not just reachable.
+#
+# Previously this kind of check would have pinged `/` — a trivial, unauthenticated route
+# that returns fine even when the database, Redis, or the Soroban RPC dependency is
+# completely down, since it never touches any of them. `/health`
+# (`HealthController#getHealth` / `HealthService#check`) exercises those dependencies and
+# returns a non-2xx status the moment any of them is unhealthy, so a failure here means
+# something a real user would actually notice is broken (#974).
+#
+# Requires `PRODUCTION_URL` as a repository secret (e.g. https://api.trustflow.xyz, no
+# trailing slash). On a fork, or before that secret is configured, the check skips rather
+# than failing, so this workflow is safe to merge without deployment credentials.
+
+on:
+  schedule:
+    # Every 5 minutes — frequent enough to catch an outage quickly without hammering the
+    # deployed instance or burning excessive CI minutes on a single curl.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check /health
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ github.repository_owner == 'trustflow-protocol' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Ping the deployed health endpoint
+        env:
+          PRODUCTION_URL: ${{ secrets.PRODUCTION_URL }}
+        run: |
+          if [ -z "$PRODUCTION_URL" ]; then
+            echo "::warning::PRODUCTION_URL is not configured; skipping synthetic uptime check"
+            exit 0
+          fi
+          curl -fsS --max-time 10 "$PRODUCTION_URL/health"

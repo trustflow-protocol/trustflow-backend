@@ -334,6 +334,15 @@ const EnvSchema = z
       .describe(
         'Maximum number of run records to retain per migration name, even within the TTL window. Default 50.',
       ),
+    NOTIFICATION_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10_000)
+      .describe(
+        'Timeout (ms) for outbound email/push notification requests before the attempt is ' +
+          'aborted and classified as a retryable transient failure (#975). Default 10s.',
+      ),
     WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     WEBHOOK_RELAY_BATCH_SIZE: z.coerce.number().int().positive().default(50),
     WEBHOOK_RELAY_LEASE_MS: z.coerce.number().int().positive().default(30_000),
@@ -561,7 +570,7 @@ const EnvSchema = z
           'STELLAR_HORIZON_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
         );
       }
-      if (/testnet/i.test(data.SOROBAN_RPC_URL)) {
+      if (/testnet/i.test(data.SOROBAN_RPC_URL ?? '')) {
         issue(
           'SOROBAN_RPC_URL',
           'SOROBAN_RPC_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
@@ -574,7 +583,7 @@ const EnvSchema = z
           'STELLAR_HORIZON_URL must point to the TESTNET when STELLAR_NETWORK is TESTNET',
         );
       }
-      if (/mainnet|public/i.test(data.SOROBAN_RPC_URL)) {
+      if (/mainnet|public/i.test(data.SOROBAN_RPC_URL ?? '')) {
         issue(
           'SOROBAN_RPC_URL',
           'SOROBAN_RPC_URL must point to the TESTNET when STELLAR_NETWORK is TESTNET',
