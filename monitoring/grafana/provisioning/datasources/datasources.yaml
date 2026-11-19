@@ -1,0 +1,13 @@
+# Provisions the Prometheus datasource the dashboards in ../dashboards reference by uid
+# ("prometheus"). Keeping the datasource provisioned too (not just the dashboard) means a
+# fresh Grafana instance renders the dashboard correctly without any manual setup step.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

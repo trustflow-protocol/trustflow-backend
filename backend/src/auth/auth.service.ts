@@ -1,9 +1,9 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
-import { getJwtVerificationSecrets } from '../config/env.config';
+import { config, getJwtVerificationSecrets } from '../config/env.config';
 import { NonceStoreService } from './nonce-store.service';
 import { JWT_ALGORITHM } from '../config/env.config';
 import { RefreshTokenStoreService, ACCESS_TOKEN_TTL_SECONDS } from './refresh-token-store.service';
@@ -21,6 +21,25 @@ export class AuthService {
   ) {}
 
   async generateChallenge(address: string): Promise<string> {
+    // Per-wallet limit (#993), independent of the caller's IP — see NonceStoreService.
+    const rateLimit = await this.nonceStore.checkWalletChallengeRateLimit(
+      address,
+      config.AUTH_CHALLENGE_WALLET_RATE_LIMIT_POINTS,
+      config.AUTH_CHALLENGE_WALLET_RATE_LIMIT_DURATION,
+    );
+    if (!rateLimit.allowed) {
+      this.logger.warn(`Challenge rate limit exceeded for wallet ${this.maskAddress(address)}`);
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: 'Too many challenge requests for this wallet address',
+          retryAfter: rateLimit.retryAfter,
+          scope: `wallet:${this.maskAddress(address)}`,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
     const nonce = crypto.randomBytes(32).toString('hex');
     const challenge = `${CHALLENGE_PREFIX}${nonce}`;
 

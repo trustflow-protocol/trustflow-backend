@@ -26,6 +26,12 @@ export interface DriftRecord {
   repaired: boolean;
   repairError?: string;
   detectedAt: string;
+  /**
+   * Direct link to this escrow's admin detail page (#991), so a responder triaging a drift
+   * alert doesn't have to manually copy the ID and navigate to it themselves. Omitted when
+   * `ADMIN_DASHBOARD_URL` isn't configured.
+   */
+  adminUrl?: string;
 }
 
 export interface ReconciliationError {

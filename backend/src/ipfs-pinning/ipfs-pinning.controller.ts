@@ -118,7 +118,6 @@ export class IpfsPinningController {
   unpin(@Param('cid') cid: string) {
     return this.pinningService.unpin(cid);
   }
-}
 
   @Post('providers/:name/health/reset')
   @UseGuards(AdminGuard)
@@ -140,3 +139,4 @@ export class IpfsPinningController {
     await this.providerHealth.resetProviderHealth(name);
     return { message: `Health metrics reset for provider: ${name}` };
   }
+}

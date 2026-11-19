@@ -236,7 +236,14 @@ export class EscrowReconciliationService {
       chainValue,
       repaired: false,
       detectedAt: new Date().toISOString(),
+      adminUrl: this.buildEscrowAdminUrl(contractEscrowId),
     };
+  }
+
+  /** Builds a direct admin-dashboard deep link for `contractEscrowId` (#991), or `undefined` when `ADMIN_DASHBOARD_URL` isn't configured. */
+  private buildEscrowAdminUrl(contractEscrowId: string): string | undefined {
+    if (!config.ADMIN_DASHBOARD_URL) return undefined;
+    return `${config.ADMIN_DASHBOARD_URL.replace(/\/+$/, '')}/escrows/${encodeURIComponent(contractEscrowId)}`;
   }
 
   /**

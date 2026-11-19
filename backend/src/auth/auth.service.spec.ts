@@ -4,7 +4,8 @@ import { UnauthorizedException } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
 import { AuthService } from './auth.service';
 import { NonceStoreService } from './nonce-store.service';
-import { JWT_ALGORITHM } from '../config/env.config';
+import { RefreshTokenStoreService } from './refresh-token-store.service';
+import { JWT_ALGORITHM, validateEnv } from '../config/env.config';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -12,6 +13,8 @@ describe('AuthService', () => {
   let mockNonceStore: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockJwtService: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockRefreshTokenStore: any;
 
   const TEST_ADDRESS = 'GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOP';
   const TEST_SIGNATURE = 'SGVsbG8gV29ybGQh';
@@ -26,6 +29,7 @@ describe('AuthService', () => {
       consume: jest.fn(),
       markNonceUsed: jest.fn(),
       hasActiveChallenge: jest.fn(),
+      checkWalletChallengeRateLimit: jest.fn().mockResolvedValue({ allowed: true, retryAfter: 0 }),
     };
 
     mockJwtService = {
@@ -33,11 +37,18 @@ describe('AuthService', () => {
       verify: jest.fn().mockReturnValue({ address: TEST_ADDRESS, sub: TEST_ADDRESS }),
     };
 
+    mockRefreshTokenStore = {
+      issueRefreshToken: jest.fn().mockResolvedValue('mock-refresh-token'),
+      validateAndRotateRefreshToken: jest.fn(),
+      revokeRefreshToken: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: NonceStoreService, useValue: mockNonceStore },
         { provide: JwtService, useValue: mockJwtService },
+        { provide: RefreshTokenStoreService, useValue: mockRefreshTokenStore },
       ],
     }).compile();
 
@@ -69,6 +80,34 @@ describe('AuthService', () => {
       const challenge2 = await service.generateChallenge(TEST_ADDRESS);
 
       expect(challenge1).not.toBe(challenge2);
+    });
+
+    // #993: per-wallet limit is independent of IP, so it must be checked before any
+    // challenge is minted, regardless of which (or how many) IPs are asking.
+    it('checks the per-wallet rate limit before storing a challenge', async () => {
+      mockNonceStore.store.mockResolvedValue(undefined);
+
+      await service.generateChallenge(TEST_ADDRESS);
+
+      expect(mockNonceStore.checkWalletChallengeRateLimit).toHaveBeenCalledWith(
+        TEST_ADDRESS,
+        expect.any(Number),
+        expect.any(Number),
+      );
+      expect(mockNonceStore.store).toHaveBeenCalled();
+    });
+
+    it('throws 429 and never stores a challenge once the per-wallet limit is exceeded', async () => {
+      mockNonceStore.checkWalletChallengeRateLimit.mockResolvedValue({
+        allowed: false,
+        retryAfter: 42,
+      });
+
+      await expect(service.generateChallenge(TEST_ADDRESS)).rejects.toMatchObject({
+        status: 429,
+        response: expect.objectContaining({ retryAfter: 42 }),
+      });
+      expect(mockNonceStore.store).not.toHaveBeenCalled();
     });
   });
 
@@ -125,10 +164,13 @@ describe('AuthService', () => {
       const token = service.generateToken(TEST_ADDRESS);
 
       expect(token).toBe('mock-jwt-token');
-      expect(mockJwtService.sign).toHaveBeenCalledWith({
-        address: TEST_ADDRESS,
-        sub: TEST_ADDRESS,
-      });
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        {
+          address: TEST_ADDRESS,
+          sub: TEST_ADDRESS,
+        },
+        {},
+      );
     });
   });
 

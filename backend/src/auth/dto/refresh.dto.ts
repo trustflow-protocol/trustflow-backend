@@ -8,7 +8,7 @@ export class RefreshDto {
   })
   @IsString()
   @IsNotEmpty()
-  refreshToken: string;
+  refreshToken!: string;
 
   @ApiProperty({
     description: 'Stellar wallet address',
@@ -16,5 +16,5 @@ export class RefreshDto {
   })
   @IsString()
   @IsNotEmpty()
-  address: string;
+  address!: string;
 }

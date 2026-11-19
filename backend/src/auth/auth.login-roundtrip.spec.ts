@@ -5,7 +5,9 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { Redis } from 'ioredis';
 import { AuthService } from './auth.service';
 import { NonceStoreService } from './nonce-store.service';
+import { RefreshTokenStoreService } from './refresh-token-store.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { validateEnv } from '../config/env.config';
 
 /**
  * Real challenge -> sign -> verify round trip against a real Stellar Keypair and the real
@@ -19,6 +21,7 @@ async function buildAuthService(redis: Redis | null): Promise<AuthService> {
     providers: [
       AuthService,
       NonceStoreService,
+      RefreshTokenStoreService,
       { provide: REDIS_CLIENT, useValue: redis },
       {
         provide: JwtService,
@@ -44,6 +47,8 @@ describe.each(cases)('wallet login round trip (#431) — %s', (_label, makeRedis
   let authService: AuthService;
 
   beforeEach(async () => {
+    process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-at-least-16-chars';
+    validateEnv();
     redis = makeRedis();
     if (redis) {
       const keys = await redis.keys('auth:nonce*');

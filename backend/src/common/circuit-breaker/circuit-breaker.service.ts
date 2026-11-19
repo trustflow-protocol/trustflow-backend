@@ -9,6 +9,9 @@ export interface CircuitBreakerOptions {
   resetTimeout?: number;
   rollingCountTimeout?: number;
   rollingCountBuckets?: number;
+  /** Minimum number of requests in the rolling window before error % is evaluated at all
+   * (opossum defaults to 0, so a single failed call can trip the breaker). */
+  volumeThreshold?: number;
   fallback?: (error: Error) => Promise<unknown>;
 }
 
@@ -32,6 +35,7 @@ export class CircuitBreakerService {
       resetTimeout: options.resetTimeout ?? 30000,
       rollingCountTimeout: options.rollingCountTimeout ?? 10000,
       rollingCountBuckets: options.rollingCountBuckets ?? 10,
+      volumeThreshold: options.volumeThreshold ?? 0,
       name,
     });
 

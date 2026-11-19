@@ -17,7 +17,6 @@ import { config, getJwtVerificationSecrets } from '../../config/env.config';
 import { MetricsService } from '../../monitoring/metrics.service';
 import { RateTier, RATE_LIMIT_TIERS, HIGH_REPUTATION_THRESHOLD } from './rate-tiers';
 import './rate-limit.d';
-import { getJwtVerificationSecrets } from '../auth/jwt-secrets';
 
 type RateLimitValue = number | (() => number) | undefined;
 
@@ -44,12 +43,6 @@ export type RateLimitIdentity = {
 };
 
 /** Minimal shape of the HTTP request object that rate-limiting reads from. */
-export interface RateLimitRequest {
-export interface RateLimitIdentity {
-  scope: 'ip' | 'wallet';
-  value: string;
-}
-
 interface RateLimitRequest {
   ip?: string;
   method?: string;
@@ -176,7 +169,6 @@ function getTierConfig(
 export class RateLimitGuard implements CanActivate {
   private readonly logger = new SanitizedLogger(RateLimitGuard.name);
   private readonly reflector: Reflector;
-  private readonly jwtService = new JwtService();
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
@@ -186,9 +178,14 @@ export class RateLimitGuard implements CanActivate {
     @Optional() private readonly reputationService?: import('../../reputation/reputation.service').ReputationService,
   ) {
     this.reflector = reflector;
-    // Register the Lua script once at startup
-    if (this.redis && typeof this.redis.rateLimitCheck !== 'function') {
-      this.redis.defineCommand('rateLimitCheck', { numberOfKeys: 3, lua: RATE_LIMIT_SCRIPT });
+    if (this.redis) {
+      // Register the Lua script once at startup
+      if (typeof this.redis.rateLimitCheck !== 'function') {
+        this.redis.defineCommand('rateLimitCheck', { numberOfKeys: 3, lua: RATE_LIMIT_SCRIPT });
+      }
+    } else {
+      // Logged once here, not on every request in canActivate()'s `if (!this.redis) return true`.
+      this.logger.warn('Redis not configured — rate limiting disabled');
     }
   }
 
@@ -376,7 +373,7 @@ export class RateLimitGuard implements CanActivate {
       this.reflector.getAllAndOverride<'allow' | 'deny'>('rate_limit_on_redis_error', [
         context.getHandler(),
         context.getClass(),
-      ]) ?? 'allow';
+      ]) ?? config.RATE_LIMIT_ON_REDIS_ERROR;
 
     this.metrics?.increment('rate_limit_redis_error_total', { route, policy });
     this.logRedisError(error, identities, route, policy);

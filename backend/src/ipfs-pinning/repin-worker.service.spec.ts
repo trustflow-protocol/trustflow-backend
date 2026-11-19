@@ -1,7 +1,8 @@
 import { RepinWorkerService } from './repin-worker.service';
 import { IpfsPinningService } from './ipfs-pinning.service';
-import { PinStatus } from './ipfs-pinning.types';
+import { PinRedundancy, PinStatus } from './ipfs-pinning.types';
 import { DistributedLockService } from '../common/redis/distributed-lock.service';
+import { resetEnvConfig, setTestEnv, validateEnv } from '../config/env.config';
 
 /** Flushes the microtask queue so chained awaits inside a fake-timer tick settle. */
 async function flushPromises(): Promise<void> {
@@ -24,6 +25,7 @@ function makeRecord(cid: string, status: PinStatus) {
     size: 1,
     replicationFactor: 2,
     status,
+    redundancy: PinRedundancy.NONE,
     providers: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -36,6 +38,9 @@ describe('RepinWorkerService', () => {
   let worker: RepinWorkerService;
 
   beforeEach(() => {
+    process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-at-least-16-chars';
+    resetEnvConfig();
+    validateEnv();
     pinningService = {
       findAll: jest.fn().mockResolvedValue([]),
       reconcile: jest.fn().mockResolvedValue(undefined),
@@ -51,6 +56,7 @@ describe('RepinWorkerService', () => {
     jest.useRealTimers();
     if (originalInterval === undefined) delete process.env.IPFS_REPIN_INTERVAL_MS;
     else process.env.IPFS_REPIN_INTERVAL_MS = originalInterval;
+    resetEnvConfig();
   });
 
   describe('runOnce', () => {
@@ -99,7 +105,9 @@ describe('RepinWorkerService', () => {
 
     it('honors a custom IPFS_REPIN_INTERVAL_MS', () => {
       jest.useFakeTimers();
-      process.env.IPFS_REPIN_INTERVAL_MS = '1000';
+      // config is cached on first validateEnv() call — setTestEnv() resets that cache too,
+      // so this override actually takes effect instead of the one validated in beforeEach.
+      setTestEnv({ IPFS_REPIN_INTERVAL_MS: '1000' });
       pinningService.findAll.mockResolvedValue([makeRecord('cid-a', PinStatus.DEGRADED)]);
 
       worker.onModuleInit();
@@ -137,6 +145,16 @@ describe('RepinWorkerService', () => {
 });
 
 describe('RepinWorkerService — concurrency & isolation (#237)', () => {
+  beforeEach(() => {
+    process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-at-least-16-chars';
+    resetEnvConfig();
+    validateEnv();
+  });
+
+  afterEach(() => {
+    resetEnvConfig();
+  });
+
   it('reconciles degraded pins concurrently and keeps per-CID error isolation', async () => {
     const records = Array.from({ length: 8 }, (_, i) => makeRecord(`cid-${i}`, PinStatus.DEGRADED));
     const pinningService: jest.Mocked<Pick<IpfsPinningService, 'findAll' | 'reconcile'>> = {

@@ -11,5 +11,5 @@ export class ChallengeDto {
   @Matches(/^G[A-Z0-9]{55}$/, {
     message: 'address must be a valid Stellar public key (G...)',
   })
-  address: string;
+  address!: string;
 }

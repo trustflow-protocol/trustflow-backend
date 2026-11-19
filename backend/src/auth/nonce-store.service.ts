@@ -6,6 +6,12 @@ import { REDIS_CLIENT } from '../common/redis/redis.module';
 const NONCE_TTL_SECONDS = 60;
 const CONSUMED_TTL_SECONDS = 300;
 
+export interface WalletRateLimitResult {
+  allowed: boolean;
+  /** Seconds until the caller should retry; 0 when `allowed` is true. */
+  retryAfter: number;
+}
+
 const GETDEL_LUA = `
 local val = redis.call('GET', KEYS[1])
 if val then
@@ -20,6 +26,7 @@ export class NonceStoreService {
 
   private readonly inMemoryChallenges = new Map<string, { challenge: string; expiresAt: number }>();
   private readonly inMemoryConsumed = new Map<string, number>();
+  private readonly inMemoryWalletChallengeCounts = new Map<string, { count: number; resetAt: number }>();
 
   private get redis(): Redis | null {
     return this.redisClient;
@@ -187,6 +194,52 @@ export class NonceStoreService {
     return true;
   }
 
+  /**
+   * Fixed-window counter on the challenge-target wallet address, independent of the caller's
+   * IP (#993). `/auth/challenge` is unauthenticated and only ever IP-limited, so a script
+   * spread across many IPs/proxies could otherwise mint unlimited pending challenges for one
+   * target wallet, each consuming Redis memory until its 60s TTL. This is keyed on the
+   * `address` itself — the same key `store()` writes to — regardless of which IP asked.
+   */
+  async checkWalletChallengeRateLimit(
+    address: string,
+    points: number,
+    durationSeconds: number,
+  ): Promise<WalletRateLimitResult> {
+    const key = this.walletChallengeRateLimitKey(address);
+
+    if (this.redis) {
+      try {
+        const count = await this.redis.incr(key);
+        if (count === 1) {
+          await this.redis.expire(key, durationSeconds);
+        }
+        if (count > points) {
+          const ttl = await this.redis.ttl(key);
+          return { allowed: false, retryAfter: ttl > 0 ? ttl : durationSeconds };
+        }
+        return { allowed: true, retryAfter: 0 };
+      } catch (err) {
+        this.logger.warn('Redis unavailable for wallet challenge rate limit, falling back to memory');
+      }
+    }
+
+    this.cleanupExpiredEntries();
+    const now = Date.now();
+    const entry = this.inMemoryWalletChallengeCounts.get(key);
+
+    if (!entry || now > entry.resetAt) {
+      this.inMemoryWalletChallengeCounts.set(key, { count: 1, resetAt: now + durationSeconds * 1000 });
+      return { allowed: true, retryAfter: 0 };
+    }
+
+    entry.count += 1;
+    if (entry.count > points) {
+      return { allowed: false, retryAfter: Math.ceil((entry.resetAt - now) / 1000) };
+    }
+    return { allowed: true, retryAfter: 0 };
+  }
+
   async hasActiveChallenge(address: string): Promise<boolean> {
     const key = this.challengeKey(address);
 
@@ -220,6 +273,11 @@ export class NonceStoreService {
         this.inMemoryConsumed.delete(key);
       }
     }
+    for (const [key, entry] of this.inMemoryWalletChallengeCounts.entries()) {
+      if (now > entry.resetAt) {
+        this.inMemoryWalletChallengeCounts.delete(key);
+      }
+    }
   }
 
   private challengeKey(address: string): string {
@@ -228,6 +286,10 @@ export class NonceStoreService {
 
   private nonceKey(nonce: string): string {
     return `auth:nonce:used:${nonce}`;
+  }
+
+  private walletChallengeRateLimitKey(address: string): string {
+    return `auth:challenge:wallet-ratelimit:${address}`;
   }
 
   private maskAddress(address: string): string {

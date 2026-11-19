@@ -21,6 +21,7 @@ import {
   DEFAULT_REPLICATION_FACTOR,
   IPFS_EVENTS,
   PinRecord,
+  PinRedundancy,
   PinStatus,
   ProviderPinRecord,
   ProviderPinStatus,
@@ -166,6 +167,7 @@ export class IpfsPinningService implements OnModuleInit {
       filename: dto.filename,
       replicationFactor,
       status: PinStatus.FAILED,
+      redundancy: PinRedundancy.NONE,
       providers: [],
       createdAt: now,
       updatedAt: now,
@@ -175,10 +177,9 @@ export class IpfsPinningService implements OnModuleInit {
     record.replicationFactor = Math.max(record.replicationFactor, replicationFactor);
     await this.persist(record);
 
-    // Sequential failover: try providers in priority order until we have enough successes
-    const successfulProviders: PinProviderName[] = [];
-    const failedProviders: { name: PinProviderName; error: string }[] = [];
-
+    // Sequential, but exhaustive (#992): every registered provider is attempted and
+    // verified in priority order so the final status/redundancy reflects all of them,
+    // not just whichever ones were needed to satisfy replicationFactor.
     // Get the ordered list of provider names from PIN_PROVIDER_PRIORITY
     const providerNameOrder = PIN_PROVIDER_PRIORITY.filter(name => {
       return this.providers.some(p => p.name === name);
@@ -190,11 +191,11 @@ export class IpfsPinningService implements OnModuleInit {
 
       // Health latency is the real time this provider took, success or failure (#801).
       const startedAt = Date.now();
+      const entry = this.upsertProviderEntry(record, providerName);
+      entry.attempts += 1;
+
       try {
         // Execute pin with circuit breaker
-        const entry = this.upsertProviderEntry(record, providerName);
-        entry.attempts += 1;
-
         const pinResult = await this.circuitBreakerService.execute(
           `ipfs-pin-${providerName}`,
           async () => provider.pin(record.cid, buffer),
@@ -202,6 +203,10 @@ export class IpfsPinningService implements OnModuleInit {
             name: `ipfs-pin-${providerName}`,
             timeout: 60000,
             errorThresholdPercentage: 50,
+            // A single transient failure must not trip the breaker for every other call to
+            // this provider (opossum's default volumeThreshold is 0, i.e. one sample is
+            // enough to hit 100% error rate) — require a few samples first.
+            volumeThreshold: 3,
             resetTimeout: 30000,
           },
         );
@@ -214,6 +219,10 @@ export class IpfsPinningService implements OnModuleInit {
             name: `ipfs-verify-${providerName}`,
             timeout: 30000,
             errorThresholdPercentage: 50,
+            // A single transient failure must not trip the breaker for every other call to
+            // this provider (opossum's default volumeThreshold is 0, i.e. one sample is
+            // enough to hit 100% error rate) — require a few samples first.
+            volumeThreshold: 3,
             resetTimeout: 30000,
           },
         );
@@ -224,20 +233,15 @@ export class IpfsPinningService implements OnModuleInit {
         entry.pinnedAt = new Date().toISOString();
         entry.lastVerifiedAt = entry.pinnedAt;
         entry.lastError = undefined;
-        successfulProviders.push(providerName);
 
         // Record health success
         if (this.providerHealth) {
           await this.providerHealth.recordPinSuccess(providerName, Date.now() - startedAt);
         }
-
-        // Check if we've reached the replication factor
-        if (successfulProviders.length >= replicationFactor) {
-          break;
-        }
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        failedProviders.push({ name: providerName, error: errMsg });
+        entry.status = ProviderPinStatus.FAILED;
+        entry.lastError = errMsg;
 
         // Record health failure
         if (this.providerHealth) {
@@ -256,80 +260,41 @@ export class IpfsPinningService implements OnModuleInit {
         continue;
       }
     }
+    // Every configured provider has now been attempted and verified synchronously — #992:
+    // this used to stop as soon as `replicationFactor` succeeded and cross-pin the rest in
+    // the background, so the response (and a caller checking it right after) could not tell
+    // whether the remaining providers actually ended up holding the content.
 
-    // Update record with successful providers
-    record.providers = successfulProviders.map(name => {
-      const entry = this.upsertProviderEntry(record, name);
-      // Re-fetch the entry we just created
-      const existingEntry = record.providers.find(e => e.provider === name);
-      return existingEntry ?? { provider: name, status: ProviderPinStatus.PINNED, attempts: 1 };
-    });
-
-    // Finalize status based on how many providers succeeded
+    // Finalize status (relative to replicationFactor) and redundancy (relative to every
+    // registered provider) based on how many providers succeeded.
     this.finalizeStatus(record);
 
     await this.persist(record);
 
-    // Fire-and-forge background cross-pinning to remaining providers
-    // This does not block the response but ensures redundancy
-    if (isNew && successfulProviders.length > 0 && successfulProviders.length < this.providers.length) {
-      void this.crossPinRemainingProviders(record, buffer, successfulProviders);
-    }
-
-    if (isNew && this.countHealthy(record) > 0) {
-      await this.webhookService.dispatch(IPFS_EVENTS.PIN_CREATED, {
-        cid: record.cid,
-        replicationFactor: record.replicationFactor,
-        pinnedProviders: this.healthyProviders(record),
-      });
-    }
-
-    return record;
-  }
-
-  /**
-   * Fire-and-forge background cross-pinning to providers not yet attempted.
-   * Dispatches a NestJS background pattern via async void to not block the response.
-   */
-  private async crossPinRemainingProviders(
-    record: PinRecord,
-    content: Buffer,
-    alreadySuccessful: PinProviderName[],
-  ): Promise<void> {
-    const candidates = this.providers.filter(p => !alreadySuccessful.includes(p.name));
-
-    if (candidates.length === 0) return;
-
-    this.logger.log(`Starting background cross-pin to ${candidates.length} remaining providers for CID ${record.cid}`);
-
-    for (const provider of candidates) {
-      const startedAt = Date.now();
-      try {
-        await this.pinWithProvider(record, provider, content);
-        // Record health success for the cross-pin
-        if (this.providerHealth) {
-          await this.providerHealth.recordPinSuccess(provider.name, Date.now() - startedAt);
-        }
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
-          `Background cross-pin failed for provider ${provider.name}: ${errMsg}`,
+    if (isNew) {
+      if (record.status === PinStatus.HEALTHY) {
+        await this.webhookService.dispatch(IPFS_EVENTS.PIN_CREATED, {
+          cid: record.cid,
+          replicationFactor: record.replicationFactor,
+          pinnedProviders: this.healthyProviders(record),
+        });
+      } else if (record.status === PinStatus.DEGRADED) {
+        await this.webhookService.dispatch(IPFS_EVENTS.PIN_DEGRADED, {
+          cid: record.cid,
+          healthyProviders: this.countHealthy(record),
+          replicationFactor: record.replicationFactor,
+        });
+      } else {
+        // Every registered provider failed to pin the content (#992): this must be
+        // surfaced as a hard failure, not a 201 that silently carries a FAILED record.
+        await this.webhookService.dispatch(IPFS_EVENTS.PIN_FAILED, { cid: record.cid });
+        throw new ServiceUnavailableException(
+          `Failed to pin ${record.cid} to any of the ${this.providers.length} registered provider(s)`,
         );
-        // Record health failure for the cross-pin
-        if (this.providerHealth) {
-          await this.providerHealth.recordPinFailure(
-            provider.name,
-            Date.now() - startedAt,
-            error as Error,
-          );
-        }
-        // Non-fatal — cross-pin best-effort only
       }
     }
 
-    // Re-finalize status after cross-pin attempts
-    this.finalizeStatus(record);
-    await this.persist(record);
+    return record;
   }
 
   /**
@@ -514,6 +479,7 @@ export class IpfsPinningService implements OnModuleInit {
           name: `ipfs-pin-${provider.name}`,
           timeout: 60000,
           errorThresholdPercentage: 50,
+          volumeThreshold: 3,
           resetTimeout: 30000,
         },
       );
@@ -525,6 +491,7 @@ export class IpfsPinningService implements OnModuleInit {
           name: `ipfs-verify-${provider.name}`,
           timeout: 30000,
           errorThresholdPercentage: 50,
+          volumeThreshold: 3,
           resetTimeout: 30000,
         },
       );
@@ -561,6 +528,7 @@ export class IpfsPinningService implements OnModuleInit {
           name: `ipfs-unpin-${name}`,
           timeout: 60000,
           errorThresholdPercentage: 50,
+          volumeThreshold: 3,
           resetTimeout: 30000,
         },
       );
@@ -570,6 +538,7 @@ export class IpfsPinningService implements OnModuleInit {
           name: `ipfs-verify-${name}`,
           timeout: 30000,
           errorThresholdPercentage: 50,
+          volumeThreshold: 3,
           resetTimeout: 30000,
         })
         .catch(() => true);
@@ -605,6 +574,11 @@ export class IpfsPinningService implements OnModuleInit {
     if (healthy === 0) record.status = PinStatus.FAILED;
     else if (healthy < record.replicationFactor) record.status = PinStatus.DEGRADED;
     else record.status = PinStatus.HEALTHY;
+
+    if (healthy === 0) record.redundancy = PinRedundancy.NONE;
+    else if (healthy >= this.providers.length) record.redundancy = PinRedundancy.FULL;
+    else record.redundancy = PinRedundancy.PARTIAL;
+
     record.updatedAt = new Date().toISOString();
   }
 

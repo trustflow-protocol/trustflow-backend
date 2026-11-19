@@ -5,8 +5,9 @@ import {
 } from '@nestjs/common';
 import { IpfsPinningService, IPFS_UNPIN_FAILURE_METRIC } from './ipfs-pinning.service';
 import { computeCidV1Raw } from './cid.util';
-import { IPFS_EVENTS, PinStatus, ProviderPinStatus } from './ipfs-pinning.types';
+import { IPFS_EVENTS, PinRedundancy, PinStatus, ProviderPinStatus } from './ipfs-pinning.types';
 import { IpfsPinProvider, PinProviderName } from './providers/ipfs-provider.interface';
+import { CircuitBreakerService } from '../common/circuit-breaker';
 
 function makeProvider(name: PinProviderName): jest.Mocked<IpfsPinProvider> {
   return {
@@ -24,6 +25,7 @@ describe('IpfsPinningService', () => {
   let infura: jest.Mocked<IpfsPinProvider>;
   let webhookService: { dispatch: jest.Mock };
   let service: IpfsPinningService;
+  let circuitBreakerService: CircuitBreakerService;
 
   const CONTENT = Buffer.from('trustflow deliverable payload').toString('base64');
   const CID = computeCidV1Raw(Buffer.from('trustflow deliverable payload'));
@@ -33,23 +35,33 @@ describe('IpfsPinningService', () => {
     web3Storage = makeProvider(PinProviderName.WEB3_STORAGE);
     infura = makeProvider(PinProviderName.INFURA);
     webhookService = { dispatch: jest.fn().mockResolvedValue(undefined) };
-    service = new IpfsPinningService([pinata, web3Storage, infura], webhookService as any);
+    circuitBreakerService = new CircuitBreakerService();
+    service = new IpfsPinningService(
+      [pinata, web3Storage, infura],
+      webhookService as any,
+      circuitBreakerService,
+    );
   });
 
   it('throws on construction with no providers', () => {
-    expect(() => new IpfsPinningService([], webhookService as any)).toThrow();
+    expect(
+      () => new IpfsPinningService([], webhookService as any, circuitBreakerService),
+    ).toThrow();
   });
 
   describe('pinContent', () => {
-    it('pins to the first `replicationFactor` providers and reports HEALTHY', async () => {
+    it('pins to every registered provider and reports HEALTHY with full redundancy', async () => {
       const record = await service.pinContent({ content: CONTENT });
 
       expect(record.cid).toBe(CID);
       expect(record.status).toBe(PinStatus.HEALTHY);
+      expect(record.redundancy).toBe(PinRedundancy.FULL);
       expect(record.replicationFactor).toBe(2);
+      // #992: every registered provider is attempted and verified, not just the first two
+      // needed to satisfy replicationFactor — the response must reflect all of them.
       expect(pinata.pin).toHaveBeenCalledWith(CID, Buffer.from(CONTENT, 'base64'));
+      expect(infura.pin).toHaveBeenCalled();
       expect(web3Storage.pin).toHaveBeenCalled();
-      expect(infura.pin).not.toHaveBeenCalled();
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         IPFS_EVENTS.PIN_CREATED,
         expect.objectContaining({ cid: CID }),
@@ -99,11 +111,33 @@ describe('IpfsPinningService', () => {
       const record = await service.pinContent({ content: CONTENT });
 
       expect(record.status).toBe(PinStatus.DEGRADED);
+      expect(record.redundancy).toBe(PinRedundancy.PARTIAL);
       expect(record.providers.filter(p => p.status === ProviderPinStatus.PINNED)).toHaveLength(1);
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         IPFS_EVENTS.PIN_DEGRADED,
         expect.objectContaining({ cid: CID, healthyProviders: 1 }),
       );
+    });
+
+    // #992: the historical bug — resolving as soon as `replicationFactor` providers
+    // succeeded and leaving the rest to a background job never reflected in the response.
+    // A caller who configured 3 providers but only required 2 must still be able to tell
+    // the third did not actually end up holding the content.
+    it('reports a partial-redundancy pin as HEALTHY (replicationFactor met) but not fully redundant', async () => {
+      infura.pin.mockRejectedValue(new Error('infura unreachable'));
+
+      const record = await service.pinContent({ content: CONTENT });
+
+      expect(record.status).toBe(PinStatus.HEALTHY);
+      expect(record.redundancy).toBe(PinRedundancy.PARTIAL);
+      expect(pinata.pin).toHaveBeenCalled();
+      expect(infura.pin).toHaveBeenCalled();
+      expect(web3Storage.pin).toHaveBeenCalled();
+      const infuraEntry = record.providers.find(p => p.provider === PinProviderName.INFURA);
+      expect(infuraEntry).toMatchObject({
+        status: ProviderPinStatus.FAILED,
+        lastError: 'infura unreachable',
+      });
     });
 
     it('throws ServiceUnavailableException and dispatches PIN_FAILED when every provider fails', async () => {
@@ -131,7 +165,12 @@ describe('IpfsPinningService', () => {
 
   describe('reconcile', () => {
     it('detects a lost pin and dispatches PIN_DEGRADED when no original content is retained for retry', async () => {
-      await service.pinContent({ content: CONTENT }); // pinned to pinata + web3Storage
+      // #992: every provider is attempted now, so pin web3.storage to fail up front —
+      // leaving exactly replicationFactor (pinata + infura) healthy, matching this test's
+      // "starts right at the replication factor" setup.
+      web3Storage.pin.mockRejectedValue(new Error('web3.storage down'));
+      await service.pinContent({ content: CONTENT });
+      infura.pin.mockClear();
 
       pinata.verify.mockResolvedValue(false); // pinata silently lost the pin
 
@@ -201,8 +240,8 @@ describe('IpfsPinningService', () => {
       const record = await service.unpin(CID);
 
       expect(pinata.unpin).toHaveBeenCalledWith(CID);
+      expect(infura.unpin).toHaveBeenCalledWith(CID);
       expect(web3Storage.unpin).toHaveBeenCalledWith(CID);
-      expect(infura.unpin).not.toHaveBeenCalled();
       expect(record.status).toBe(PinStatus.UNPINNED);
       expect(webhookService.dispatch).toHaveBeenCalledWith(
         IPFS_EVENTS.PIN_REMOVED,
@@ -211,7 +250,7 @@ describe('IpfsPinningService', () => {
     });
 
     describe('when a provider fails to unpin', () => {
-      /** Pins to pinata + web3.storage, then makes web3.storage reject its next unpin. */
+      /** Pins to every registered provider, then makes web3.storage reject its next unpin. */
       async function pinThenFailWeb3Storage(): Promise<Error> {
         await service.pinContent({ content: CONTENT });
         const failure = new Error('429 rate limited');
@@ -243,6 +282,10 @@ describe('IpfsPinningService', () => {
           providers: [
             expect.objectContaining({
               provider: PinProviderName.PINATA,
+              status: ProviderPinStatus.UNPINNED,
+            }),
+            expect.objectContaining({
+              provider: PinProviderName.INFURA,
               status: ProviderPinStatus.UNPINNED,
             }),
             expect.objectContaining({
@@ -294,14 +337,14 @@ describe('IpfsPinningService', () => {
         });
       });
 
-      it('retains the content so the record is not left unrecoverable', async () => {
+      it('keeps the record retrievable through a failed and then successful unpin', async () => {
         await pinThenFailWeb3Storage();
         await unpinRejection();
 
-        // Content is only dropped once the removal completes.
-        expect((service as any).content.has(CID)).toBe(true);
+        // The record is never dropped — only its status/providers change.
+        await expect(service.findByCid(CID)).resolves.toMatchObject({ status: PinStatus.UNPINNING });
         await service.unpin(CID);
-        expect((service as any).content.has(CID)).toBe(false);
+        await expect(service.findByCid(CID)).resolves.toMatchObject({ status: PinStatus.UNPINNED });
       });
 
       it('counts the failure in metrics', async () => {
@@ -309,6 +352,7 @@ describe('IpfsPinningService', () => {
         service = new IpfsPinningService(
           [pinata, web3Storage, infura],
           webhookService as any,
+          circuitBreakerService,
           null,
           metrics as any,
         );
@@ -360,7 +404,7 @@ describe('IpfsPinningService', () => {
 
     it('treats an unregistered provider name as a failure, not a success', async () => {
       const providers = [pinata, web3Storage, infura];
-      service = new IpfsPinningService(providers, webhookService as any);
+      service = new IpfsPinningService(providers, webhookService as any, circuitBreakerService);
       await service.pinContent({ content: CONTENT });
       providers.splice(providers.indexOf(web3Storage), 1);
 

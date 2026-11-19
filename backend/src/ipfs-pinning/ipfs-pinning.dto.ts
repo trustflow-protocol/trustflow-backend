@@ -14,6 +14,7 @@ import {
   MAX_BASE64_CONTENT_LENGTH,
   PinProviderName,
   PinRecord,
+  PinRedundancy,
   PinStatus,
   ProviderPinRecord,
   ProviderPinStatus,
@@ -32,7 +33,7 @@ export class PinContentDto {
   @MaxLength(MAX_BASE64_CONTENT_LENGTH, {
     message: 'content exceeds the maximum allowed size of 10 MB (decoded)',
   })
-  content: string;
+  content!: string;
 
   @ApiPropertyOptional({ description: 'Original filename, stored for display purposes only' })
   @IsOptional()
@@ -81,6 +82,12 @@ export class PinRecordResponseDto implements PinRecord {
   @ApiPropertyOptional() filename?: string;
   @ApiProperty() replicationFactor!: number;
   @ApiProperty({ enum: PinStatus }) status!: PinStatus;
+  @ApiProperty({
+    enum: PinRedundancy,
+    description:
+      'How many of the registered providers (not just replicationFactor) actually hold the pin.',
+  })
+  redundancy!: PinRedundancy;
   @ApiProperty({ type: [ProviderPinRecordDto] }) providers!: ProviderPinRecordDto[];
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;

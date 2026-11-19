@@ -29,7 +29,9 @@ export class AuthController {
     description:
       'Generates a single-use, time-limited challenge message for wallet signature. ' +
       'The challenge nonce is stored server-side with a 60-second TTL and is enforceably single-use. ' +
-      'In multi-node deployments, nonces are stored in Redis for distributed replay protection.',
+      'In multi-node deployments, nonces are stored in Redis for distributed replay protection. ' +
+      'Rate-limited both per-IP and per-wallet-address, so the limit cannot be bypassed by ' +
+      'spreading requests for the same wallet across many IPs.',
   })
   @ApiQuery({
     name: 'address',

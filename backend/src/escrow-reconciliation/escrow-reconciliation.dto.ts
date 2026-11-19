@@ -31,6 +31,11 @@ export class DriftRecordDto implements DriftRecord {
   @ApiProperty() repaired!: boolean;
   @ApiPropertyOptional() repairError?: string;
   @ApiProperty() detectedAt!: string;
+  @ApiPropertyOptional({
+    description:
+      'Direct link to this escrow in the admin dashboard, omitted when ADMIN_DASHBOARD_URL is not configured.',
+  })
+  adminUrl?: string;
 }
 
 export class ReconciliationErrorDto implements ReconciliationError {

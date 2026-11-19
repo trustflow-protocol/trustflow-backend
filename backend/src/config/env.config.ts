@@ -69,6 +69,12 @@ const EnvSchema = z
       .string()
       .optional()
       .describe('Comma-separated list of Stellar addresses with admin access'),
+    // #991: base URL of the admin dashboard, used to build a direct per-escrow deep link
+    // ({ADMIN_DASHBOARD_URL}/escrows/{contractEscrowId}) in reconciliation drift alerts, so
+    // responders don't have to manually copy an escrow ID and navigate to it themselves.
+    ADMIN_DASHBOARD_URL: z
+      .preprocess(blankToUndefined, z.string().url().optional())
+      .describe('Base URL of the admin dashboard, used to build per-escrow deep links in alerts'),
 
     // Stellar Network Configuration
     STELLAR_NETWORK: z.enum(['TESTNET', 'PUBLIC', 'MAINNET']).default('TESTNET'),
@@ -257,6 +263,12 @@ const EnvSchema = z
     AUTH_CHALLENGE_RATE_LIMIT_DURATION: z.coerce.number().int().positive().default(60),
     AUTH_VERIFY_RATE_LIMIT_POINTS: z.coerce.number().int().positive().default(10),
     AUTH_VERIFY_RATE_LIMIT_DURATION: z.coerce.number().int().positive().default(60),
+    // Per-wallet-address limit on /auth/challenge (#993): the IP limit above is keyed on the
+    // caller's IP, so a script spread across many IPs/proxies can still mint unlimited pending
+    // challenges for one target wallet. This is keyed on the `address` query param itself,
+    // independent of IP, and is stricter/longer-windowed than the per-IP limit.
+    AUTH_CHALLENGE_WALLET_RATE_LIMIT_POINTS: z.coerce.number().int().positive().default(5),
+    AUTH_CHALLENGE_WALLET_RATE_LIMIT_DURATION: z.coerce.number().int().positive().default(300),
     TRUST_PROXY: z.preprocess(
       blankToUndefined,
       z

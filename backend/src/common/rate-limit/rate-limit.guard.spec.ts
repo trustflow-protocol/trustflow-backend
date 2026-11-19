@@ -153,6 +153,7 @@ describe('RateLimitGuard', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RateLimitGuard,
+        { provide: JwtService, useValue: new JwtService() },
         {
           provide: REDIS_CLIENT,
           useValue: mockRedis,
@@ -183,6 +184,7 @@ describe('RateLimitGuard', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           RateLimitGuard,
+          { provide: JwtService, useValue: new JwtService() },
           { provide: REDIS_CLIENT, useValue: null },
           {
             provide: Reflector,
@@ -204,6 +206,7 @@ describe('RateLimitGuard', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           RateLimitGuard,
+          { provide: JwtService, useValue: new JwtService() },
           { provide: REDIS_CLIENT, useValue: null },
           { provide: Reflector, useValue: createReflector() },
         ],
@@ -226,6 +229,7 @@ describe('RateLimitGuard', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           RateLimitGuard,
+          { provide: JwtService, useValue: new JwtService() },
           { provide: REDIS_CLIENT, useValue: mockRedis },
           {
             provide: Reflector,
@@ -255,7 +259,7 @@ describe('RateLimitGuard', () => {
         'ratelimit:{ip:127.0.0.1:get:_auth_challenge}:bucket',
         'ratelimit:{ip:127.0.0.1:get:_auth_challenge}:lockout',
         'ratelimit:{ip:127.0.0.1:get:_auth_challenge}:abuse',
-        100,
+        60, // ANONYMOUS tier (no verified wallet) — see RATE_TIER_CONFIGS
         60_000,
         120_000,
         300_000,
@@ -280,6 +284,7 @@ describe('RateLimitGuard', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           RateLimitGuard,
+          { provide: JwtService, useValue: new JwtService() },
           { provide: REDIS_CLIENT, useValue: mockRedis },
           { provide: Reflector, useValue: createReflector({ points: 10, duration: 5 }) },
         ],
@@ -320,7 +325,7 @@ describe('RateLimitGuard', () => {
         'ratelimit:{wallet:gabc123:get:_auth_challenge}:bucket',
         'ratelimit:{wallet:gabc123:get:_auth_challenge}:lockout',
         'ratelimit:{wallet:gabc123:get:_auth_challenge}:abuse',
-        100,
+        300, // AUTHENTICATED tier (verified wallet present) — see RATE_TIER_CONFIGS
         60_000,
         120_000,
         expect.any(Number),
@@ -350,7 +355,7 @@ describe('RateLimitGuard', () => {
         'ratelimit:{wallet:gabc123:get:_auth_challenge}:bucket',
         expect.any(String),
         expect.any(String),
-        100,
+        300, // AUTHENTICATED tier (verified wallet present) — see RATE_TIER_CONFIGS
         60_000,
         120_000,
         expect.any(Number),
@@ -408,7 +413,7 @@ describe('RateLimitGuard', () => {
           'ratelimit:{ip:127.0.0.1:get:_auth_challenge}:bucket',
           expect.any(String),
           expect.any(String),
-          100,
+          60, // ANONYMOUS tier (no verified wallet) — see RATE_TIER_CONFIGS
           60_000,
           120_000,
           expect.any(Number),
@@ -476,6 +481,7 @@ describe('RateLimitGuard', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           RateLimitGuard,
+          { provide: JwtService, useValue: new JwtService() },
           { provide: REDIS_CLIENT, useValue: mockRedis },
           { provide: Reflector, useValue: createReflector() },
           { provide: MetricsService, useValue: metrics },
@@ -512,6 +518,7 @@ describe('RateLimitGuard', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           RateLimitGuard,
+          { provide: JwtService, useValue: new JwtService() },
           { provide: REDIS_CLIENT, useValue: mockRedis },
           { provide: Reflector, useValue: reflector },
         ],
@@ -535,6 +542,7 @@ describe('RateLimitGuard', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           RateLimitGuard,
+          { provide: JwtService, useValue: new JwtService() },
           MetricsService,
           { provide: REDIS_CLIENT, useValue: mockRedis },
           { provide: Reflector, useValue: createReflector({ onRedisError }) },
@@ -676,7 +684,14 @@ describe('RateLimitGuard', () => {
       await expect(closedGuard.canActivate(mockContext().context)).rejects.toMatchObject({
         status: HttpStatus.TOO_MANY_REQUESTS,
       });
-      expect(metrics.getAll()).toEqual([]);
+      // A genuine rejection records the normal rejection metric, never the outage one —
+      // Redis answered fine here, it just said "no".
+      expect(metrics.getAll()).not.toContainEqual(
+        expect.objectContaining({ name: 'rate_limit_redis_error_total' }),
+      );
+      expect(metrics.getAll()).toContainEqual(
+        expect.objectContaining({ name: 'rate_limit_rejections_total' }),
+      );
     });
   });
 });
@@ -692,6 +707,7 @@ describe('RateLimitGuard Supertest integration', () => {
       controllers: [RateLimitTestController],
       providers: [
         { provide: REDIS_CLIENT, useValue: mockRedis },
+        { provide: JwtService, useValue: new JwtService() },
         {
           provide: APP_GUARD,
           useClass: RateLimitGuard,
@@ -711,13 +727,13 @@ describe('RateLimitGuard Supertest integration', () => {
   it('should allow HTTP requests while shared Redis bucket allows them', async () => {
     mockRedis.queueResults([[null, [1, 0]]]);
 
-    await request(app.getHttpServer()).get('/v1/rate-limit-test/limited').expect(200, { ok: true });
+    await request(app.getHttpServer()).get('/rate-limit-test/limited').expect(200, { ok: true });
   });
 
   it('should return 429 with retry details when shared Redis bucket rejects', async () => {
     mockRedis.queueResults([[null, [0, 7]]]);
 
-    const response = await request(app.getHttpServer()).get('/v1/rate-limit-test/limited').expect(429);
+    const response = await request(app.getHttpServer()).get('/rate-limit-test/limited').expect(429);
 
     expect(response.body).toMatchObject({
       statusCode: 429,
@@ -735,7 +751,7 @@ describe('RateLimitGuard Supertest integration', () => {
 
     const token = signToken({ address: 'GABC123', sub: 'GABC123' });
     await request(app.getHttpServer())
-      .post('/v1/rate-limit-test/wallet')
+      .post('/rate-limit-test/wallet')
       .set('Authorization', `Bearer ${token}`)
       .send({})
       .expect(201, { ok: true });
@@ -746,7 +762,7 @@ describe('RateLimitGuard Supertest integration', () => {
       expect.stringContaining('ratelimit:{wallet:gabc123'),
       expect.any(String),
       expect.any(String),
-      100,
+      300, // AUTHENTICATED tier (verified wallet present) — see RATE_TIER_CONFIGS
       60_000,
       120_000,
       expect.any(Number),
@@ -760,13 +776,13 @@ describe('RateLimitGuard Supertest integration', () => {
   it('should not create a new wallet-scoped bucket when a client rotates an unverified walletAddress in the request body', async () => {
     mockRedis.queueResults([[null, [1, 0]]]);
     await request(app.getHttpServer())
-      .post('/v1/rate-limit-test/wallet')
+      .post('/rate-limit-test/wallet')
       .send({ walletAddress: 'ROTATED-1' })
       .expect(201, { ok: true });
 
     mockRedis.queueResults([[null, [1, 0]]]);
     await request(app.getHttpServer())
-      .post('/v1/rate-limit-test/wallet')
+      .post('/rate-limit-test/wallet')
       .send({ walletAddress: 'ROTATED-2' })
       .expect(201, { ok: true });
 
@@ -778,7 +794,7 @@ describe('RateLimitGuard Supertest integration', () => {
       expect.stringContaining('ratelimit:{ip:'),
       expect.any(String),
       expect.any(String),
-      100,
+      60, // ANONYMOUS tier (no verified wallet) — see RATE_TIER_CONFIGS
       60_000,
       120_000,
       expect.any(Number),
@@ -792,7 +808,7 @@ describe('RateLimitGuard Supertest integration', () => {
       expect.stringContaining('ratelimit:{ip:'),
       expect.any(String),
       expect.any(String),
-      100,
+      60, // ANONYMOUS tier (no verified wallet) — see RATE_TIER_CONFIGS
       60_000,
       120_000,
       expect.any(Number),

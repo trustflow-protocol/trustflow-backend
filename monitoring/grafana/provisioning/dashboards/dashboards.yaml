@@ -1,0 +1,20 @@
+# Provisions every dashboard JSON under monitoring/dashboards/ at Grafana startup.
+#
+# allowUiUpdates: false is the actual fix for #990 — it makes the dashboard read-only in
+# the UI (edits can be made and "saved" in a session, but are never persisted, and a
+# restart or a provisioning reload always reverts to this file). The file in Git is the
+# only way a dashboard change becomes permanent, so there is nothing to export back
+# because there is nothing in the live instance that isn't already here.
+apiVersion: 1
+
+providers:
+  - name: trustflow-backend
+    orgId: 1
+    folder: TrustFlow
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/trustflow
+      foldersFromFilesStructure: false

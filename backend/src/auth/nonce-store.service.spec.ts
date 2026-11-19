@@ -18,6 +18,9 @@ describe('NonceStoreService', () => {
       del: jest.fn(),
       exists: jest.fn(),
       eval: jest.fn(),
+      incr: jest.fn(),
+      expire: jest.fn(),
+      ttl: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -200,6 +203,47 @@ describe('NonceStoreService', () => {
         expect(result).toBe(false);
       });
     });
+
+    // #993: per-wallet counter on /auth/challenge, independent of IP.
+    describe('checkWalletChallengeRateLimit', () => {
+      it('allows requests under the limit and does not re-set the TTL after the first call', async () => {
+        mockRedis.incr.mockResolvedValue(3);
+
+        const result = await service.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+
+        expect(result).toEqual({ allowed: true, retryAfter: 0 });
+        expect(mockRedis.expire).not.toHaveBeenCalled();
+      });
+
+      it('sets the window TTL only on the first request in the window', async () => {
+        mockRedis.incr.mockResolvedValue(1);
+
+        await service.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+
+        expect(mockRedis.expire).toHaveBeenCalledWith(
+          `auth:challenge:wallet-ratelimit:${TEST_ADDRESS}`,
+          300,
+        );
+      });
+
+      it('rejects once the per-wallet count exceeds the configured points', async () => {
+        mockRedis.incr.mockResolvedValue(6);
+        mockRedis.ttl.mockResolvedValue(120);
+
+        const result = await service.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+
+        expect(result).toEqual({ allowed: false, retryAfter: 120 });
+      });
+
+      it('falls back to the full window duration when Redis TTL is unavailable', async () => {
+        mockRedis.incr.mockResolvedValue(6);
+        mockRedis.ttl.mockResolvedValue(-1);
+
+        const result = await service.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+
+        expect(result).toEqual({ allowed: false, retryAfter: 300 });
+      });
+    });
   });
 
   describe('without Redis (fallback to memory)', () => {
@@ -278,6 +322,48 @@ describe('NonceStoreService', () => {
 
       const result = await memoryService.consume(TEST_ADDRESS);
       expect(result).toBeNull();
+    });
+
+    // #993: same fixed-window behaviour as the Redis path, for single-node/dev deployments.
+    describe('checkWalletChallengeRateLimit', () => {
+      it('allows up to the configured number of requests, then rejects', async () => {
+        for (let i = 0; i < 5; i++) {
+          expect(await memoryService.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300)).toEqual({
+            allowed: true,
+            retryAfter: 0,
+          });
+        }
+
+        const result = await memoryService.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+        expect(result.allowed).toBe(false);
+        expect(result.retryAfter).toBeGreaterThan(0);
+      });
+
+      it('tracks separate windows per wallet address', async () => {
+        for (let i = 0; i < 5; i++) {
+          await memoryService.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+        }
+        const otherAddress = 'GZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ';
+
+        const result = await memoryService.checkWalletChallengeRateLimit(otherAddress, 5, 300);
+
+        expect(result).toEqual({ allowed: true, retryAfter: 0 });
+      });
+
+      it('resets the window once it expires', async () => {
+        const key = 'auth:challenge:wallet-ratelimit:' + TEST_ADDRESS;
+        for (let i = 0; i < 5; i++) {
+          await memoryService.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+        }
+        (memoryService as any).inMemoryWalletChallengeCounts.set(key, {
+          count: 5,
+          resetAt: Date.now() - 1000,
+        });
+
+        const result = await memoryService.checkWalletChallengeRateLimit(TEST_ADDRESS, 5, 300);
+
+        expect(result).toEqual({ allowed: true, retryAfter: 0 });
+      });
     });
   });
 

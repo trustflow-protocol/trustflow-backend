@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { IpfsPinningController } from './ipfs-pinning.controller';
 import { IpfsPinningService } from './ipfs-pinning.service';
+import { validateEnv } from '../config/env.config';
 
 describe('IpfsPinningController', () => {
   let controller: IpfsPinningController;
@@ -15,6 +16,8 @@ describe('IpfsPinningController', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-at-least-16-chars';
+    validateEnv();
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [IpfsPinningController],
