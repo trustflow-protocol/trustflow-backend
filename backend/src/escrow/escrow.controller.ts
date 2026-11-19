@@ -22,6 +22,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { EscrowService } from './escrow.service';
+import { EscrowSweepService } from './escrow.sweep.service';
+import { DisputeService, Juror } from './dispute.service';
+import { DeliverableService } from './deliverable.service';
+import { WebhookService } from '../webhook/webhook.service';
+import { DiscordService } from '../webhook/discord.service';
+import { WebhookEvent } from '../webhook/webhook.dto';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
 import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
 import { Idempotent } from '../common/idempotency';
@@ -30,13 +36,49 @@ import { CreateEscrowDto, CreateEscrowSchema, ReleaseEscrowSchema } from './escr
 // Reference to ensure ReleaseEscrowSchema is considered used (dead-code check requires import)
 void ReleaseEscrowSchema;
 
+interface AddMilestoneDto {
+  title: string;
+  amountXLM: string;
+}
+
+interface SubmitDeliverableDto {
+  fileRef: string;
+  submittedBy: string;
+  submitterComments?: string;
+}
+
+interface ReviewDeliverableDto {
+  decision: 'approved' | 'rejected';
+  reviewerAddress: string;
+  reviewerComments?: string;
+}
+
+interface AssignJurorsDto {
+  count: number;
+}
+
+interface RegisterJurorDto {
+  address: string;
+}
+
+interface RaiseDisputeDto {
+  reason?: string;
+}
+
 @ApiTags('Escrow')
 @Controller('escrows')
 export class EscrowController {
   constructor(
     private readonly escrowService: EscrowService,
+    private readonly sweepService: EscrowSweepService,
+    private readonly disputeService: DisputeService,
+    private readonly deliverableService: DeliverableService,
+    private readonly webhookService: WebhookService,
+    private readonly discordService: DiscordService,
     private readonly escrowReleaseTransactionBuilderService: EscrowReleaseTransactionBuilderService,
   ) {}
+
+  // ---- Escrow lifecycle (upstream) ----
 
   @Post()
   @Idempotent()
@@ -69,10 +111,22 @@ export class EscrowController {
           description: 'Stellar address of the beneficiary',
           example: 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY',
         },
-        amountXLM: {
-          type: 'string',
-          description: 'Amount in XLM',
-          example: '100',
+        amountXLM: { type: 'string', description: 'Amount in XLM', example: '100' },
+        milestones: {
+          type: 'array',
+          description: 'Optional milestone breakdown',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', example: 'Initial design' },
+              amountXLM: { type: 'string', example: '40' },
+            },
+          },
+        },
+        releaseDeadlineMs: {
+          type: 'number',
+          description: 'Epoch-millis deadline; sweep auto-releases after it passes',
+          example: 1737000000000,
         },
       },
     },
@@ -87,6 +141,7 @@ export class EscrowController {
         depositor: { type: 'string' },
         beneficiary: { type: 'string' },
         amountXLM: { type: 'string' },
+        remainingAmount: { type: 'string', description: 'Sum of unreleased milestone amounts' },
         status: {
           type: 'string',
           enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
@@ -138,35 +193,7 @@ export class EscrowController {
       },
     },
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Batch approval result with succeeded and failed breakdown',
-    schema: {
-      type: 'object',
-      properties: {
-        succeeded: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              status: { type: 'string' },
-            },
-          },
-        },
-        failed: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              reason: { type: 'string' },
-            },
-          },
-        },
-      },
-    },
-  })
+  @ApiResponse({ status: 200, description: 'Batch approval result' })
   @ApiResponse({ status: 400, description: 'Invalid request body' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async batchApproveMilestones(@Body() body: { milestoneIds: string[]; signerAddress: string }) {
@@ -176,7 +203,8 @@ export class EscrowController {
   @Get(':id')
   @ApiOperation({
     summary: 'Get escrow by ID',
-    description: 'Retrieves escrow details including status and milestone information.',
+    description:
+      'Retrieves escrow details including status, milestone information, and remainingAmount.',
   })
   @ApiParam({
     name: 'id',
@@ -189,10 +217,11 @@ export class EscrowController {
     schema: {
       type: 'object',
       properties: {
-        id: { type: 'string', format: 'uuid', example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005' },
+        id: { type: 'string', format: 'uuid' },
         depositor: { type: 'string' },
         beneficiary: { type: 'string' },
         amountXLM: { type: 'string' },
+        remainingAmount: { type: 'string', description: 'Sum of unreleased milestone amounts' },
         status: {
           type: 'string',
           enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
@@ -225,41 +254,15 @@ export class EscrowController {
     name: 'offset',
     required: false,
     type: Number,
-    description: 'Number of items to skip. Defaults to 0.',
+    description: 'Items to skip. Defaults to 0.',
   })
   @ApiQuery({
     name: 'limit',
     required: false,
     type: Number,
-    description: 'Maximum number of items to return (max 100). Defaults to 20.',
+    description: 'Max items to return (max 100). Defaults to 20.',
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Paginated list of escrows',
-    schema: {
-      type: 'object',
-      properties: {
-        data: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              depositor: { type: 'string' },
-              beneficiary: { type: 'string' },
-              amountXLM: { type: 'string' },
-              status: {
-                type: 'string',
-                enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
-              },
-              createdAt: { type: 'string', format: 'date-time' },
-            },
-          },
-        },
-        total: { type: 'number' },
-      },
-    },
-  })
+  @ApiResponse({ status: 200, description: 'Paginated list of escrows' })
   findByDepositor(
     @Param('address') address: string,
     @Query('offset') offset?: number,
@@ -273,49 +276,24 @@ export class EscrowController {
   @Post(':id/release')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Release escrow funds',
-    description: 'Approves a milestone tranche and releases funds to the beneficiary.',
+    summary: 'Release escrow funds (full)',
+    description: 'Releases the entire escrow to the beneficiary.',
   })
   @ApiParam({
     name: 'id',
     description: 'Escrow ID',
     example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005',
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Escrow released successfully',
-    schema: {
-      type: 'object',
-      required: ['id', 'depositor', 'beneficiary', 'amountXLM', 'status', 'createdAt'],
-      properties: {
-        id: { type: 'string', format: 'uuid' },
-        depositor: { type: 'string' },
-        beneficiary: { type: 'string' },
-        amountXLM: { type: 'string' },
-        status: {
-          type: 'string',
-          enum: ['pending', 'active', 'released', 'disputed', 'cancelled'],
-        },
-        createdAt: { type: 'string', format: 'date-time' },
-      },
-    },
-  })
+  @ApiResponse({ status: 200, description: 'Escrow released successfully' })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
   async release(@Param('id') id: string) {
-    const escrow = await this.escrowService.release(id);
-    return escrow;
+    return this.escrowService.release(id);
   }
 
   @Get(':id/release/transaction')
   @ApiOperation({
     summary: 'Build an unsigned on-chain release transaction (prototype, spike #180)',
-    description:
-      'Builds and simulates a Soroban `release` invocation for a chain-linked escrow. ' +
-      'The backend never holds a signing key for this — see the #180 write-path spike write-up. ' +
-      'Client flow: (1) call this endpoint to get unsigned XDR, (2) sign it locally with the ' +
-      'sourceAccount wallet, (3) submit the signed envelope directly to Soroban RPC — the resulting ' +
-      'chain event flows back into this API through the existing event-ingestion pipeline. ' +
-      'Requires TRUSTFLOW_CONTRACT_ID to be configured and the escrow to be linked to an on-chain ID.',
+    description: 'Builds and simulates a Soroban `release` invocation for a chain-linked escrow.',
   })
   @ApiParam({
     name: 'id',
@@ -324,34 +302,14 @@ export class EscrowController {
   })
   @ApiQuery({
     name: 'sourceAccount',
-    description: 'Stellar address that will sign and submit the transaction',
+    description: 'Stellar address that will sign and submit',
     example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Unsigned release transaction XDR, ready for the caller to sign and submit',
-    schema: {
-      type: 'object',
-      properties: {
-        xdr: { type: 'string', example: 'AAAAAgAAAAA...' },
-        network: { type: 'string', example: 'TESTNET' },
-        networkPassphrase: { type: 'string', example: 'Test SDF Network ; September 2015' },
-        contractId: {
-          type: 'string',
-          example: 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        },
-        sourceAccount: {
-          type: 'string',
-          example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        },
-      },
-    },
-  })
+  @ApiResponse({ status: 200, description: 'Unsigned release transaction XDR' })
   @ApiResponse({ status: 400, description: 'Invalid or missing sourceAccount' })
-  @ApiResponse({ status: 400, description: 'Escrow is not in active status' })
-  @ApiResponse({ status: 403, description: 'Source account is not authorized to release the escrow' })
-  @ApiResponse({ status: 404, description: 'Escrow not found or not linked to an on-chain escrow' })
-  @ApiResponse({ status: 503, description: 'TRUSTFLOW_CONTRACT_ID is not configured' })
+  @ApiResponse({ status: 403, description: 'Source account not authorized' })
+  @ApiResponse({ status: 404, description: 'Escrow not found or not linked on-chain' })
+  @ApiResponse({ status: 503, description: 'TRUSTFLOW_CONTRACT_ID not configured' })
   async buildReleaseTransaction(
     @Param('id') id: string,
     @Query() { sourceAccount }: BuildReleaseTransactionQueryDto,
@@ -361,24 +319,293 @@ export class EscrowController {
     if (!escrow.contractEscrowId) {
       throw new NotFoundException(`Escrow ${id} is not yet linked to an on-chain escrow`);
     }
-
-    // Only active escrows can be released
     if (escrow.status !== 'active') {
       throw new BadRequestException(
-        `Escrow ${id} is not in active status (current: ${escrow.status}). Only active escrows can be released.`,
+        `Escrow ${id} is not in active status (current: ${escrow.status}).`,
       );
     }
-
-    // Only the depositor or beneficiary can release the escrow
     if (sourceAccount !== escrow.depositor && sourceAccount !== escrow.beneficiary) {
       throw new ForbiddenException(
-        `Source account ${sourceAccount} is not authorized to release escrow ${id}. Only the depositor or beneficiary can release.`,
+        `Source account ${sourceAccount} is not authorized to release escrow ${id}.`,
       );
     }
-
     return this.escrowReleaseTransactionBuilderService.buildRelease(
       escrow.contractEscrowId,
       sourceAccount,
     );
+  }
+
+  // ---- Milestones (bug fix #2 — remainingAmount) ----
+
+  @Post(':id/milestones')
+  @ApiOperation({
+    summary: 'Add a milestone to an escrow',
+    description: 'Appends a new milestone and recalculates remainingAmount.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['title', 'amountXLM'],
+      properties: {
+        title: { type: 'string', example: 'Final delivery' },
+        amountXLM: { type: 'string', example: '60' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Milestone added' })
+  addMilestone(@Param('id') id: string, @Body() dto: AddMilestoneDto) {
+    return this.escrowService.addMilestone(id, dto.title, dto.amountXLM);
+  }
+
+  @Post(':id/milestones/:milestoneId/release')
+  @ApiOperation({
+    summary: 'Release a single milestone',
+    description:
+      'Releases one milestone and recalculates + persists remainingAmount as the sum of ' +
+      'still-unreleased milestones. When all milestones are released the escrow status ' +
+      'becomes released.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID' })
+  @ApiParam({ name: 'milestoneId', description: 'Milestone ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Milestone released; escrow with updated remainingAmount',
+  })
+  @ApiResponse({ status: 404, description: 'Escrow or milestone not found' })
+  releaseMilestone(@Param('id') id: string, @Param('milestoneId') milestoneId: string) {
+    return this.escrowService.releaseMilestone(id, milestoneId);
+  }
+
+  // ---- Deliverables (bug fix #4 — append-only revision history) ----
+
+  @Post(':id/milestones/:milestoneId/deliverables')
+  @ApiOperation({
+    summary: 'Submit a deliverable (new revision)',
+    description:
+      'Appends a new deliverable revision for a milestone. Previous submissions and their ' +
+      'reviewer feedback are retained as distinct revisions (append-only history).',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID' })
+  @ApiParam({ name: 'milestoneId', description: 'Milestone ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['fileRef', 'submittedBy'],
+      properties: {
+        fileRef: { type: 'string', example: 'ipfs://Qm.../deliverable-v2.pdf' },
+        submittedBy: { type: 'string', example: 'GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY' },
+        submitterComments: { type: 'string', example: 'Addressed review feedback on section 3' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Deliverable revision submitted' })
+  submitDeliverable(
+    @Param('id') id: string,
+    @Param('milestoneId') milestoneId: string,
+    @Body() dto: SubmitDeliverableDto,
+  ) {
+    return this.deliverableService.submitDeliverable(
+      id,
+      milestoneId,
+      dto.fileRef,
+      dto.submittedBy,
+      dto.submitterComments,
+    );
+  }
+
+  @Get(':id/milestones/:milestoneId/deliverables')
+  @ApiOperation({
+    summary: 'Get deliverable revision history',
+    description:
+      'Returns the full append-only revision history for a milestone, including rejected ' +
+      'attempts and their reviewer feedback.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID' })
+  @ApiParam({ name: 'milestoneId', description: 'Milestone ID' })
+  @ApiResponse({ status: 200, description: 'List of deliverable revisions' })
+  getDeliverableRevisions(@Param('id') id: string, @Param('milestoneId') milestoneId: string) {
+    return this.deliverableService.getRevisions(id, milestoneId);
+  }
+
+  @Post(':id/deliverables/:revisionId/review')
+  @ApiOperation({
+    summary: 'Review a deliverable revision',
+    description:
+      'Approves or rejects a specific deliverable revision. Reviewer comments are stored on ' +
+      'that revision; the original submission remains in the history.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID' })
+  @ApiParam({ name: 'revisionId', description: 'Deliverable revision ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['decision', 'reviewerAddress'],
+      properties: {
+        decision: { type: 'string', enum: ['approved', 'rejected'] },
+        reviewerAddress: { type: 'string', example: 'GZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ' },
+        reviewerComments: { type: 'string', example: 'Section 3 needs rework' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Deliverable revision reviewed' })
+  reviewDeliverable(
+    @Param('id') id: string,
+    @Param('revisionId') revisionId: string,
+    @Body() dto: ReviewDeliverableDto,
+  ) {
+    return this.deliverableService.reviewDeliverable(
+      id,
+      revisionId,
+      dto.decision,
+      dto.reviewerAddress,
+      dto.reviewerComments,
+    );
+  }
+
+  // ---- Disputes (upstream webhook + Discord, plus bug fix #3 juror assignment) ----
+
+  @Post(':id/dispute')
+  @ApiOperation({
+    summary: 'Raise a dispute',
+    description:
+      'Raises a dispute for an escrow. Triggers webhook events and Discord notifications.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID', example: 'esc-1234567890' })
+  @ApiBody({
+    description: 'Dispute details',
+    schema: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          description: 'Reason for the dispute',
+          example: 'Work not delivered as specified',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Dispute raised successfully. Discord notification sent if configured.',
+  })
+  @ApiResponse({ status: 400, description: 'Escrow already disputed or released' })
+  @ApiResponse({ status: 404, description: 'Escrow not found' })
+  async raiseDispute(@Param('id') id: string, @Body() dto: RaiseDisputeDto) {
+    const escrow = await this.escrowService.raiseDispute(id, dto.reason);
+
+    await this.webhookService.dispatch(WebhookEvent.EscrowDisputed, {
+      escrowId: escrow.id,
+      depositor: escrow.depositor,
+      beneficiary: escrow.beneficiary,
+      amountXLM: escrow.amountXLM,
+      reason: escrow.disputeReason,
+      disputedAt: escrow.disputedAt,
+    });
+
+    await this.discordService.notifyDisputeNeedsJurors({
+      escrowId: escrow.id,
+      depositor: escrow.depositor,
+      beneficiary: escrow.beneficiary,
+      amountXLM: escrow.amountXLM,
+      reason: escrow.disputeReason,
+    });
+
+    return escrow;
+  }
+
+  @Post(':id/dispute/assign-jurors')
+  @ApiOperation({
+    summary: 'Assign jurors to a dispute (with conflict-of-interest detection)',
+    description:
+      'Assigns jurors to a disputed escrow. Jurors with no prior counterparty relationship ' +
+      'with either disputant are assigned first; conflicted jurors fill remaining slots but ' +
+      'are explicitly flagged — never silently assigned.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['count'],
+      properties: { count: { type: 'integer', example: 3 } },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Juror assignments with conflict flags' })
+  assignJurors(@Param('id') id: string, @Body() dto: AssignJurorsDto) {
+    return this.disputeService.assignJurors(id, dto.count);
+  }
+
+  @Get(':id/dispute/jurors')
+  @ApiOperation({
+    summary: 'Get juror assignments for a dispute',
+    description: 'Returns jurors assigned to a disputed escrow, including conflict flags.',
+  })
+  @ApiParam({ name: 'id', description: 'Escrow ID' })
+  @ApiResponse({ status: 200, description: 'Juror assignments' })
+  getJurorAssignments(@Param('id') id: string) {
+    return this.disputeService.getAssignments(id);
+  }
+
+  // ---- Sweep (bug fix #1 — adaptive batching + overlap guard) ----
+
+  @Post('sweep/run')
+  @ApiOperation({
+    summary: 'Trigger an escrow sweep (manual)',
+    description:
+      'Runs a single sweep pass over all escrows to detect expired deadlines and auto-release ' +
+      'them. Uses an adaptive batch size and an overlap guard so a slow run cannot double up ' +
+      'with the next scheduled run.',
+  })
+  @ApiResponse({ status: 200, description: 'Sweep result' })
+  runSweep() {
+    return this.sweepService.runSweep();
+  }
+
+  @Get('sweep/status')
+  @ApiOperation({
+    summary: 'Get sweep status',
+    description: 'Returns whether a sweep is currently in progress.',
+  })
+  @ApiResponse({ status: 200, description: 'Sweep status' })
+  getSweepStatus() {
+    return { sweeping: this.sweepService.isSweeping() };
+  }
+}
+
+// ---- Juror-pool management (top-level, not escrow-scoped) ----
+
+@ApiTags('Escrow')
+@Controller('jurors')
+export class JurorController {
+  constructor(private readonly disputeService: DisputeService) {}
+
+  @Post()
+  @ApiOperation({
+    summary: 'Register a juror',
+    description:
+      'Adds a Stellar address to the active juror pool available for dispute assignment.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['address'],
+      properties: {
+        address: { type: 'string', example: 'GZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Juror registered' })
+  register(@Body() dto: RegisterJurorDto): Juror {
+    return this.disputeService.registerJuror(dto.address);
+  }
+
+  @Get()
+  @ApiOperation({
+    summary: 'List the juror pool',
+    description: 'Returns all active juror addresses.',
+  })
+  @ApiResponse({ status: 200, description: 'Juror pool addresses' })
+  list() {
+    return { jurors: this.disputeService.getJurorPool() };
   }
 }
