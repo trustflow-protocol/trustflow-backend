@@ -372,6 +372,7 @@ const EnvSchema = z
     IPFS_REPIN_SWEEP_CONCURRENCY: z.coerce.number().int().positive().default(8),
     IPFS_REPIN_INTERVAL_MS: optionalNonnegativeInt(),
     IPFS_PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+    IPFS_PROVIDER_HEALTH_CHECK_INTERVAL_MS: optionalNonnegativeInt(),
 
     // S3-compatible Storage Configuration (avatar uploads)
     S3_BUCKET: z

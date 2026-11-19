@@ -271,4 +271,57 @@ describe('MigrationRunnerService', () => {
       );
     });
   });
+
+  describe('destructive contract-phase operations (#971)', () => {
+    class DestructiveMigration extends FakeMigration {
+      readonly name = 'destructive-migration';
+
+      plannedContractSql(): string[] {
+        return [`ALTER TABLE ${this.targetTable} DROP COLUMN legacy_flag`];
+      }
+    }
+
+    let destructive: DestructiveMigration;
+    let destructiveRunner: MigrationRunnerService;
+
+    beforeEach(async () => {
+      destructive = new DestructiveMigration();
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          MigrationRunnerService,
+          MigrationRegistryService,
+          MigrationStateStore,
+          { provide: MIGRATION_DEFINITIONS, useValue: [destructive] },
+        ],
+      }).compile();
+
+      destructiveRunner = module.get<MigrationRunnerService>(MigrationRunnerService);
+    });
+
+    it('rejects a real run without force when the migration declares a DROP COLUMN', async () => {
+      await expect(destructiveRunner.run(destructive.name, { batchSize: 4 })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(destructive.expandCalls).toBe(0);
+    });
+
+    it('proceeds when force: true is passed', async () => {
+      const run = await destructiveRunner.run(destructive.name, { batchSize: 4, force: true });
+      expect(run.status).toBe(MigrationStatus.COMPLETED);
+      expect(destructive.contractCalls).toBe(1);
+    });
+
+    it('allows a dry run to preview without requiring force', async () => {
+      const run = await destructiveRunner.run(destructive.name, { dryRun: true });
+      expect(run.status).toBe(MigrationStatus.COMPLETED);
+      expect(destructive.expandCalls).toBe(0);
+    });
+
+    it('does not gate a migration that declares no planned SQL', async () => {
+      // `fake` (outer describe's FakeMigration) never overrides plannedContractSql.
+      const run = await runner.run(fake.name, { batchSize: 4 });
+      expect(run.status).toBe(MigrationStatus.COMPLETED);
+    });
+  });
 });

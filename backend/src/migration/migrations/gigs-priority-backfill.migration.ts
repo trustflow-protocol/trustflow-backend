@@ -75,6 +75,11 @@ export class GigsPriorityBackfillMigration extends SchemaMigration {
     return { processed: batch.length, failed: 0, nextCursor, done: remaining <= 0 };
   }
 
+  /** The destructive DDL the contract phase below stands in for, declared for the runner's pre-flight check (#971). */
+  plannedContractSql(): string[] {
+    return [`ALTER TABLE ${this.targetTable} DROP COLUMN urgent`];
+  }
+
   async contract(): Promise<void> {
     for (const row of this.rows.values()) {
       delete row.urgent;

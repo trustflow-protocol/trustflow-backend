@@ -10,6 +10,7 @@ import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { randomUUID } from 'crypto';
 import { MigrationRegistryService } from './migration-registry.service';
 import { MigrationStateStore } from './migration-state.store';
+import { findDestructiveStatements } from './destructive-sql.util';
 import {
   MigrationPhase,
   MigrationRun,
@@ -32,6 +33,8 @@ export interface RunMigrationOptions {
   batchSize?: number;
   batchDelayMs?: number;
   dryRun?: boolean;
+  /** Required when the migration declares a destructive `plannedContractSql()` statement (#971). */
+  force?: boolean;
 }
 
 /**
@@ -67,6 +70,19 @@ export class MigrationRunnerService {
     const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
     const batchDelayMs = options.batchDelayMs ?? 0;
     const dryRun = options.dryRun ?? false;
+
+    // A dry run only previews what would happen, so it's safe to let it surface a destructive
+    // statement without `force` — the gate only has to stop an actual apply (#971).
+    if (!dryRun) {
+      const destructive = findDestructiveStatements(migration.plannedContractSql?.() ?? []);
+      if (destructive.length > 0 && !options.force) {
+        throw new BadRequestException(
+          `Migration "${name}" will run destructive operation(s) during its contract phase: ` +
+            `${destructive.join('; ')}. Re-run with "force: true" to proceed.`,
+        );
+      }
+    }
+
     const now = new Date().toISOString();
 
     const run: MigrationRun = {

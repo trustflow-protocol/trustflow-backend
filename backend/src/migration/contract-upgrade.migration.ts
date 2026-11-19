@@ -110,6 +110,14 @@ export class ContractUpgradeMigration extends SchemaMigration {
     };
   }
 
+  /** The destructive DDL the contract phase below executes, declared for the runner's pre-flight check (#971). */
+  plannedContractSql(): string[] {
+    return [
+      `ALTER TABLE ${this.config.targetTable} DROP COLUMN IF EXISTS ${this.config.addressColumn}`,
+      `ALTER TABLE ${this.config.targetTable} RENAME COLUMN ${this.config.addressColumn}_new TO ${this.config.addressColumn}`,
+    ];
+  }
+
   /**
    * Contract phase: Finalize migration by swapping columns and dropping old one.
    * Only runs after backfill completes successfully.

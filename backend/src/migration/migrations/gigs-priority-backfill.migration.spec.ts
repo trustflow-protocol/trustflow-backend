@@ -93,8 +93,20 @@ describe('GigsPriorityBackfillMigration (via MigrationRunnerService)', () => {
     runner = module.get<MigrationRunnerService>(MigrationRunnerService);
   });
 
+  it('rejects the real run without force, since contract() drops the urgent column', async () => {
+    await expect(runner.run(migration.name, { batchSize: 1 })).rejects.toThrow(
+      /destructive operation.*force: true/i,
+    );
+    expect(migration.getRow('gig-001')?.urgent).toBe(true);
+  });
+
+  it('allows a dry run to preview a destructive migration without force', async () => {
+    const run = await runner.run(migration.name, { dryRun: true });
+    expect(run.status).toBe(MigrationStatus.COMPLETED);
+  });
+
   it('runs the gigs migration end to end without locking (batch size of 1)', async () => {
-    const run = await runner.run(migration.name, { batchSize: 1 });
+    const run = await runner.run(migration.name, { batchSize: 1, force: true });
 
     expect(run.status).toBe(MigrationStatus.COMPLETED);
     expect(run.targetTable).toBe('gigs');
@@ -104,7 +116,7 @@ describe('GigsPriorityBackfillMigration (via MigrationRunnerService)', () => {
   });
 
   it('rolls the gigs table back to its pre-migration shape on manual rollback', async () => {
-    const run = await runner.run(migration.name, { batchSize: 10 });
+    const run = await runner.run(migration.name, { batchSize: 10, force: true });
     await runner.rollback(run.runId);
 
     for (const row of migration.allRows()) {

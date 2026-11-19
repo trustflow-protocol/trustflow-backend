@@ -116,6 +116,55 @@ describe('MilestoneExpiryScheduler', () => {
     });
   });
 
+  // ─── computeOverdue ──────────────────────────────────────────────────────────
+
+  describe('computeOverdue', () => {
+    it('returns undefined for a gig whose deadline has not passed yet', () => {
+      const gig = makeGig({ respondBy: msFromNow(1000) });
+      expect(scheduler.computeOverdue(gig)).toBeUndefined();
+    });
+
+    it('returns escalation stage 0 the moment the deadline passes', () => {
+      const gig = makeGig({ respondBy: msFromNow(-1000) });
+      const overdue = scheduler.computeOverdue(gig);
+      expect(overdue?.escalationWindow).toBe(0);
+    });
+
+    it('buckets the first week into daily escalation stages', () => {
+      const day = 24 * 60 * 60 * 1000;
+      expect(
+        scheduler.computeOverdue(makeGig({ respondBy: msFromNow(-1 * day) }))?.escalationWindow,
+      ).toBe(1);
+      expect(
+        scheduler.computeOverdue(makeGig({ respondBy: msFromNow(-6 * day) }))?.escalationWindow,
+      ).toBe(6);
+    });
+
+    it('switches to weekly escalation stages after the first week', () => {
+      const day = 24 * 60 * 60 * 1000;
+      // Day 7-13 overdue all map to the same weekly stage (7).
+      expect(
+        scheduler.computeOverdue(makeGig({ respondBy: msFromNow(-7 * day) }))?.escalationWindow,
+      ).toBe(7);
+      expect(
+        scheduler.computeOverdue(makeGig({ respondBy: msFromNow(-13 * day) }))?.escalationWindow,
+      ).toBe(7);
+      // Day 14 starts the next weekly stage.
+      expect(
+        scheduler.computeOverdue(makeGig({ respondBy: msFromNow(-14 * day) }))?.escalationWindow,
+      ).toBe(8);
+    });
+
+    it('computes msOverdue from the exact deadline instant, not a calendar-day boundary (#972)', () => {
+      const almostTwoDays = 2 * 24 * 60 * 60 * 1000 - 1;
+      const gig = makeGig({ respondBy: msFromNow(-almostTwoDays) });
+      const overdue = scheduler.computeOverdue(gig);
+      expect(overdue?.msOverdue).toBe(almostTwoDays);
+      // Just 1ms short of 2 full days overdue, so it must still be in stage 1, not 2.
+      expect(overdue?.escalationWindow).toBe(1);
+    });
+  });
+
   // ─── Deduplication ──────────────────────────────────────────────────────────
 
   describe('deduplication (in-memory fallback)', () => {
@@ -139,15 +188,19 @@ describe('MilestoneExpiryScheduler', () => {
       expect(await scheduler.claimReminder('gig-2', '24h')).toBe(true);
     });
 
+    it('overdue notifications are claimed once per escalation stage, independent of reminders (#973)', async () => {
+      expect(await scheduler.claimOverdueNotification('gig-1', 0)).toBe(true);
+      expect(await scheduler.claimOverdueNotification('gig-1', 0)).toBe(false);
+      // A later stage for the same gig is a distinct claim.
+      expect(await scheduler.claimOverdueNotification('gig-1', 1)).toBe(true);
+    });
+
     it('atomic claim prevents concurrent replicas from both dispatching the same reminder', async () => {
       const gig = makeGig({ respondBy: msFromNow(6 * 60 * 60 * 1000) });
       mockGigService.findByStatus.mockResolvedValue([gig]);
 
       // Simulate two replicas running runSweep concurrently
-      const [result1, result2] = await Promise.all([
-        scheduler.runSweep(),
-        scheduler.runSweep(),
-      ]);
+      const [result1, result2] = await Promise.all([scheduler.runSweep(), scheduler.runSweep()]);
 
       const totalDispatched = result1.length + result2.length;
       const totalEmitCalls = (mockGateway.emitMilestoneUpdate as jest.Mock).mock.calls.length;
@@ -223,6 +276,66 @@ describe('MilestoneExpiryScheduler', () => {
         {},
         0,
       );
+      expect(mockMetrics.increment).toHaveBeenCalledWith(
+        'milestone_overdue_notifications_total',
+        {},
+        0,
+      );
+    });
+
+    describe('overdue notifications (#973)', () => {
+      it('dispatches an overdue notification for a gig still OPEN past its deadline', async () => {
+        const gig = makeGig({ respondBy: msFromNow(-1000) });
+        mockGigService.findByStatus.mockResolvedValue([gig]);
+
+        await scheduler.runSweep();
+
+        expect(mockGateway.emitMilestoneUpdate).toHaveBeenCalledWith(
+          gig.id,
+          'milestone.overdue',
+          expect.objectContaining({ gigId: gig.id, escalationWindow: 0 }),
+        );
+      });
+
+      it('does not re-dispatch the same escalation stage on a later sweep (no flooding)', async () => {
+        const gig = makeGig({ respondBy: msFromNow(-1000) });
+        mockGigService.findByStatus.mockResolvedValue([gig]);
+
+        await scheduler.runSweep();
+        await scheduler.runSweep();
+        await scheduler.runSweep();
+
+        const overdueCalls = (mockGateway.emitMilestoneUpdate as jest.Mock).mock.calls.filter(
+          ([, event]) => event === 'milestone.overdue',
+        );
+        expect(overdueCalls).toHaveLength(1);
+      });
+
+      it('dispatches again once the gig advances to the next escalation stage', async () => {
+        const day = 24 * 60 * 60 * 1000;
+        const gig = makeGig({ respondBy: msFromNow(-1000) });
+        mockGigService.findByStatus.mockResolvedValue([gig]);
+
+        await scheduler.runSweep(new Date());
+        await scheduler.runSweep(new Date(Date.now() + 1.5 * day));
+
+        const overdueCalls = (mockGateway.emitMilestoneUpdate as jest.Mock).mock.calls.filter(
+          ([, event]) => event === 'milestone.overdue',
+        );
+        expect(overdueCalls).toHaveLength(2);
+      });
+
+      it('does not treat an upcoming-deadline gig as overdue', async () => {
+        const gig = makeGig({ respondBy: msFromNow(6 * 60 * 60 * 1000) });
+        mockGigService.findByStatus.mockResolvedValue([gig]);
+
+        await scheduler.runSweep();
+
+        const overdueCalls = (mockGateway.emitMilestoneUpdate as jest.Mock).mock.calls.filter(
+          ([, event]) => event === 'milestone.overdue',
+        );
+        expect(overdueCalls).toHaveLength(0);
+      });
     });
   });
 

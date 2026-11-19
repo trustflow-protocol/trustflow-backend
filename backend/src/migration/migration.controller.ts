@@ -64,10 +64,16 @@ export class MigrationController {
     summary: 'Execute an expand → backfill → contract migration',
     description:
       'Runs the named migration end to end in small batches so the target table is never locked. ' +
-      'If any phase fails, compensating actions automatically roll back the expand/contract changes.',
+      'If any phase fails, compensating actions automatically roll back the expand/contract changes. ' +
+      'A migration whose contract phase declares a destructive operation (DROP COLUMN/TABLE, ' +
+      'TRUNCATE) is rejected unless `force: true` is set.',
   })
   @ApiParam({ name: 'name', example: 'gigs-add-priority-column' })
   @ApiResponse({ status: 201, type: MigrationRunResponseDto })
+  @ApiResponse({
+    status: 400,
+    description: 'Migration declares a destructive contract-phase operation and force was not set',
+  })
   @ApiResponse({ status: 403, description: 'Caller is authenticated but not an admin address' })
   @ApiResponse({ status: 404, description: 'Migration not registered' })
   @ApiResponse({ status: 409, description: 'Migration already has an active run' })
