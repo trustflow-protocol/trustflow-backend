@@ -11,7 +11,7 @@ export const CreateEscrowSchema = z
   .object({
     depositor: stellarAddress,
     beneficiary: stellarAddress,
-    amountXLM: xlmAmount,
+    amountXLM: xlmAmount.refine(v => Number(v) > 0, 'amount must be greater than zero'),
     deadlineBlocks: z.number().int().positive().optional(),
   })
   .refine(data => data.depositor !== data.beneficiary, {
