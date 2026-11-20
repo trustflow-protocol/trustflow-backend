@@ -27,8 +27,8 @@ export class AdminController {
     summary: 'System-wide analytics snapshot for protocol admins',
     description:
       'Aggregates escrow, gig, dispute, reputation, migration, and reconciliation state into a ' +
-      'single dashboard payload. Every figure is computed on demand from the owning service — ' +
-      'nothing is cached, so this always reflects current state. Restricted to addresses listed ' +
+      'single dashboard payload. Figures are computed from the owning services and cached for ' +
+      '30 seconds (see `generatedAt`). Restricted to addresses listed ' +
       'in `ADMIN_ADDRESSES`.',
   })
   @ApiResponse({ status: 200, type: AnalyticsOverviewDto })

@@ -3,6 +3,7 @@ import { Readable } from 'stream';
 import { createHash } from 'crypto';
 import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import { DatabaseService } from '../common/database/database.service';
+import { requestContextStorage } from '../common/logging/request-context';
 
 export interface AuditLogEntry {
   operation: string;
@@ -86,7 +87,7 @@ export class AuditService implements OnModuleInit {
           entry.entityType,
           entry.beforeState ? JSON.stringify(entry.beforeState) : null,
           entry.afterState ? JSON.stringify(entry.afterState) : null,
-          entry.metadata ? JSON.stringify(entry.metadata) : null,
+          this.withImpersonator(entry.metadata),
         ],
       );
     } catch (error) {
@@ -95,6 +96,20 @@ export class AuditService implements OnModuleInit {
         error instanceof Error ? error.stack : String(error),
       );
     }
+  }
+
+  /**
+   * During an impersonation session `req.user.impersonatedBy` holds the admin wallet acting
+   * as the user (see JwtStrategy). Every audit entry written in that request records it, so
+   * the trail shows both the impersonated wallet (`user`) and the admin behind it (#944).
+   */
+  private withImpersonator(metadata?: Record<string, unknown>): string | null {
+    const request = requestContextStorage.getStore()?.request as
+      | { user?: { impersonatedBy?: string } }
+      | undefined;
+    const impersonatedBy = request?.user?.impersonatedBy;
+    const merged = impersonatedBy ? { ...metadata, impersonatedBy } : metadata;
+    return merged ? JSON.stringify(merged) : null;
   }
 
   async queryLogs(entityId: string, entityType: string): Promise<any[]> {

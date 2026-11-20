@@ -499,7 +499,8 @@ export class RateLimitGuard implements CanActivate {
 
   private getRoute(request: RateLimitRequest): string {
     const method = request.method || 'GET';
-    const route = request.route?.path || request.url || '/';
+    // Per-route bucket (#947). The query string is dropped so it can't mint fresh buckets.
+    const route = request.route?.path || (request.url || '/').split('?')[0];
     return this.normalizeIdentity(`${method}:${route}`);
   }
 

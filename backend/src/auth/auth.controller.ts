@@ -1,6 +1,23 @@
-import { Controller, Post, Body, Get, Query, HttpCode, HttpStatus, UnauthorizedException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Query,
+  HttpCode,
+  HttpStatus,
+  UnauthorizedException,
+  Inject,
+  Optional,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
+import type { Redis } from 'ioredis';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './auth.guard';
+import { revokeToken } from './token-denylist';
+import { REDIS_CLIENT } from '../common/redis/redis.constants';
 import { VerifyDto } from './dto/verify.dto';
 import { ChallengeDto } from './dto/challenge.dto';
 import { RefreshDto } from './dto/refresh.dto';
@@ -16,7 +33,10 @@ import { ValidationErrorResponseDto } from '../common/validation/validation-erro
 // routes answer 503 + Retry-After instead of skipping the limiter.
 @RateLimitOnRedisError('deny')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    @Optional() @Inject(REDIS_CLIENT) private readonly redis?: Redis | null,
+  ) {}
 
   @Get('challenge')
   // Stricter than the global default (#369). Thunks so the env is read per request.
@@ -124,5 +144,29 @@ export class AuthController {
       token: result.token,
       refreshToken: result.refreshToken,
     };
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Log out',
+    description:
+      'Revokes the presented access token server-side until it would have expired, so a ' +
+      'copied token stops working immediately (#946).',
+  })
+  @ApiResponse({ status: 204, description: 'Token revoked' })
+  @ApiResponse({ status: 401, description: 'Missing, invalid, or already-revoked token' })
+  async logout(@Req() req: { headers: Record<string, string | string[] | undefined> }): Promise<void> {
+    const header = req.headers.authorization;
+    const token = (Array.isArray(header) ? header[0] : header)?.replace(/^Bearer\s+/i, '').trim();
+    if (!token) throw new UnauthorizedException('Missing token');
+    const { exp } = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as {
+      exp?: number;
+    };
+    // Without `exp`, fall back to the 24h signing default in AuthModule.
+    const ttl = exp ? exp - Math.floor(Date.now() / 1000) : 24 * 60 * 60;
+    await revokeToken(this.redis, token, ttl);
   }
 }

@@ -181,5 +181,26 @@ describe('AdminService', () => {
         }),
       );
     });
+
+    it('serves repeat calls from a short-lived cache instead of re-running the aggregates (#945)', async () => {
+      mockEscrowService.findAll.mockResolvedValue([]);
+      mockGigService.findAll.mockResolvedValue([]);
+      mockDisputeSagaService.findAll.mockReturnValue([]);
+      mockReputationService.getTrackedAddressCount.mockReturnValue(0);
+      mockReputationService.getLeaderboard.mockReturnValue([]);
+      mockMigrationRunnerService.findAll.mockReturnValue([]);
+      mockReconciliationService.findAll.mockReturnValue([]);
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+
+      const first = await service.getOverview();
+      const second = await service.getOverview();
+      expect(second).toBe(first);
+      expect(mockGigService.findAll).toHaveBeenCalledTimes(1);
+
+      nowSpy.mockReturnValue(1_000_000 + AdminService.OVERVIEW_CACHE_TTL_MS + 1);
+      await service.getOverview();
+      expect(mockGigService.findAll).toHaveBeenCalledTimes(2);
+      nowSpy.mockRestore();
+    });
   });
 });

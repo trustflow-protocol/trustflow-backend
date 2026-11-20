@@ -36,7 +36,25 @@ export class AdminService {
     private readonly escrowAnalyticsService: EscrowAnalyticsService,
   ) {}
 
-  async getOverview(): Promise<AnalyticsOverview> {
+  /** Short-lived cache-aside for the dashboard overview, which runs full-table aggregates (#945). */
+  static readonly OVERVIEW_CACHE_TTL_MS = 30_000;
+  private overviewCache?: { expiresAt: number; value: Promise<AnalyticsOverview> };
+
+  getOverview(): Promise<AnalyticsOverview> {
+    const now = Date.now();
+    if (this.overviewCache && this.overviewCache.expiresAt > now) {
+      return this.overviewCache.value;
+    }
+    const value = this.computeOverview();
+    this.overviewCache = { expiresAt: now + AdminService.OVERVIEW_CACHE_TTL_MS, value };
+    // Don't keep a failed computation cached.
+    value.catch(() => {
+      if (this.overviewCache?.value === value) this.overviewCache = undefined;
+    });
+    return value;
+  }
+
+  private async computeOverview(): Promise<AnalyticsOverview> {
     const [escrows, gigs, disputes, reputation, migrations, reconciliation] = await Promise.all([
       this.getEscrowAnalytics(),
       this.getGigAnalytics(),

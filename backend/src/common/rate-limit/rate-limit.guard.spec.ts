@@ -470,6 +470,22 @@ describe('RateLimitGuard', () => {
       expect(keysTestnet.bucket).toContain('ratelimit:{wallet:testnet:gwallet1:get:_auth_challenge}:bucket');
     });
 
+    it('gives each route its own bucket per caller, ignoring the query string (#947)', async () => {
+      mockRedis.queueResults([[null, [1, 0]]]);
+      await guard.canActivate(mockContext({ method: 'GET', routePath: '/escrows' }).context);
+      mockRedis.queueResults([[null, [1, 0]]]);
+      await guard.canActivate(
+        mockContext({ method: 'POST', routePath: '/escrows/:id/release' }).context,
+      );
+
+      const buckets = mockRedis.rateLimitCheck.mock.calls.map(call => call[0]);
+      expect(buckets[0]).toBe('ratelimit:{ip:127.0.0.1:get:_escrows}:bucket');
+      expect(buckets[1]).toBe('ratelimit:{ip:127.0.0.1:post:_escrows_:id_release}:bucket');
+
+      const routeFor = (url: string) => (guard as any).getRoute({ method: 'GET', url });
+      expect(routeFor('/escrows?page=1')).toBe(routeFor('/escrows?page=2'));
+    });
+
     it('should reject immediately while a lockout key exists', async () => {
       // The script itself short-circuits on an existing lockout key (PTTL check) before
       // touching the bucket — from JS's side this still surfaces as a single rejected call.
