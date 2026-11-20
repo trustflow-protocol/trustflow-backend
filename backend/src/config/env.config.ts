@@ -35,7 +35,17 @@ const EnvSchema = z
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
     // Server configuration
-    PORT: z.coerce.number().int().positive().default(3001),
+    // Coercion alone is not enough: `.int().positive()` rejects non-numeric values such as
+    // `PORT=abc` (NaN) at validation time, and `.max(65535)` rejects values that would only
+    // fail later with an obscure `app.listen()` socket error. Bound the port so startup
+    // always fails fast with an error that names PORT.
+    PORT: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(65535)
+      .describe('HTTP port to listen on (1-65535)')
+      .default(3001),
     CORS_ORIGIN: z.preprocess(
       val => {
         if (typeof val !== 'string') return undefined;
@@ -116,6 +126,23 @@ const EnvSchema = z
       .default(5000)
       .describe('Timeout (ms) for Stellar endpoint health checks'),
 
+    // Soroban RPC protocol version compatibility range (#980). The RPC node's reported
+    // `protocolVersion` (from `getNetwork()`) is checked against this range at startup and on
+    // every health check; a value outside it means the provider has upgraded past what this
+    // backend was tested against and response shapes may have silently changed underneath it.
+    SOROBAN_PROTOCOL_MIN_VERSION: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(20)
+      .describe('Lowest Soroban RPC protocol version this backend is tested against'),
+    SOROBAN_PROTOCOL_MAX_VERSION: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(22)
+      .describe('Highest Soroban RPC protocol version this backend is tested against'),
+
     // Redis Configuration
     REDIS_URL: z
       .string()
@@ -187,10 +214,11 @@ const EnvSchema = z
     SENTRY_DSN: z
       .preprocess(blankToUndefined, z.string().url().optional())
       .describe('Sentry error tracking DSN; errors are logged but not reported when unset'),
-    SENTRY_TRACES_SAMPLE_RATE: z.preprocess(
-      blankToUndefined,
-      z.coerce.number().min(0).max(1).optional(),
-    ).describe('Sentry traces sample rate (0.0 to 1.0). Defaults to 0.2 in production, 1.0 otherwise (#934).'),
+    SENTRY_TRACES_SAMPLE_RATE: z
+      .preprocess(blankToUndefined, z.coerce.number().min(0).max(1).optional())
+      .describe(
+        'Sentry traces sample rate (0.0 to 1.0). Defaults to 0.2 in production, 1.0 otherwise (#934).',
+      ),
     APP_RELEASE: optionalString(),
 
     // OpenTelemetry Configuration
@@ -317,6 +345,15 @@ const EnvSchema = z
       .describe(
         'Maximum number of run records to retain per migration name, even within the TTL window. Default 50.',
       ),
+    NOTIFICATION_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10_000)
+      .describe(
+        'Timeout (ms) for outbound email/push notification requests before the attempt is ' +
+          'aborted and classified as a retryable transient failure (#975). Default 10s.',
+      ),
     WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     WEBHOOK_RELAY_BATCH_SIZE: z.coerce.number().int().positive().default(50),
     WEBHOOK_RELAY_LEASE_MS: z.coerce.number().int().positive().default(30_000),
@@ -355,6 +392,7 @@ const EnvSchema = z
     IPFS_REPIN_SWEEP_CONCURRENCY: z.coerce.number().int().positive().default(8),
     IPFS_REPIN_INTERVAL_MS: optionalNonnegativeInt(),
     IPFS_PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+    IPFS_PROVIDER_HEALTH_CHECK_INTERVAL_MS: optionalNonnegativeInt(),
 
     // S3-compatible Storage Configuration (avatar uploads)
     S3_BUCKET: z
@@ -443,6 +481,13 @@ const EnvSchema = z
         'disabling PostgreSQL certificate verification is not allowed in production',
       );
     }
+    if (data.SOROBAN_PROTOCOL_MIN_VERSION > data.SOROBAN_PROTOCOL_MAX_VERSION) {
+      issue(
+        'SOROBAN_PROTOCOL_MIN_VERSION',
+        'SOROBAN_PROTOCOL_MIN_VERSION must not be greater than SOROBAN_PROTOCOL_MAX_VERSION',
+      );
+    }
+
     if (Boolean(data.SWAGGER_USER) !== Boolean(data.SWAGGER_PASSWORD)) {
       issue('SWAGGER_USER', 'SWAGGER_USER and SWAGGER_PASSWORD must be set together');
     }
@@ -494,6 +539,8 @@ const EnvSchema = z
       if (!secret || secret.trim() === '') {
         issue('JWT_SECRET', 'JWT_SECRET is required in production');
       } else if (PLACEHOLDER_JWT_SECRETS.has(secret.trim().toLowerCase())) {
+        // Check known placeholders before length so a short placeholder gets the more
+        // actionable "do not ship this value" message rather than only a length warning.
         issue('JWT_SECRET', 'JWT_SECRET must not be a placeholder value in production');
       } else if (secret.length < 32) {
         issue('JWT_SECRET', 'JWT_SECRET must be at least 32 characters in production');
@@ -536,7 +583,7 @@ const EnvSchema = z
           'STELLAR_HORIZON_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
         );
       }
-      if (/testnet/i.test(data.SOROBAN_RPC_URL)) {
+      if (/testnet/i.test(data.SOROBAN_RPC_URL ?? '')) {
         issue(
           'SOROBAN_RPC_URL',
           'SOROBAN_RPC_URL must point to the PUBLIC network when STELLAR_NETWORK is PUBLIC or MAINNET',
@@ -549,7 +596,7 @@ const EnvSchema = z
           'STELLAR_HORIZON_URL must point to the TESTNET when STELLAR_NETWORK is TESTNET',
         );
       }
-      if (/mainnet|public/i.test(data.SOROBAN_RPC_URL)) {
+      if (/mainnet|public/i.test(data.SOROBAN_RPC_URL ?? '')) {
         issue(
           'SOROBAN_RPC_URL',
           'SOROBAN_RPC_URL must point to the TESTNET when STELLAR_NETWORK is TESTNET',

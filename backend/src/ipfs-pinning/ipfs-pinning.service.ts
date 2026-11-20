@@ -58,7 +58,7 @@ export const PIN_PROVIDER_PRIORITY = ['pinata', 'infura', 'web3.storage'] as con
  * for redundancy. Falls back to a process-local Map for pin metadata when Redis is
  * unavailable, logged at `error` level and counted via `IPFS_PINNING_PERSISTENCE_FALLBACK_METRIC`.
  */
- @Injectable()
+@Injectable()
 export class IpfsPinningService implements OnModuleInit {
   private readonly logger = new SanitizedLogger(IpfsPinningService.name);
 

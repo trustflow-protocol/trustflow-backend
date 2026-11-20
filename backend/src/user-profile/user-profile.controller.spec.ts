@@ -348,7 +348,7 @@ describe('UserProfileController', () => {
   // ─── GET /me ──────────────────────────────────────────────────────────────
 
   describe('findMine()', () => {
-    it('returns the authenticated wallet's own profile including its email', async () => {
+    it("returns the authenticated wallet's own profile including its email", async () => {
       mockProfileService.findByWalletAddress.mockResolvedValue(STORED_PROFILE);
 
       const result = await controller.findMine(makeReq() as any);
@@ -564,12 +564,24 @@ describe('UserProfileController', () => {
   // ─── POST /:id/avatar (uploadAvatar) ──────────────────────────────────────
 
   describe('uploadAvatar()', () => {
+    const JPEG_BYTES = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+    ]);
+    const PNG_BYTES = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    ]);
+    const WEBP_BYTES = Buffer.concat([
+      Buffer.from('RIFF', 'ascii'),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from('WEBP', 'ascii'),
+    ]);
+
     const MOCK_FILE: Express.Multer.File = {
       fieldname: 'file',
       originalname: 'avatar.jpg',
       mimetype: 'image/jpeg',
       size: 1024,
-      buffer: Buffer.from('fake-image-data'),
+      buffer: JPEG_BYTES,
       encoding: '7bit',
       destination: '',
       filename: '',
@@ -589,7 +601,7 @@ describe('UserProfileController', () => {
       expect(mockS3Service.uploadAvatar).toHaveBeenCalledWith(
         MOCK_FILE.buffer,
         MOCK_FILE.originalname,
-        MOCK_FILE.mimetype,
+        'image/jpeg',
       );
       expect(mockProfileService.update).toHaveBeenCalledWith(PROFILE_ID, {
         avatarUrl: 'https://cdn.example.com/avatar.jpg',
@@ -613,7 +625,7 @@ describe('UserProfileController', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('accepts image/png and image/webp as valid MIME types', async () => {
+    it('accepts image/png and image/webp when the bytes genuinely match', async () => {
       mockS3Service.uploadAvatar.mockResolvedValue({
         url: 'https://cdn.example.com/a.png',
         key: 'k',
@@ -621,12 +633,59 @@ describe('UserProfileController', () => {
       mockProfileService.update.mockResolvedValue(FAKE_PROFILE);
 
       await expect(
-        controller.uploadAvatar(PROFILE_ID, { ...MOCK_FILE, mimetype: 'image/png' }),
+        controller.uploadAvatar(PROFILE_ID, {
+          ...MOCK_FILE,
+          mimetype: 'image/png',
+          buffer: PNG_BYTES,
+        }),
       ).resolves.not.toThrow();
 
       await expect(
-        controller.uploadAvatar(PROFILE_ID, { ...MOCK_FILE, mimetype: 'image/webp' }),
+        controller.uploadAvatar(PROFILE_ID, {
+          ...MOCK_FILE,
+          mimetype: 'image/webp',
+          buffer: WEBP_BYTES,
+        }),
       ).resolves.not.toThrow();
+    });
+
+    // #981 — the declared MIME type and filename extension are both client-controlled and
+    // trivially spoofed; the endpoint must reject content whose actual bytes aren't a real
+    // image even when the multipart metadata claims otherwise.
+    it('throws BadRequestException when the declared MIME type is an image but the bytes are not', async () => {
+      const spoofed = {
+        ...MOCK_FILE,
+        originalname: 'avatar.png',
+        mimetype: 'image/png',
+        buffer: Buffer.from('#!/bin/sh\nrm -rf /\n', 'ascii'),
+      };
+
+      await expect(
+        controller.uploadAvatar(PROFILE_ID, spoofed as Express.Multer.File),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockS3Service.uploadAvatar).not.toHaveBeenCalled();
+    });
+
+    it('stores the sniffed MIME type rather than trusting a mismatched declared one', async () => {
+      mockS3Service.uploadAvatar.mockResolvedValue({
+        url: 'https://cdn.example.com/a.png',
+        key: 'k',
+      });
+      mockProfileService.update.mockResolvedValue(FAKE_PROFILE);
+
+      // Declares PNG but the bytes are a real JPEG — still allowed through (it is a genuine
+      // supported image), but stored under the format it actually is.
+      await controller.uploadAvatar(PROFILE_ID, {
+        ...MOCK_FILE,
+        mimetype: 'image/png',
+        buffer: JPEG_BYTES,
+      });
+
+      expect(mockS3Service.uploadAvatar).toHaveBeenCalledWith(
+        JPEG_BYTES,
+        MOCK_FILE.originalname,
+        'image/jpeg',
+      );
     });
 
     it('throws BadRequestException when file exceeds 5 MB', async () => {

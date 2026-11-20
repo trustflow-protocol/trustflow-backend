@@ -42,6 +42,7 @@ import {
 import { UserType, UserStatus } from './user-profile.entity';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { S3StorageService } from './s3-storage.service';
+import { sniffImageMime } from './image-signature.util';
 import {
   toOwnerProfile,
   toProfileForViewer,
@@ -577,10 +578,17 @@ export class UserProfileController {
       throw new BadRequestException('File size must not exceed 5MB');
     }
 
+    // #981: file.mimetype and the filename extension are both supplied by the client and
+    // trivially spoofable — sniff the actual bytes before trusting this is really an image.
+    const sniffedMime = sniffImageMime(file.buffer);
+    if (!sniffedMime) {
+      throw new BadRequestException('File content is not a valid JPEG, PNG, or WebP image');
+    }
+
     const result = await this.s3StorageService.uploadAvatar(
       file.buffer,
       file.originalname,
-      file.mimetype,
+      sniffedMime,
     );
 
     await this.userProfileService.update(id, { avatarUrl: result.url });

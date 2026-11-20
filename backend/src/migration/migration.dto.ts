@@ -46,6 +46,17 @@ export class RunMigrationDto {
   @IsOptional()
   @IsBoolean()
   dryRun?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Required to proceed when the migration declares a destructive contract-phase operation ' +
+      '(DROP COLUMN/TABLE, TRUNCATE). Ignored for dryRun, which only previews the migration.',
+    example: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 export class BackfillProgressDto implements BackfillProgress {

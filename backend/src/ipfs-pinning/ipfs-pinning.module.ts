@@ -3,6 +3,7 @@ import { WebhookModule } from '../webhook/webhook.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker';
 import { IpfsPinningService } from './ipfs-pinning.service';
 import { RepinWorkerService } from './repin-worker.service';
+import { ProviderHealthCheckWorkerService } from './provider-health-check-worker.service';
 import { IpfsPinningController } from './ipfs-pinning.controller';
 import { PIN_PROVIDERS } from './providers/ipfs-provider.interface';
 import { PinataProvider } from './providers/pinata.provider';
@@ -31,6 +32,7 @@ export const IPFS_UNPIN_FAILURE_METRIC = 'ipfs_unpin_failure_total';
   providers: [
     IpfsPinningService,
     RepinWorkerService,
+    ProviderHealthCheckWorkerService,
     ProviderHealthService,
     PinataProvider,
     InfuraProvider,

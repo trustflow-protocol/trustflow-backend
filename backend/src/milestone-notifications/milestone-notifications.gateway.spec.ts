@@ -164,6 +164,20 @@ describe('MilestoneNotificationsGateway', () => {
     await harness.gateway.onModuleDestroy();
   });
 
+  it('subscribes on a dedicated connection, leaving the shared client for commands', () => {
+    // SUBSCRIBE switches a Redis connection into a mode where normal commands are not
+    // allowed, so the gateway must never subscribe using the shared REDIS_CLIENT itself.
+    expect(harness.fakeRedis.duplicate).toHaveBeenCalledTimes(1);
+    expect(harness.fakeRedis.subscribe).toHaveBeenCalledWith(
+      OUTBOX_GATEWAY_CHANNEL,
+      expect.any(Function),
+    );
+    // The shared client is never asked to subscribe directly.
+    expect(harness.fakeRedis.subscribe.mock.invocationCallOrder[0]).toBeGreaterThan(
+      harness.fakeRedis.duplicate.mock.invocationCallOrder[0],
+    );
+  });
+
   it('emits to the room named after the event aggregate', async () => {
     await harness.dispatch({ aggregateId: 'gig-123', type: 'gig.accepted' });
 

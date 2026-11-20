@@ -9,8 +9,20 @@ import {
   ValidationArguments,
   ValidationOptions,
 } from 'class-validator';
+import { Transform, TransformFnParams } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { StrKey } from '@stellar/stellar-sdk';
+import { normalizeContractId } from '../../stellar/contract-id.util';
+
+/**
+ * Normalizes a contract ID to its canonical StrKey casing before validation runs, so a value
+ * typed in a different case than how it's stored elsewhere still passes `IsValidStellarContract`
+ * and compares equal everywhere downstream (#979).
+ */
+const NormalizeContractId = () =>
+  Transform(({ value }: TransformFnParams): unknown =>
+    typeof value === 'string' ? normalizeContractId(value) : value,
+  );
 
 @ValidatorConstraint({ name: 'isValidStellarContract', async: false })
 export class IsValidStellarContractConstraint implements ValidatorConstraintInterface {
@@ -42,6 +54,7 @@ export function IsValidStellarContract(validationOptions?: ValidationOptions) {
 export class StartPollingDto {
   @ApiPropertyOptional({ description: 'Contract ID to monitor' })
   @IsString()
+  @NormalizeContractId()
   @IsValidStellarContract()
   @IsOptional()
   contractId?: string;
@@ -50,23 +63,25 @@ export class StartPollingDto {
 export class IngestLedgerDto {
   @ApiProperty({ description: 'Contract ID to ingest events for' })
   @IsString()
+  @NormalizeContractId()
   @IsValidStellarContract()
-  contractId: string;
+  contractId!: string;
 
   @ApiProperty({ description: 'Ledger sequence to ingest (must be positive integer)' })
   @IsInt()
   @Min(1)
-  ledger: number;
+  ledger!: number;
 }
 
 export class HandleReorgDto {
   @ApiProperty({ description: 'Contract ID affected by reorg' })
   @IsString()
+  @NormalizeContractId()
   @IsValidStellarContract()
-  contractId: string;
+  contractId!: string;
 
   @ApiProperty({ description: 'Ledger sequence to reprocess from (must be positive integer)' })
   @IsInt()
   @Min(1)
-  fromLedger: number;
+  fromLedger!: number;
 }

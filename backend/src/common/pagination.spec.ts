@@ -79,7 +79,24 @@ describe('pagination', () => {
       expect(result.items).toEqual([]);
       expect(result.total).toBe(items.length);
     });
-  })    it('clamps pageSize to MAX_PAGE_LIMIT (#913)', () => {
+
+    it('does not imply an extra page when the total divides evenly by the limit', () => {
+      // Exactly 40 rows, page size 20: the last full page (2) must be the end of the data,
+      // otherwise clients fetch a third, empty page. Total accounting must also exclude
+      // rows the list query filters out (e.g. soft-deleted records).
+      const forty = Array.from({ length: 40 }, (_, index) => index + 1);
+      const lastPage = paginate(forty, { page: 2, limit: 20 });
+
+      expect(lastPage.items).toHaveLength(20);
+      expect(lastPage.total).toBe(40);
+      expect(paginate(forty, { page: 3, limit: 20 }).items).toEqual([]);
+
+      // One soft-deleted row excluded from the list must be reflected in the total too.
+      const thirtyNine = forty.slice(0, 39);
+      expect(paginate(thirtyNine, { page: 2, limit: 20 }).items).toHaveLength(19);
+      expect(paginate(thirtyNine, { page: 2, limit: 20 }).total).toBe(39);
+    });
+    it('clamps pageSize to MAX_PAGE_LIMIT (#913)', () => {
       expect(normalizePagination({ pageSize: 999999 }).limit).toBe(MAX_PAGE_LIMIT);
       expect(normalizePagination({ pageSize: 999999 }).pageSize).toBe(MAX_PAGE_LIMIT);
     });

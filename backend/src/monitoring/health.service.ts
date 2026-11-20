@@ -5,6 +5,7 @@ import { DatabaseService } from '../common/database/database.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { DrainStateService } from '../common/shutdown/drain-state.service';
 import { IngestionHealthService } from './ingestion-health.service';
+import { StellarProtocolCompatibilityService } from './stellar-protocol-compatibility.service';
 import { config } from '../config/env.config';
 
 export interface HealthStatus {
@@ -34,6 +35,7 @@ export class HealthService {
     @Optional() private readonly drainState?: DrainStateService,
     @Optional() private readonly health?: HealthCheckService,
     @Optional() private readonly ingestionHealth?: IngestionHealthService,
+    @Optional() private readonly protocolCompatibility?: StellarProtocolCompatibilityService,
   ) {}
 
   async liveness(): Promise<LivenessProbe> {
@@ -76,12 +78,13 @@ export class HealthService {
   }
 
   private async runAllChecks(): Promise<Record<string, boolean>> {
-    const [stellar, database, redis, memory, eventIngestion] = await Promise.all([
+    const [stellar, database, redis, memory, eventIngestion, stellarProtocol] = await Promise.all([
       this.checkStellar(),
       this.checkDatabase(),
       this.checkRedis(),
       this.checkMemory(),
       this.checkEventIngestion(),
+      this.checkProtocolCompatibility(),
     ]);
 
     return {
@@ -91,6 +94,7 @@ export class HealthService {
       redis,
       memory,
       eventIngestion,
+      stellarProtocol,
     };
   }
 
@@ -150,6 +154,15 @@ export class HealthService {
   }
 
   /**
+   * Whether the Soroban RPC node's protocol version (read once at startup) falls inside the
+   * range this backend was tested against. Unconfigured/unreachable reports healthy — that
+   * failure mode already shows up in `stellar` (#980).
+   */
+  private checkProtocolCompatibility(): Promise<boolean> {
+    return Promise.resolve(this.protocolCompatibility?.getStatus().compatible ?? true);
+  }
+
+  /**
    * Run Terminus-based structured health checks for detailed dependency breakdown.
    * Provides rich JSON health information for DevOps monitoring and Kubernetes probes.
    */
@@ -162,6 +175,7 @@ export class HealthService {
         async (): Promise<HealthIndicatorResult> => this.checkRedisIndicator(),
         async (): Promise<HealthIndicatorResult> => this.checkSorobanRpcIndicator(),
         async (): Promise<HealthIndicatorResult> => this.checkEventIngestionIndicator(),
+        (): HealthIndicatorResult => this.checkProtocolCompatibilityIndicator(),
       ]);
     } catch (error) {
       // Terminus throws on failure — return the error result
@@ -210,6 +224,22 @@ export class HealthService {
         status: isHealthy ? 'up' : 'down',
         lastSuccessfulPollAt:
           this.ingestionHealth?.getLastSuccessfulPollAt()?.toISOString() ?? null,
+      },
+    };
+  }
+
+  /** Soroban RPC protocol-version compatibility indicator for Terminus (#980) */
+  private checkProtocolCompatibilityIndicator(): HealthIndicatorResult {
+    const status = this.protocolCompatibility?.getStatus();
+    return {
+      stellar_protocol: {
+        status: (status?.compatible ?? true) ? 'up' : 'down',
+        checked: status?.checked ?? false,
+        protocolVersion: status?.protocolVersion ?? null,
+        supportedRange: [
+          status?.minSupported ?? config.SOROBAN_PROTOCOL_MIN_VERSION,
+          status?.maxSupported ?? config.SOROBAN_PROTOCOL_MAX_VERSION,
+        ],
       },
     };
   }

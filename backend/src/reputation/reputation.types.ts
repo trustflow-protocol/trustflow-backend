@@ -22,7 +22,7 @@ export interface ReputationEventLogEntry {
   occurredAt: string;
   /** Base weight for `type` before amount scaling/dampening — see REPUTATION_WEIGHTS. */
   baseWeight: number;
-  /** sqrt(amountXLM) scaling factor, capped at REPUTATION_MAX_AMOUNT_WEIGHT. */
+  /** log10(amountXLM)-based scaling factor, capped at REPUTATION_MAX_AMOUNT_WEIGHT (#977). */
   amountWeight: number;
   /** Sybil dampening applied for repeated interactions with this counterparty (1 / (1 + priorInteractions)). */
   dampeningFactor: number;
@@ -98,10 +98,13 @@ export const REPUTATION_WEIGHTS: Record<ReputationEventType, number> = {
 };
 
 /**
- * Caps how much a single high-value escrow can scale a contribution (amountWeight = sqrt(amountXLM),
- * capped here). Square-root rather than linear scaling so a 10,000 XLM escrow counts for meaningfully
- * more than a 100 XLM one without letting a single whale transaction single-handedly dominate an
- * address's score; the cap puts a hard ceiling under that same goal even for extreme amounts.
+ * Caps how much a single high-value escrow can scale a contribution
+ * (amountWeight = 1 + log10(amountXLM), capped here). Logarithmic rather than linear scaling
+ * so a 10,000 XLM escrow counts for meaningfully more than a 100 XLM one without letting a
+ * single whale transaction single-handedly dominate an address's score, while still
+ * differentiating budgets across many more orders of magnitude than a low, early-saturating
+ * cap would (#977) — the cap here only guards against overflow/an absurd amount, reached
+ * only around 1 billion XLM.
  */
 export const REPUTATION_MAX_AMOUNT_WEIGHT = 10;
 

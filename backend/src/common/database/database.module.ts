@@ -32,12 +32,57 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/** Retries a function with exponential backoff. */
-async function retryWithExponentialBackoff<T>(
+/**
+ * SQLSTATE codes for transient PostgreSQL conflicts. Retrying these is safe because the
+ * failed statement was rolled back:
+ *  - 40001: serialization_failure
+ *  - 40P01: deadlock_detected
+ */
+export const RETRYABLE_SQLSTATE_CODES = new Set(['40001', '40P01']);
+
+/** Node/pg connection-level codes that are transient while establishing the pool. */
+const RETRYABLE_CONNECTION_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT',
+  'EPIPE',
+  // PostgreSQL "connection exception" class 08.
+  '08000',
+  '08001',
+  '08003',
+  '08004',
+  '08006',
+  '08007',
+  '08P01',
+]);
+
+/**
+ * Whether a database error is transient and safe to retry.
+ *
+ * This deliberately inspects ONLY the structured `code` field (Postgres SQLSTATE or a
+ * Node connection code), never `error.message`. Message substring checks such as
+ * `message.includes('deadlock')` also match unrelated errors and cause non-retryable
+ * failures (e.g. a `23505` unique-constraint violation) to be retried repeatedly before
+ * ultimately failing anyway.
+ */
+export function isRetryableDatabaseError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code !== 'string') return false;
+  return RETRYABLE_SQLSTATE_CODES.has(code) || RETRYABLE_CONNECTION_CODES.has(code);
+}
+
+/** Retries a function with exponential backoff while `shouldRetry` accepts the error. */
+export async function retryWithExponentialBackoff<T>(
   fn: () => Promise<T>,
   maxAttempts: number,
   baseDelayMs: number,
   logger: Pick<Logger, 'log' | 'warn'>,
+  shouldRetry: (error: unknown) => boolean = () => true,
 ): Promise<T> {
   let lastError: Error | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -45,7 +90,9 @@ async function retryWithExponentialBackoff<T>(
       return await fn();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt === maxAttempts) break;
+      // Fail fast on permanent errors (e.g. unique-constraint violations) instead of
+      // burning through the retry budget and emitting repeated identical log noise.
+      if (attempt === maxAttempts || !shouldRetry(error)) break;
 
       const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
       logger.warn(
@@ -215,6 +262,7 @@ export function buildReplicaPoolConfigs(): PoolConfig[] {
           maxRetries,
           backoffBase,
           logger,
+          isRetryableDatabaseError,
         );
 
         logger.log('✓ Database connection established successfully');

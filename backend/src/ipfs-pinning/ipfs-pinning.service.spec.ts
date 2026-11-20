@@ -342,7 +342,9 @@ describe('IpfsPinningService', () => {
         await unpinRejection();
 
         // The record is never dropped — only its status/providers change.
-        await expect(service.findByCid(CID)).resolves.toMatchObject({ status: PinStatus.UNPINNING });
+        await expect(service.findByCid(CID)).resolves.toMatchObject({
+          status: PinStatus.UNPINNING,
+        });
         await service.unpin(CID);
         await expect(service.findByCid(CID)).resolves.toMatchObject({ status: PinStatus.UNPINNED });
       });

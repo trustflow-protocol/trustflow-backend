@@ -18,25 +18,27 @@ function isBase64(value: string): boolean {
   return value.length % 4 === 0 && BASE64_BODY_REGEX.test(value);
 }
 
-export const UploadDeliverableSchema = z.object({
-  gigId: z.string().min(1),
-  freelancer: z.string().regex(STELLAR_ADDRESS_REGEX, 'Invalid Stellar address'),
-  content: z
-    .string()
-    .min(1, 'Base64-encoded content is required')
-    .max(MAX_BASE64_CONTENT_LENGTH, 'content exceeds the maximum allowed size of 10 MB (decoded)')
-    .refine(value => value.length > MAX_BASE64_CONTENT_LENGTH || isBase64(value), {
-      message: 'content must be valid base64',
-    })
-    .optional(),
-  fileHash: z
-    .string()
-    .refine(isValidIpfsCid, { message: 'fileHash must be a valid, non-empty IPFS CID' })
-    .optional(),
-  filename: z.string().min(1).max(255),
-}).refine(data => Boolean(data.content || data.fileHash), {
-  message: 'Either content or a valid fileHash must be provided',
-});
+export const UploadDeliverableSchema = z
+  .object({
+    gigId: z.string().min(1),
+    freelancer: z.string().regex(STELLAR_ADDRESS_REGEX, 'Invalid Stellar address'),
+    content: z
+      .string()
+      .min(1, 'Base64-encoded content is required')
+      .max(MAX_BASE64_CONTENT_LENGTH, 'content exceeds the maximum allowed size of 10 MB (decoded)')
+      .refine(value => value.length > MAX_BASE64_CONTENT_LENGTH || isBase64(value), {
+        message: 'content must be valid base64',
+      })
+      .optional(),
+    fileHash: z
+      .string()
+      .refine(isValidIpfsCid, { message: 'fileHash must be a valid, non-empty IPFS CID' })
+      .optional(),
+    filename: z.string().min(1).max(255),
+  })
+  .refine(data => Boolean(data.content || data.fileHash), {
+    message: 'Either content or a valid fileHash must be provided',
+  });
 
 export type UploadDeliverableDto = z.infer<typeof UploadDeliverableSchema>;
 

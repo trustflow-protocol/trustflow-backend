@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { DeliverableService } from './deliverable.service';
 import { IpfsPinningService } from '../ipfs-pinning/ipfs-pinning.service';
 import { GigService } from '../gig/gig.service';
@@ -7,6 +12,18 @@ import { Gig, GigStatus } from '../gig/gig.entity';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { UploadDeliverableDto } from './deliverable.dto';
 import { DeliverableStatus } from './deliverable.entity';
+import { computeCidV1Raw } from '../ipfs-pinning/cid.util';
+import { PinStatus } from '../ipfs-pinning/ipfs-pinning.types';
+
+// `file-type` v20 is ESM-only; Jest's default resolver cannot load its conditional
+// `exports` map. The magic-byte check is not what these tests exercise, so stub it.
+jest.mock(
+  'file-type',
+  () => ({
+    fileTypeFromBuffer: jest.fn().mockResolvedValue({ mime: 'application/pdf', ext: 'pdf' }),
+  }),
+  { virtual: true },
+);
 
 const FREELANCER = 'G' + 'A'.repeat(55);
 const OTHER_WALLET = 'G' + 'B'.repeat(55);
@@ -60,10 +77,12 @@ describe('DeliverableService', () => {
   });
 
   describe('upload', () => {
+    // Use a real PDF magic header so upstream's validateFileMagicBytes() check passes.
+    const fileBytes = Buffer.from('%PDF-1.4\ntest file\n%%EOF');
     const dto: UploadDeliverableDto = {
       gigId: 'gig-1',
       freelancer: FREELANCER,
-      content: Buffer.from('test file').toString('base64'),
+      content: fileBytes.toString('base64'),
       filename: 'report.pdf',
     };
 
@@ -71,6 +90,7 @@ describe('DeliverableService', () => {
       mockIpfsPinningService.pinContent.mockResolvedValue({
         cid: 'bafytest123',
         size: 9,
+        status: PinStatus.HEALTHY,
       });
 
       const result = await service.upload(dto, FREELANCER);
@@ -83,6 +103,33 @@ describe('DeliverableService', () => {
         content: dto.content,
         filename: dto.filename,
       });
+    });
+
+    it('accepts a client-supplied fileHash that matches the uploaded bytes', async () => {
+      const fileHash = computeCidV1Raw(fileBytes);
+      mockIpfsPinningService.pinContent.mockResolvedValue({
+        cid: fileHash,
+        size: fileBytes.length,
+      });
+
+      const result = await service.upload({ ...dto, fileHash }, FREELANCER);
+
+      expect(result.cid).toBe(fileHash);
+      expect(mockIpfsPinningService.pinContent).toHaveBeenCalledWith({
+        content: dto.content,
+        filename: dto.filename,
+      });
+    });
+
+    it('rejects a client-supplied fileHash that does not match the uploaded bytes', async () => {
+      const fileHash = computeCidV1Raw(Buffer.from('different content'));
+      mockIpfsPinningService.pinContent.mockResolvedValue({ cid: 'unused', size: 1 });
+
+      await expect(service.upload({ ...dto, fileHash }, FREELANCER)).rejects.toThrow(
+        'fileHash does not match the uploaded content',
+      );
+      expect(mockIpfsPinningService.pinContent).not.toHaveBeenCalled();
+      expect((await service.findByGig(dto.gigId)).items).toEqual([]);
     });
 
     it('can retrieve uploaded deliverable by ID', async () => {
@@ -116,7 +163,10 @@ describe('DeliverableService', () => {
       mockIpfsPinningService.pinContent.mockResolvedValue({ cid: 'c1', size: 1 });
 
       for (let i = 1; i <= 5; i++) {
-        await service.upload({ ...dto, gigId: 'gig-paginated', filename: `report-${i}.pdf` }, FREELANCER);
+        await service.upload(
+          { ...dto, gigId: 'gig-paginated', filename: `report-${i}.pdf` },
+          FREELANCER,
+        );
       }
 
       const page1 = await service.findByGig('gig-paginated', { page: 1, limit: 2 });

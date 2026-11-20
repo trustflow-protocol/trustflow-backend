@@ -1,4 +1,5 @@
 import { config } from '../config/env.config';
+import { normalizeContractId } from './contract-id.util';
 
 const VALID_NETWORKS = ['TESTNET', 'PUBLIC'] as const;
 type StellarNetworkValue = (typeof VALID_NETWORKS)[number];
@@ -66,7 +67,7 @@ export function getStellarConfig(): StellarConfig {
     sorobanRpcEndpoints: (config.SOROBAN_RPC_ENDPOINTS || config.SOROBAN_RPC_URL!)
       .split(',')
       .map(url => url.trim()),
-    contractId: config.TRUSTFLOW_CONTRACT_ID || '',
+    contractId: normalizeContractId(config.TRUSTFLOW_CONTRACT_ID || ''),
     networkPassphrase: NETWORK_PASSPHRASES[normalizedNetwork as StellarNetworkValue],
   };
 

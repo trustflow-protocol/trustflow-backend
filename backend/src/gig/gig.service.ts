@@ -342,7 +342,10 @@ export class GigService implements OnModuleInit {
         await this.escrowService.cancel(gig.escrowId);
         this.logger.log(`Released escrow reservation ${gig.escrowId} for gig ${gig.id}`);
       } catch (err) {
-        this.logger.error(`Failed to release escrow reservation ${gig.escrowId} for gig ${gig.id}`, err);
+        this.logger.error(
+          `Failed to release escrow reservation ${gig.escrowId} for gig ${gig.id}`,
+          err,
+        );
       }
     }
     if (this.redis) {

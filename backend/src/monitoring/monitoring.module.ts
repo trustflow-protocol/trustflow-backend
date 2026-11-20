@@ -11,6 +11,7 @@ import { SorobanRpcMetricsInterceptor } from './soroban-rpc-metrics.interceptor'
 import { TracingService } from './tracing.service';
 import { DatabaseQueryLoggerService } from './database-query-logger.service';
 import { IngestionHealthService } from './ingestion-health.service';
+import { StellarProtocolCompatibilityService } from './stellar-protocol-compatibility.service';
 
 @Global()
 @Module({
@@ -26,6 +27,7 @@ import { IngestionHealthService } from './ingestion-health.service';
     TracingService,
     DatabaseQueryLoggerService,
     IngestionHealthService,
+    StellarProtocolCompatibilityService,
   ],
   exports: [
     HealthService,
@@ -37,6 +39,7 @@ import { IngestionHealthService } from './ingestion-health.service';
     TracingService,
     DatabaseQueryLoggerService,
     IngestionHealthService,
+    StellarProtocolCompatibilityService,
   ],
 })
 export class MonitoringModule {}

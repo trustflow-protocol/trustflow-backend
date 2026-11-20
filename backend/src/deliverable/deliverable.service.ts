@@ -16,6 +16,7 @@ import { GigStatus } from '../gig/gig.entity';
 import { UploadDeliverableDto } from './deliverable.dto';
 import { Deliverable, DeliverableStatus } from './deliverable.entity';
 import { PinStatus } from '../ipfs-pinning/ipfs-pinning.types';
+import { computeCidV1Raw, isValidCidV1Raw } from '../ipfs-pinning/cid.util';
 import { PaginatedResponse, PaginationQuery, paginate } from '../common/pagination';
 
 const DELIVERABLE_KEY_PREFIX = 'deliverable:';
@@ -47,20 +48,38 @@ export class DeliverableService {
     let size: number;
     let deliverableStatus: DeliverableStatus;
 
-    if (dto.fileHash) {
-      cid = dto.fileHash;
-      size = 0;
-      deliverableStatus = DeliverableStatus.PENDING;
-    } else {
-      const buffer = Buffer.from(dto.content!, 'base64');
+    if (dto.content) {
+      // Uploaded bytes are the source of truth. Recompute the content hash server-side
+      // (#957): a client-supplied `fileHash` is a claim to verify, never a value to store
+      // on faith. For CIDv1 raw/sha2-256 hashes we can compare like-for-like and reject a
+      // mismatch with a clear error. Other CID formats (e.g. CIDv0/dag-pb) are not
+      // byte-comparable to the raw CID, so we simply ignore the claim and persist the
+      // server-computed CID from the pin result instead.
+      const buffer = Buffer.from(dto.content, 'base64');
       await this.validateFileMagicBytes(buffer, dto.filename);
+
+      if (dto.fileHash && isValidCidV1Raw(dto.fileHash.trim())) {
+        const computedCid = computeCidV1Raw(buffer);
+        if (dto.fileHash.trim() !== computedCid) {
+          throw new BadRequestException(
+            `fileHash does not match the uploaded content: expected ${computedCid}, received ${dto.fileHash}`,
+          );
+        }
+      }
+
       const pinResult = await this.ipfsPinningService.pinContent({
-        content: dto.content!,
+        content: dto.content,
         filename: dto.filename,
       });
       cid = pinResult.cid;
       size = pinResult.size;
       deliverableStatus = this.mapPinStatusToDeliverableStatus(pinResult.status);
+    } else {
+      // No bytes were uploaded, so there is nothing to recompute against. The hash is
+      // stored as PENDING and must be verified if/when the content is submitted later.
+      cid = dto.fileHash!;
+      size = 0;
+      deliverableStatus = DeliverableStatus.PENDING;
     }
 
     const deliverable: Deliverable = {
@@ -158,10 +177,7 @@ export class DeliverableService {
     return d;
   }
 
-  async findByGig(
-    gigId: string,
-    query?: PaginationQuery,
-  ): Promise<PaginatedResponse<Deliverable>> {
+  async findByGig(gigId: string, query?: PaginationQuery): Promise<PaginatedResponse<Deliverable>> {
     let deliverables: Deliverable[];
     if (this.redis) {
       try {

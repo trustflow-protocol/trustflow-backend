@@ -8,6 +8,17 @@ import { REDIS_CLIENT } from './redis.constants';
 export { REDIS_CLIENT } from './redis.constants';
 
 /**
+ * Reconnect backoff: `attempt * BASE`, hard-capped at `MAX`.
+ *
+ * The cap is the important half. An uncapped schedule doubles/grows into the minutes after a
+ * handful of failures, so a Redis instance that was down for only a few seconds would leave
+ * the backend degraded long after it recovered. Keeping the ceiling in the low seconds range
+ * means the next scheduled retry notices recovery promptly.
+ */
+const REDIS_RECONNECT_BASE_DELAY_MS = 100;
+export const REDIS_RECONNECT_MAX_DELAY_MS = 3000;
+
+/**
  * Build the app's ioredis client from `REDIS_URL`, or `null` when it is unset.
  *
  * ioredis is a Node `EventEmitter`, and an unhandled `'error'` event can crash
@@ -39,7 +50,11 @@ export function createRedisClient(
     // sequence (seconds). Reject fast so callers can apply their own degradation policy.
     commandTimeout: config.REDIS_COMMAND_TIMEOUT_MS,
     retryStrategy: times => {
-      const delay = Math.min(times * 100, 3000);
+      // Explicit cap per #906: never let a short Redis blip turn into minutes of backoff.
+      const delay = Math.min(
+        times * REDIS_RECONNECT_BASE_DELAY_MS,
+        REDIS_RECONNECT_MAX_DELAY_MS,
+      );
       logger.warn(`Redis reconnect attempt #${times}, retrying in ${delay}ms`);
       return delay;
     },
@@ -58,6 +73,9 @@ export function createRedisClient(
 
   // Ensure pipeline and multi batches respect REDIS_COMMAND_TIMEOUT_MS (#907)
   const origMulti = client.multi.bind(client);
+  // `Redis#multi` is overloaded (a `{ pipeline: false }` call resolves to `Promise<"OK">`
+  // rather than a `ChainableCommander`); this wrapper only ever returns the chainable form,
+  // so it's cast back to the original member type rather than widening the public signature.
   client.multi = function (...args: any[]) {
     const pipeline = origMulti(...args);
     const origExec = pipeline.exec.bind(pipeline);
@@ -76,7 +94,7 @@ export function createRedisClient(
       });
     };
     return pipeline;
-  };
+  } as typeof client.multi;
 
   const origPipeline = client.pipeline.bind(client);
   client.pipeline = function (...args: any[]) {

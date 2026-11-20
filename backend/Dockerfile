@@ -22,6 +22,12 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine AS production
 
+# Git commit SHA (or semver) of the build, injected via --build-arg at image build time.
+# Passed through as APP_RELEASE so Sentry.init() can tag every event with the build that
+# produced it instead of lumping everything into one "unknown release" bucket.
+ARG APP_RELEASE
+ENV APP_RELEASE=${APP_RELEASE}
+
 # Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
 

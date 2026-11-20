@@ -88,6 +88,21 @@ describe('SanitizedLogger', () => {
     expect(() => new SanitizedLogger('T').log(cyclic as never)).not.toThrow();
   });
 
+  it('still emits a usable log line for a circular ORM-style entity instead of dropping it', () => {
+    // A raw JSON.stringify inside the logger would throw here, and a broad try/catch at the
+    // call site would swallow the whole log. The sanitised path must break the cycle and
+    // still hand a line to the transport.
+    const entity: Record<string, unknown> = { id: 'esc-1', status: 'active' };
+    entity.self = entity; // back-reference
+
+    new SanitizedLogger('T').log(entity as never);
+
+    expect(spies.log).toHaveBeenCalledTimes(1);
+    const emitted = String(spies.log.mock.calls[0][0]);
+    expect(emitted).toContain('esc-1');
+    expect(emitted).toContain('[Circular]');
+  });
+
   it('preserves a message that contains no secrets byte-for-byte', () => {
     new SanitizedLogger('T').log('Escrow esc-1 moved to status released');
     expect(spies.log).toHaveBeenCalledWith('Escrow esc-1 moved to status released');

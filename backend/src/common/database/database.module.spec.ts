@@ -1,7 +1,12 @@
 import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { buildPoolConfig, buildSslConfig } from './database.module';
+import {
+  buildPoolConfig,
+  buildSslConfig,
+  isRetryableDatabaseError,
+  retryWithExponentialBackoff,
+} from './database.module';
 
 describe('buildPoolConfig', () => {
   it('returns null when neither DATABASE_URL nor DB_HOST/DB_NAME are set', () => {
@@ -138,5 +143,84 @@ describe('buildPoolConfig', () => {
 
     expect(config).toMatchObject({ connectionString: 'postgres://localhost/trustflow' });
     expect(config).not.toHaveProperty('host');
+  });
+});
+
+describe('database retry classification', () => {
+  const codeError = (code: string, message = 'database error') =>
+    Object.assign(new Error(message), { code });
+
+  describe('isRetryableDatabaseError', () => {
+    it.each(['40001', '40P01'])('retries transient SQLSTATE %s', code => {
+      expect(isRetryableDatabaseError(codeError(code, 'conflict'))).toBe(true);
+    });
+
+    it.each(['23505', '23503', '42601', '42P01'])(
+      'fails fast on non-retryable SQLSTATE %s',
+      code => {
+        expect(isRetryableDatabaseError(codeError(code))).toBe(false);
+      },
+    );
+
+    it.each(['ECONNREFUSED', 'ETIMEDOUT', '08006'])(
+      'retries transient connection code %s',
+      code => {
+        expect(isRetryableDatabaseError(codeError(code))).toBe(true);
+      },
+    );
+
+    it('does not treat a deadlock-shaped message as retryable without a code', () => {
+      expect(isRetryableDatabaseError(new Error('deadlock detected'))).toBe(false);
+      expect(isRetryableDatabaseError(new Error('deadlock found when trying to get lock'))).toBe(
+        false,
+      );
+    });
+
+    it('returns false for non-object errors', () => {
+      expect(isRetryableDatabaseError('deadlock')).toBe(false);
+      expect(isRetryableDatabaseError(null)).toBe(false);
+      expect(isRetryableDatabaseError(undefined)).toBe(false);
+      expect(isRetryableDatabaseError(new Error('no code'))).toBe(false);
+    });
+  });
+
+  describe('retryWithExponentialBackoff', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    beforeEach(() => jest.clearAllMocks());
+
+    it('retries a transient serialization failure until it succeeds', async () => {
+      const fn = jest
+        .fn()
+        .mockRejectedValueOnce(codeError('40001', 'could not serialize access'))
+        .mockResolvedValueOnce('ok');
+
+      await expect(
+        retryWithExponentialBackoff(fn, 3, 0, logger, isRetryableDatabaseError),
+      ).resolves.toBe('ok');
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a unique-constraint violation', async () => {
+      const error = codeError('23505', 'duplicate key value violates unique constraint');
+      const fn = jest.fn().mockRejectedValue(error);
+
+      await expect(
+        retryWithExponentialBackoff(fn, 3, 0, logger, isRetryableDatabaseError),
+      ).rejects.toBe(error);
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('does not retry based on message text alone', async () => {
+      const error = new Error('deadlock detected');
+      const fn = jest.fn().mockRejectedValue(error);
+
+      await expect(
+        retryWithExponentialBackoff(fn, 5, 0, logger, isRetryableDatabaseError),
+      ).rejects.toBe(error);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
   });
 });

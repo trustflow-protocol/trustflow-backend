@@ -35,6 +35,8 @@ export interface Gig {
   acceptedAt?: string;
   expiredAt?: string;
   cancelledAt?: string;
+  /** Set when a gig is soft-deleted; excluded from list/search results. */
+  deletedAt?: string;
   version: number;
   escrowId?: string;
   reservationId?: string;

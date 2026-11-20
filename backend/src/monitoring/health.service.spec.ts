@@ -136,6 +136,7 @@ describe('HealthService', () => {
       redis: true,
       memory: true,
       eventIngestion: true,
+      stellarProtocol: true,
     });
   });
 
@@ -145,5 +146,38 @@ describe('HealthService', () => {
     const status = await new HealthService().check();
 
     expect(status.checks.eventIngestion).toBe(true);
+  });
+
+  it('reports stellarProtocol: true when no StellarProtocolCompatibilityService is wired in (unit test wiring)', async () => {
+    mockFetchOk(true);
+
+    const status = await new HealthService().check();
+
+    expect(status.checks.stellarProtocol).toBe(true);
+  });
+
+  it('reports stellarProtocol: false when the RPC protocol version is outside the tested range (#980)', async () => {
+    mockFetchOk(true);
+    const protocolCompatibility = {
+      getStatus: jest.fn().mockReturnValue({
+        checked: true,
+        compatible: false,
+        protocolVersion: 99,
+        minSupported: 20,
+        maxSupported: 22,
+      }),
+    } as unknown as any;
+
+    const status = await new HealthService(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      protocolCompatibility,
+    ).check();
+
+    expect(status.checks.stellarProtocol).toBe(false);
+    expect(status.status).toBe('degraded');
   });
 });

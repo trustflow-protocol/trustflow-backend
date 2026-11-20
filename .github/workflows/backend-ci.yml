@@ -215,6 +215,8 @@ jobs:
           push: false
           load: false
           tags: trustflow-backend:${{ github.sha }}
+          build-args: |
+            APP_RELEASE=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=/tmp/trustflow-backend.tar
