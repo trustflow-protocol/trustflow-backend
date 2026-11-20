@@ -253,7 +253,9 @@ describe('EscrowController', () => {
 
       const result = await controller.release('esc-001');
 
-      expect(mocks.escrowService.release).toHaveBeenCalledWith('esc-001');
+      expect(mocks.escrowService.release).toHaveBeenCalledWith('esc-001', 'system', {
+        rejectIfDisputed: true,
+      });
       expect(result).toEqual(released);
     });
 

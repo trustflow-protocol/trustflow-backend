@@ -8,6 +8,23 @@ import {
 import { REDIS_CLIENT } from '../common/redis/redis.module';
 import { MetricsService } from '../monitoring/metrics.service';
 import { makeFakeRedisClient } from '../testing/fake-redis-client';
+import { CreateEscrowSchema } from './escrow.dto';
+
+describe('CreateEscrowSchema amount (#849)', () => {
+  const base = { depositor: `G${'A'.repeat(55)}`, beneficiary: `G${'B'.repeat(55)}` };
+
+  it.each(['0', '0.0000000'])('rejects a zero amount (%s)', amountXLM => {
+    const result = CreateEscrowSchema.safeParse({ ...base, amountXLM });
+    expect(result.success).toBe(false);
+    expect(result.success ? '' : result.error.errors[0].message).toBe(
+      'amount must be greater than zero',
+    );
+  });
+
+  it('accepts a positive amount', () => {
+    expect(CreateEscrowSchema.safeParse({ ...base, amountXLM: '0.0000001' }).success).toBe(true);
+  });
+});
 
 // ─── Test suite ───────────────────────────────────────────────────────────────
 
@@ -193,6 +210,44 @@ describe('EscrowService', () => {
           status: 'cancelled',
         });
         expect(cancelledOnly.data.map(e => e.id)).toEqual([withdrawn.id]);
+      });
+
+      it('keeps the wallet scope when a status filter is supplied (#850)', async () => {
+        const OTHER = 'GOTHER111111111111111111111111111111111111111111111111111';
+        const theirs = await service.create(OTHER, BENEFICIARY, AMOUNT);
+        await service.fund(theirs.id);
+
+        const result = await service.findByDepositor(DEPOSITOR, 0, 20, { status: 'active' });
+
+        expect(result.total).toBe(0);
+        expect(result.data).toEqual([]);
+      });
+    });
+
+    // ─── dispute guard on release (#851) ──────────────────────────────────────
+
+    describe('dispute guard on release', () => {
+      it('rejects a milestone release once the escrow is disputed', async () => {
+        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+        await service.fund(escrow.id);
+        const milestone = await service.addMilestone(escrow.id, 'Design', '40');
+        await service.raiseDispute(escrow.id, 'not delivered');
+
+        await expect(service.releaseMilestone(escrow.id, milestone.id)).rejects.toThrow(
+          'disputed escrow',
+        );
+        expect((await service.findById(escrow.id))?.status).toBe('disputed');
+      });
+
+      it('rejects a user-initiated full release of a disputed escrow', async () => {
+        const escrow = await service.create(DEPOSITOR, BENEFICIARY, AMOUNT);
+        await service.fund(escrow.id);
+        await service.raiseDispute(escrow.id, 'not delivered');
+
+        await expect(
+          service.release(escrow.id, 'system', { rejectIfDisputed: true }),
+        ).rejects.toThrow('Cannot release a disputed escrow');
+        expect((await service.findById(escrow.id))?.status).toBe('disputed');
       });
     });
 

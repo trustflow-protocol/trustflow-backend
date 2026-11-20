@@ -286,6 +286,13 @@ export class EscrowService implements OnModuleInit {
     } else {
       all = [...this.escrows.values()].filter(e => e.depositor === address);
     }
+    // Always scope to the wallet first, then layer the optional filters on top (#850).
+    all = all.filter(e => e.depositor === address);
+    if (filter.status !== undefined) {
+      all = all.filter(e => e.status === filter.status);
+    } else if (!filter.includeCancelled) {
+      all = all.filter(e => e.status !== 'cancelled');
+    }
     const total = all.length;
     const data = all.slice(offset, offset + limit);
     return { data, total };
@@ -482,12 +489,20 @@ export class EscrowService implements OnModuleInit {
     return escrow;
   }
 
-  async release(id: string, user: string = 'system'): Promise<Escrow> {
+  async release(
+    id: string,
+    user: string = 'system',
+    options: { rejectIfDisputed?: boolean } = {},
+  ): Promise<Escrow> {
     const escrow = await this.findById(id);
     if (!escrow) throw new NotFoundException('Escrow not found');
     if (escrow.status === 'released') throw new ConflictException('Escrow is already released');
     if (escrow.status === 'cancelled')
       throw new ConflictException('Cannot release a cancelled escrow');
+    // Dispute resolution and chain events may release a disputed escrow; user-initiated
+    // releases may not. Checked on the row read immediately before the write (#851).
+    if (options.rejectIfDisputed && escrow.status === 'disputed')
+      throw new ConflictException('Cannot release a disputed escrow');
     const beforeState = { ...escrow };
     escrow.status = 'released';
     escrow.remainingAmount = '0';
@@ -616,6 +631,9 @@ export class EscrowService implements OnModuleInit {
     }
     if (milestone.status === 'released') {
       throw new ConflictException('Milestone already released');
+    }
+    if (escrow.status === 'disputed') {
+      throw new ConflictException('Cannot release a milestone of a disputed escrow');
     }
 
     milestone.status = 'released';

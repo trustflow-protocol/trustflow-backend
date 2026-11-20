@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Controller,
   ForbiddenException,
   Get,
@@ -374,7 +375,7 @@ export class EscrowController {
   @ApiResponse({ status: 200, description: 'Escrow released successfully' })
   @ApiResponse({ status: 404, description: 'Escrow not found' })
   async release(@Param('id') id: string) {
-    return this.escrowService.release(id);
+    return this.escrowService.release(id, 'system', { rejectIfDisputed: true });
   }
 
   @Get(':id/release/transaction')
@@ -460,7 +461,15 @@ export class EscrowController {
     description: 'Milestone released; escrow with updated remainingAmount',
   })
   @ApiResponse({ status: 404, description: 'Escrow or milestone not found' })
-  releaseMilestone(@Param('id') id: string, @Param('milestoneId') milestoneId: string) {
+  async releaseMilestone(@Param('id') id: string, @Param('milestoneId') milestoneId: string) {
+    const latest = await this.deliverableService.getLatestRevision(id, milestoneId);
+    if (latest?.status !== 'approved') {
+      throw new ConflictException(
+        `Milestone ${milestoneId} cannot be released until its deliverable is approved`,
+      );
+    }
+    // releaseMilestone re-reads the escrow after this lookup, so a dispute opened
+    // meanwhile still blocks the release (#851).
     return this.escrowService.releaseMilestone(id, milestoneId);
   }
 
