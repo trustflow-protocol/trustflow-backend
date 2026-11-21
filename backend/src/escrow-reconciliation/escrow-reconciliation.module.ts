@@ -8,6 +8,7 @@ import { EscrowReconciliationStateStore } from './escrow-reconciliation-state.st
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { SorobanEscrowChainStateClient } from './soroban-escrow-chain-state.client';
 import { MonitoringModule } from '../monitoring/monitoring.module';
+import { MetricsService } from '../monitoring/metrics.service';
 
 @Module({
   imports: [EscrowModule, WebhookModule, MonitoringModule],
@@ -18,6 +19,7 @@ import { MonitoringModule } from '../monitoring/monitoring.module';
     EscrowReconciliationStateStore,
     SorobanEscrowChainStateClient,
     { provide: EscrowChainStateClient, useClass: SorobanEscrowChainStateClient },
+    MetricsService,
   ],
   exports: [EscrowReconciliationService],
 })

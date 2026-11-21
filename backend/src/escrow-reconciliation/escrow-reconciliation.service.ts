@@ -12,11 +12,13 @@ import {
   DriftRecord,
   DriftType,
   RECONCILIATION_EVENTS,
+  RECONCILIATION_DRIFT_METRIC,
   DEFAULT_ESCROW_RECONCILIATION_SWEEP_CONCURRENCY,
   ReconciliationError,
   ReconciliationRun,
 } from './escrow-reconciliation.types';
 import { InvalidChainStateError } from './chain-escrow.validation';
+import { MetricsService } from '../monitoring/metrics.service';
 import { config } from '../config/env.config';
 
 interface ReconciliationTarget {
@@ -48,6 +50,7 @@ export class EscrowReconciliationService {
     private readonly chainClient: EscrowChainStateClient,
     private readonly webhookService: WebhookService,
     private readonly store: EscrowReconciliationStateStore,
+    private readonly metrics: MetricsService,
   ) {}
 
   async findById(runId: string): Promise<ReconciliationRun | undefined> {
@@ -176,6 +179,13 @@ export class EscrowReconciliationService {
     // Every target was read and diffed above, including the ones whose read failed — a
     // failed read is still an escrow that was checked, and the error is reported separately.
     const checked = targets.length;
+
+    // Emit drift counters labelled by outcome so dashboards can distinguish auto-corrected
+    // drift from drift that only produced an alert and requires manual review (#867).
+    for (const drift of drifts) {
+      const outcome = drift.repaired ? 'auto_corrected' : 'alert_only';
+      this.metrics.increment(RECONCILIATION_DRIFT_METRIC, { outcome });
+    }
 
     const run: ReconciliationRun = {
       runId,

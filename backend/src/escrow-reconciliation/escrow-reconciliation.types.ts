@@ -59,5 +59,16 @@ export const RECONCILIATION_EVENTS = {
   ESCROW_BACKFILLED: 'escrow_reconciliation.escrow_backfilled',
 } as const;
 
+/**
+ * Prometheus counter name for reconciliation drift events.
+ * Carries an `outcome` label to distinguish drift that was auto-corrected
+ * from drift that only triggered an alert for manual review (#867).
+ *
+ * Label values:
+ *   - `auto_corrected` — the reconciler wrote the chain state back to the DB.
+ *   - `alert_only`     — the drift was recorded but not automatically repaired.
+ */
+export const RECONCILIATION_DRIFT_METRIC = 'reconciliation_drift_total';
+
 export const DEFAULT_ESCROW_RECONCILIATION_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 export const DEFAULT_ESCROW_RECONCILIATION_SWEEP_CONCURRENCY = 8;

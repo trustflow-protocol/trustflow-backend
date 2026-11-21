@@ -1,9 +1,10 @@
-import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { SanitizedLogger } from '../common/logging/sanitized-logger';
 import {
   rpc as SorobanRpc,
   Contract,
   TransactionBuilder,
+  Transaction,
   BASE_FEE,
   nativeToScVal,
 } from '@stellar/stellar-sdk';
@@ -51,6 +52,14 @@ export interface UnsignedReleaseTransaction {
   networkPassphrase: string;
   contractId: string;
   sourceAccount: string;
+}
+
+export interface UnsignedFeeBumpTransaction {
+  xdr: string;
+  network: string;
+  networkPassphrase: string;
+  feeAccount: string;
+  innerTransactionHash: string;
 }
 
 /**
@@ -139,6 +148,63 @@ export class EscrowReleaseTransactionBuilderService {
       networkPassphrase: this.config.networkPassphrase,
       contractId: this.config.contractId,
       sourceAccount,
+    };
+  }
+
+  /**
+   * Wraps an already-built unsigned inner transaction in a fee-bump envelope so
+   * the client can re-submit it with a higher fee after network congestion has
+   * made the original fee insufficient (#869).
+   *
+   * The fee-bump envelope must be signed by `feeAccount` before submission — the
+   * same client-side signing model as `buildRelease`; no keys are held server-side.
+   *
+   * @param unsignedInnerXdr - XDR of the original unsigned (or signed) inner transaction.
+   * @param newFeeStroops    - Total fee in stroops for the fee-bump transaction.
+   *                           Must be strictly greater than the inner transaction's fee.
+   * @param feeAccount       - Stellar address that will pay the bump fee and sign the envelope.
+   */
+  bumpFee(
+    unsignedInnerXdr: string,
+    newFeeStroops: string,
+    feeAccount: string,
+  ): UnsignedFeeBumpTransaction {
+    let innerTx: Transaction;
+    try {
+      innerTx = new Transaction(unsignedInnerXdr, this.config.networkPassphrase);
+    } catch {
+      throw new BadRequestException(
+        'unsignedInnerXdr is not a valid transaction envelope for this network.',
+      );
+    }
+
+    const innerFee = BigInt(innerTx.fee);
+    const bumpFee = BigInt(newFeeStroops);
+
+    if (bumpFee <= innerFee) {
+      throw new BadRequestException(
+        `newFeeStroops (${newFeeStroops}) must be greater than the inner transaction fee (${innerFee.toString()}).`,
+      );
+    }
+
+    const feeBump = TransactionBuilder.buildFeeBumpTransaction(
+      feeAccount,
+      newFeeStroops,
+      innerTx,
+      this.config.networkPassphrase,
+    );
+
+    this.logger.log(
+      `Built fee-bump envelope for inner tx ${innerTx.hash().toString('hex')} ` +
+        `with new fee ${newFeeStroops} stroops (was ${innerFee.toString()})`,
+    );
+
+    return {
+      xdr: feeBump.toXDR(),
+      network: this.config.network,
+      networkPassphrase: this.config.networkPassphrase,
+      feeAccount,
+      innerTransactionHash: innerTx.hash().toString('hex'),
     };
   }
 }

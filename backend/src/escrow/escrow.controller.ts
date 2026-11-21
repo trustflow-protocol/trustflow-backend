@@ -34,7 +34,7 @@ import { WebhookService } from '../webhook/webhook.service';
 import { DiscordService } from '../webhook/discord.service';
 import { WebhookEvent } from '../webhook/webhook.dto';
 import { EscrowReleaseTransactionBuilderService } from '../escrow-write/escrow-release-transaction-builder.service';
-import { BuildReleaseTransactionQueryDto } from '../escrow-write/escrow-write.dto';
+import { BuildReleaseTransactionQueryDto, BumpFeeBodyDto } from '../escrow-write/escrow-write.dto';
 import { Idempotent } from '../common/idempotency';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import {
@@ -420,6 +420,60 @@ export class EscrowController {
     return this.escrowReleaseTransactionBuilderService.buildRelease(
       escrow.contractEscrowId,
       sourceAccount,
+    );
+  }
+
+  @Post(':id/release/transaction/bump-fee')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Wrap an unsigned release transaction in a fee-bump envelope (#869)',
+    description:
+      'Takes a previously built unsigned release transaction XDR and wraps it in a ' +
+      'FeeBumpTransaction with a higher fee. Use this when network congestion has made ' +
+      'the original fee insufficient before the client can sign and submit. ' +
+      'The returned envelope must be signed by `feeAccount` before submission.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Escrow ID',
+    example: '8cbb9b5e-1f41-47c2-a804-8337caa7f005',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['unsignedInnerXdr', 'newFeeStroops', 'feeAccount'],
+      properties: {
+        unsignedInnerXdr: {
+          type: 'string',
+          description: 'XDR of the original unsigned release transaction',
+          example: 'AAAAAgAAAAA...',
+        },
+        newFeeStroops: {
+          type: 'string',
+          description: 'New total fee in stroops — must exceed the inner transaction fee',
+          example: '5000',
+        },
+        feeAccount: {
+          type: 'string',
+          description: 'Stellar address that will pay the bump fee and sign the envelope',
+          example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Fee-bump transaction envelope XDR' })
+  @ApiResponse({ status: 400, description: 'Invalid XDR, fee not higher than inner, or bad feeAccount' })
+  @ApiResponse({ status: 404, description: 'Escrow not found' })
+  async bumpReleaseFee(
+    @Param('id') id: string,
+    @Body() dto: BumpFeeBodyDto,
+  ) {
+    const escrow = await this.escrowService.findById(id);
+    if (!escrow) throw new NotFoundException(`Escrow ${id} not found`);
+    return this.escrowReleaseTransactionBuilderService.bumpFee(
+      dto.unsignedInnerXdr,
+      dto.newFeeStroops,
+      dto.feeAccount,
     );
   }
 

@@ -1,6 +1,7 @@
 import {
   Account,
   BASE_FEE,
+  FeeBumpTransaction,
   Keypair,
   SorobanDataBuilder,
   Transaction,
@@ -184,6 +185,64 @@ describe('EscrowReleaseTransactionBuilderService', () => {
       await expect(service.buildRelease('esc-1', Keypair.random().publicKey())).rejects.toThrow(
         'account not found',
       );
+    });
+  });
+
+  describe('bumpFee', () => {
+    let service: EscrowReleaseTransactionBuilderService;
+    let rpcServer: ReturnType<typeof makeRpcServer>;
+
+    beforeEach(() => {
+      rpcServer = makeRpcServer();
+      service = new EscrowReleaseTransactionBuilderService(
+        rpcServer as unknown as SorobanRpc.Server,
+        { ...getStellarConfig(), contractId: TEST_CONTRACT_ID },
+      );
+    });
+
+    async function buildInnerXdr(): Promise<{ xdr: string; fee: string }> {
+      const sourceKeypair = Keypair.random();
+      rpcServer.getAccount.mockResolvedValue(new Account(sourceKeypair.publicKey(), '100'));
+      rpcServer.simulateTransaction.mockResolvedValue(makeSimulation('1000'));
+      const result = await service.buildRelease('esc-1', sourceKeypair.publicKey());
+      return result;
+    }
+
+    it('returns a fee-bump envelope XDR when the new fee exceeds the inner fee', async () => {
+      const inner = await buildInnerXdr();
+      const innerTx = new Transaction(inner.xdr, getStellarConfig().networkPassphrase);
+      const innerFee = BigInt(innerTx.fee);
+      const newFee = (innerFee + 5000n).toString();
+      const feeAccount = Keypair.random().publicKey();
+
+      const result = service.bumpFee(inner.xdr, newFee, feeAccount);
+
+      expect(result.network).toBe(getStellarConfig().network);
+      expect(result.networkPassphrase).toBe(getStellarConfig().networkPassphrase);
+      expect(result.feeAccount).toBe(feeAccount);
+      expect(typeof result.xdr).toBe('string');
+      expect(typeof result.innerTransactionHash).toBe('string');
+
+      // The returned XDR must parse as a FeeBumpTransaction
+      const feeBump = new FeeBumpTransaction(result.xdr, getStellarConfig().networkPassphrase);
+      expect(feeBump.fee).toBe(newFee);
+      expect(feeBump.feeSource).toBe(feeAccount);
+    });
+
+    it('rejects when the new fee is not greater than the inner transaction fee', async () => {
+      const inner = await buildInnerXdr();
+      const innerTx = new Transaction(inner.xdr, getStellarConfig().networkPassphrase);
+      const sameFee = innerTx.fee;
+
+      expect(() => service.bumpFee(inner.xdr, sameFee, Keypair.random().publicKey())).toThrow(
+        'must be greater than the inner transaction fee',
+      );
+    });
+
+    it('rejects when the inner XDR is not a valid transaction for this network', () => {
+      expect(() =>
+        service.bumpFee('not-valid-xdr', '9999', Keypair.random().publicKey()),
+      ).toThrow('not a valid transaction envelope');
     });
   });
 });

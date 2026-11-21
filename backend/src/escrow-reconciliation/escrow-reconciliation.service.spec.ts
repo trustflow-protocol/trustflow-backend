@@ -4,7 +4,13 @@ import { WebhookService } from '../webhook/webhook.service';
 import { EscrowChainStateClient } from './escrow-chain-state.client';
 import { EscrowReconciliationStateStore } from './escrow-reconciliation-state.store';
 import { InvalidChainStateError } from './chain-escrow.validation';
-import { ChainEscrowRecord, DriftType, RECONCILIATION_EVENTS } from './escrow-reconciliation.types';
+import {
+  ChainEscrowRecord,
+  DriftType,
+  RECONCILIATION_EVENTS,
+  RECONCILIATION_DRIFT_METRIC,
+} from './escrow-reconciliation.types';
+import { MetricsService } from '../monitoring/metrics.service';
 import { resetEnvConfig, setTestEnv, validateEnv } from '../config/env.config';
 
 // reconcile() reads config.ESCROW_RECONCILIATION_SWEEP_CONCURRENCY, which requires
@@ -45,6 +51,7 @@ describe('EscrowReconciliationService', () => {
   >;
   let chainClient: jest.Mocked<EscrowChainStateClient>;
   let webhookService: jest.Mocked<Pick<WebhookService, 'dispatch'>>;
+  let metrics: jest.Mocked<Pick<MetricsService, 'increment'>>;
   let store: EscrowReconciliationStateStore;
   let service: EscrowReconciliationService;
 
@@ -57,6 +64,7 @@ describe('EscrowReconciliationService', () => {
     };
     chainClient = { getEscrow: jest.fn() };
     webhookService = { dispatch: jest.fn().mockResolvedValue(undefined) };
+    metrics = { increment: jest.fn() };
     store = new EscrowReconciliationStateStore();
 
     service = new EscrowReconciliationService(
@@ -64,6 +72,7 @@ describe('EscrowReconciliationService', () => {
       chainClient,
       webhookService as unknown as WebhookService,
       store,
+      metrics as unknown as MetricsService,
     );
   });
 
@@ -484,6 +493,80 @@ describe('EscrowReconciliationService', () => {
         expect.objectContaining({ amountXLM: '800' }),
         3, // stale version
       );
+    });
+  });
+
+  // #867 — reconciliation_drift_total must carry an outcome label so dashboards can
+  // tell "auto_corrected" drift apart from "alert_only" drift.
+  describe('drift counter labels (#867)', () => {
+    it('increments the counter with outcome=auto_corrected for a repaired status drift', async () => {
+      const escrow = makeEscrow({ status: 'active' });
+      escrowService.findAll.mockResolvedValue([escrow]);
+      chainClient.getEscrow.mockResolvedValue(makeChainRecord({ status: 'released' }));
+      escrowService.applyChainState.mockResolvedValue({ ...escrow, status: 'released' });
+
+      await service.reconcile();
+
+      expect(metrics.increment).toHaveBeenCalledWith(RECONCILIATION_DRIFT_METRIC, {
+        outcome: 'auto_corrected',
+      });
+    });
+
+    it('increments the counter with outcome=alert_only for an unrepairable missing-on-chain drift', async () => {
+      escrowService.findAll.mockResolvedValue([makeEscrow()]);
+      chainClient.getEscrow.mockResolvedValue(undefined);
+
+      await service.reconcile();
+
+      expect(metrics.increment).toHaveBeenCalledWith(RECONCILIATION_DRIFT_METRIC, {
+        outcome: 'alert_only',
+      });
+    });
+
+    it('increments the counter with outcome=alert_only when the repair write fails', async () => {
+      const escrow = makeEscrow({ status: 'active' });
+      escrowService.findAll.mockResolvedValue([escrow]);
+      chainClient.getEscrow.mockResolvedValue(makeChainRecord({ status: 'released' }));
+      escrowService.applyChainState.mockRejectedValue(new Error('write conflict'));
+
+      await service.reconcile();
+
+      expect(metrics.increment).toHaveBeenCalledWith(RECONCILIATION_DRIFT_METRIC, {
+        outcome: 'alert_only',
+      });
+    });
+
+    it('does not increment the drift counter when there is no drift', async () => {
+      escrowService.findAll.mockResolvedValue([makeEscrow()]);
+      chainClient.getEscrow.mockResolvedValue(makeChainRecord());
+
+      await service.reconcile();
+
+      expect(metrics.increment).not.toHaveBeenCalledWith(
+        RECONCILIATION_DRIFT_METRIC,
+        expect.anything(),
+      );
+    });
+
+    it('emits separate increments for each drift in a multi-drift run', async () => {
+      // Two escrows: one auto-corrected, one alert-only (missing on chain)
+      const escrow1 = makeEscrow({ id: 'esc-1', contractEscrowId: 'chain-esc-1', status: 'active' });
+      const escrow2 = makeEscrow({ id: 'esc-2', contractEscrowId: 'chain-esc-2', status: 'active' });
+      escrowService.findAll.mockResolvedValue([escrow1, escrow2]);
+      chainClient.getEscrow.mockImplementation(async id => {
+        if (id === 'chain-esc-1') return makeChainRecord({ status: 'released' });
+        return undefined; // escrow2 missing on chain
+      });
+      escrowService.applyChainState.mockResolvedValue({ ...escrow1, status: 'released' });
+
+      await service.reconcile();
+
+      expect(metrics.increment).toHaveBeenCalledWith(RECONCILIATION_DRIFT_METRIC, {
+        outcome: 'auto_corrected',
+      });
+      expect(metrics.increment).toHaveBeenCalledWith(RECONCILIATION_DRIFT_METRIC, {
+        outcome: 'alert_only',
+      });
     });
   });
 });
